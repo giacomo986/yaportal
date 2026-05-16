@@ -354,6 +354,8 @@ static void renderPortalRTTs(
 	data.cam_offset_world = offset;
 
 	data.ensureCameras(smgr);
+	// addCameraSceneNode() sets each new cam as active; restore main cam immediately.
+	smgr->setActiveCamera(mainCam);
 	data.ensureRenderTextures(driver, ctx.target_size);
 
 	ClientMap &cmap = ctx.client->getEnv().getClientMap();
