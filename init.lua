@@ -296,10 +296,10 @@ local function try_activate_near(pos, frame_node, placer)
         -- Try largest frames first to avoid matching a sub-frame.
         for w = MAX_W, MIN_W, -1 do
             for h = MAX_H, MIN_H, -1 do
-                local h_lo = (axis==0) and (px-w+1) or (pz-w+1)
-                local h_hi = (axis==0) and px or pz
+                local h_lo = (axis==0) and (px-w) or (pz-w)
+                local h_hi = (axis==0) and (px+1) or (pz+1)
                 for ch = h_lo, h_hi do
-                    for cy = py-h+1, py+1 do
+                    for cy = py-h, py+1 do
                         local cx = (axis==0) and ch or px
                         local cz = (axis==0) and pz or ch
                         if check_frame(cx, cy, cz, axis, frame_node, w, h) then
