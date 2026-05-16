@@ -793,7 +793,8 @@ end)
 
 local GUN_W, GUN_H = 2, 3  -- interior 2×3 → outer frame 4×5
 
-local function portal_gun_check_space(cx, cy, cz, axis, w, h)
+-- on_floor: skip the bottom frame row check (it's the mounting surface).
+local function portal_gun_can_place(cx, cy, cz, axis, w, h, on_floor)
     if axis == 0 then
         for dx = 0, w-1 do
             for dy = 0, h-1 do
@@ -801,7 +802,7 @@ local function portal_gun_check_space(cx, cy, cz, axis, w, h)
             end
         end
         for dx = -1, w do
-            if node_at(cx+dx, cy-1, cz) ~= "air" then return false end
+            if not on_floor and node_at(cx+dx, cy-1, cz) ~= "air" then return false end
             if node_at(cx+dx, cy+h,  cz) ~= "air" then return false end
         end
         for dy = 0, h-1 do
@@ -815,7 +816,7 @@ local function portal_gun_check_space(cx, cy, cz, axis, w, h)
             end
         end
         for dz = -1, w do
-            if node_at(cx, cy-1, cz+dz) ~= "air" then return false end
+            if not on_floor and node_at(cx, cy-1, cz+dz) ~= "air" then return false end
             if node_at(cx, cy+h,  cz+dz) ~= "air" then return false end
         end
         for dy = 0, h-1 do
@@ -824,6 +825,21 @@ local function portal_gun_check_space(cx, cy, cz, axis, w, h)
         end
     end
     return true
+end
+
+-- Tries horizontal positions near ideal_h, constrained so the frame covers ref_h.
+-- Valid range: [ref_h-2, ref_h+1] (frame width 4: border at h-1 through h+w).
+-- Returns the first valid value ordered by distance from ideal_h, or nil.
+local function portal_gun_find_h(ideal_h, ref_h, test_fn)
+    local candidates = {}
+    for v = ref_h - 2, ref_h + 1 do
+        candidates[#candidates+1] = {val=v, dist=math.abs(v - ideal_h)}
+    end
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+    for _, c in ipairs(candidates) do
+        if test_fn(c.val) then return c.val end
+    end
+    return nil
 end
 
 local function portal_gun_place_frame(cx, cy, cz, axis, w, h, node_name)
@@ -870,39 +886,66 @@ local function portal_gun_shoot(player, pointed_thing, color)
     local pname = player:get_player_name()
     local under = pointed_thing.under
     local above = pointed_thing.above
-    local dz = above.z - under.z
-    local dx = above.x - under.x
-    local dy = above.y - under.y
-    local axis, ns
-    if dz ~= 0 then
-        axis, ns = 0, dz
-    elseif dx ~= 0 then
-        axis, ns = 1, dx
-    else
-        minetest.chat_send_player(pname,
-            "[portale] Impossibile piazzare portali su pavimenti o soffitti.")
-        return
-    end
-    -- intersection_point gives sub-block precision for centering the frame.
-    local ip = pointed_thing.intersection_point
+    local dz    = above.z - under.z
+    local dx    = above.x - under.x
+    local dy    = above.y - under.y
+    local ip    = pointed_thing.intersection_point
         or {x=above.x, y=above.y, z=above.z}
-    local cx, cy, cz
-    if axis == 0 then
-        -- Frame in XY plane; interior center-x at cx+0.5, center-y at cy+1.
-        cx = math.floor(ip.x)
-        cy = math.floor(ip.y - 0.5)
-        cz = above.z
+
+    local axis, ns, cx, cy, cz
+    local on_floor = false
+
+    if dy ~= 0 then
+        -- Horizontal surface hit.
+        if dy < 0 then
+            minetest.chat_send_player(pname,
+                "[portale] Impossibile piazzare portali sul soffitto.")
+            return
+        end
+        -- Floor: create a vertical portal standing on the floor.
+        -- Orientation comes from the player's horizontal look direction.
+        on_floor = true
+        local look = player:get_look_dir()
+        cy = above.y  -- interior bottom at first air block above floor
+        if math.abs(look.z) >= math.abs(look.x) then
+            axis = 0
+            ns   = (look.z < 0) and 1 or -1
+            cz   = above.z
+            cx   = portal_gun_find_h(math.floor(ip.x), above.x, function(try_cx)
+                return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H, on_floor)
+            end)
+        else
+            axis = 1
+            ns   = (look.x < 0) and 1 or -1
+            cx   = above.x
+            cz   = portal_gun_find_h(math.floor(ip.z), above.z, function(try_cz)
+                return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H, on_floor)
+            end)
+        end
+    elseif dz ~= 0 then
+        -- Z-facing wall.
+        axis = 0; ns = dz
+        cz   = above.z
+        cy   = math.floor(ip.y - 0.5)
+        cx   = portal_gun_find_h(math.floor(ip.x), above.x, function(try_cx)
+            return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H, on_floor)
+        end)
     else
-        -- Frame in ZY plane; interior center-z at cz+0.5, center-y at cy+1.
-        cx = above.x
-        cy = math.floor(ip.y - 0.5)
-        cz = math.floor(ip.z)
+        -- X-facing wall.
+        axis = 1; ns = dx
+        cx   = above.x
+        cy   = math.floor(ip.y - 0.5)
+        cz   = portal_gun_find_h(math.floor(ip.z), above.z, function(try_cz)
+            return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H, on_floor)
+        end)
     end
-    if not portal_gun_check_space(cx, cy, cz, axis, GUN_W, GUN_H) then
+
+    if not cx or not cz then
         minetest.chat_send_player(pname,
             "[portale] Spazio insufficiente per il portale.")
         return
     end
+
     local frame_node  = "mio_portale:frame_" .. color
     local portal_name = "gun_" .. color .. "_" .. pname
     portal_gun_remove(pname, color)
