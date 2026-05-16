@@ -1,16 +1,109 @@
-Questo progetto è una mod per Luanti. Usa l'API Lua di Luanti. I file principali sono init.lua. Per testare, l'agente deve verificare la sintassi con luacheck
+Questo progetto è una mod per Luanti con un motore C++ personalizzato che aggiunge rendering di portali 3D. Il sorgente del motore modificato è in `luanti_src/` (ignorato da git); le sole modifiche al motore sono tracciate in `src_patches/`. La logica Lua della mod è in `init.lua`.
 
 ---
 
-## Build del motore (C++)
+## Setup da zero
 
-Il sorgente del motore è in `luanti_src/`. La build usa CMake + Ninja.
+Seguire i passi in ordine. Richiede Ubuntu 24.04 x86_64 con accesso a `apt-get download`.
 
-### Comandi build
+### 1. Clona il motore Luanti
 
-Le dipendenze sono in `PROJECT/tmp/` (persistente). `/tmp/deps`, `/tmp/luajit-extract`, `/tmp/leveldb-extract` sono symlink → `PROJECT/tmp/`. Dopo ogni riavvio ricreare i symlink (un comando), poi build normale.
+```sh
+PROJ=~/luanti/mods/yaportal
+git clone https://github.com/luanti-org/luanti.git $PROJ/luanti_src
+# Il commit base usato per le patch:
+git -C $PROJ/luanti_src checkout a6c948946
+```
 
-**Dopo riavvio — ricreare symlink:**
+### 2. Applica le patch al sorgente
+
+```sh
+PROJ=~/luanti/mods/yaportal
+cp -r $PROJ/src_patches/. $PROJ/luanti_src/
+```
+
+File aggiunti/modificati dal progetto (tutti in `src_patches/`):
+
+| File | Tipo |
+|------|------|
+| `src/portal_manager.h/.cpp` | **nuovo** — singleton `PortalManager`, N portali, cam hint |
+| `src/client/render/portal.h/.cpp` | **nuovo** — `PortalRTTData`, `PortalPrepareStep`, `PortalQuadStep`, `PortalRenderStep` |
+| `src/client/render/plain.h/.cpp` | modificato — inserisce i portal render step nella pipeline |
+| `src/client/clientmap.h/.cpp` | modificato — `updatePortalDrawList`, `clearPortalDrawList` |
+| `src/client/client.h` | modificato — espone accesso a ClientMap per il rendering |
+| `src/client/game.cpp` | modificato — avvia portal step |
+| `src/client/localplayer.h` | modificato — supporto teletrasporto |
+| `src/client/renderingengine.cpp` | modificato — integrazione pipeline |
+| `src/script/lua_api/l_env.h/.cpp` | modificato — `set_portals`, `set_portal_cam_hint`, `clear_portal_cam_hint` |
+| `src/script/lua_api/l_object.h/.cpp` | modificato — `portal_teleport` |
+| `src/network/networkprotocol.h` | modificato — opcode `TOCLIENT_PORTAL_TELEPORT` |
+| `src/network/clientopcodes.cpp` | modificato |
+| `src/network/serveropcodes.cpp` | modificato |
+| `src/network/clientpackethandler.cpp` | modificato — handler `handleCommand_PortalTeleport` |
+| `src/server.h/.cpp` | modificato — invio pacchetto teletrasporto |
+| `src/server/player_sao.h/.cpp` | modificato — `setPlayerYaw`, `getLookPitch` |
+| `src/server/clientiface.cpp` | modificato |
+| `irr/include/ICameraSceneNode.h` | modificato — `setRenderProjectionMatrix` |
+| `irr/src/CCameraSceneNode.h/.cpp` | modificato — `setRenderProjectionMatrix` (no frustum update) |
+| `irr/src/CMakeLists.txt` | modificato |
+| `src/CMakeLists.txt` | modificato — aggiunge `portal_manager`, `portal` ai target |
+| `src/client/CMakeLists.txt` | modificato |
+| `cmake/Modules/FindZstd.cmake` | modificato — fix find per zstd statica |
+
+### 3. Prepara le dipendenze
+
+Le dipendenze binarie vivono in `$PROJ/tmp/` (persistente tra riavvii). I `.deb` sono già scaricati in `$PROJ/tmp/`. Se mancano, eseguire il download (vedi sezione [Download deb da zero](#download-deb-da-zero)).
+
+```sh
+PROJ=~/luanti/mods/yaportal
+
+mkdir -p $PROJ/tmp/deps $PROJ/tmp/luajit-extract $PROJ/tmp/leveldb-extract
+
+# Estrai tutti i deb in deps/
+for deb in $PROJ/tmp/*.deb; do
+    case "$deb" in
+        *luajit*) dpkg-deb -x "$deb" $PROJ/tmp/luajit-extract ;;
+        *leveldb*) dpkg-deb -x "$deb" $PROJ/tmp/leveldb-extract ;;
+        *) dpkg-deb -x "$deb" $PROJ/tmp/deps ;;
+    esac
+done
+
+LIBDIR=$PROJ/tmp/deps/usr/lib/x86_64-linux-gnu
+SYSLIB=/usr/lib/x86_64-linux-gnu
+
+# Symlink .so condivise dalle librerie di sistema (non usare quelle statiche del deb)
+ln -sf $SYSLIB/libSDL2-2.0.so.0     $LIBDIR/libSDL2.so
+ln -sf $SYSLIB/libcurl.so.4         $LIBDIR/libcurl.so
+ln -sf $SYSLIB/libjpeg.so.8         $LIBDIR/libjpeg.so
+ln -sf $SYSLIB/libopenal.so.1       $LIBDIR/libopenal.so
+ln -sf $SYSLIB/libGL.so.1           $LIBDIR/libGL.so
+ln -sf $SYSLIB/libGLX.so.0          $LIBDIR/libGLX.so
+ln -sf $SYSLIB/libOpenGL.so.0       $LIBDIR/libOpenGL.so
+ln -sf $SYSLIB/libzstd.so.1         $LIBDIR/libzstd.so
+ln -sf $SYSLIB/libbrotlidec.so.1    $LIBDIR/libbrotlidec.so
+ln -sf $SYSLIB/libbrotlicommon.so.1 $LIBDIR/libbrotlicommon.so
+ln -sf $SYSLIB/libbz2.so.1          $LIBDIR/libbz2.so
+ln -sf $SYSLIB/libGLU.so.1          $LIBDIR/libGLU.so
+ln -sf $SYSLIB/libsnappy.so.1       $LIBDIR/libsnappy.so
+
+# Header curl e jpeg in path non-arch
+ln -sf $PROJ/tmp/deps/usr/include/x86_64-linux-gnu/curl    $PROJ/tmp/deps/usr/include/curl
+ln -sf $PROJ/tmp/deps/usr/include/x86_64-linux-gnu/jconfig.h $PROJ/tmp/deps/usr/include/jconfig.h
+
+# Copia header LuaJIT in deps
+mkdir -p $PROJ/tmp/deps/usr/include/luajit-2.1
+cp -r $PROJ/tmp/luajit-extract/usr/include/luajit-2.1/. $PROJ/tmp/deps/usr/include/luajit-2.1/
+
+# Nascondi libSDL2.a — cmake la preferisce alla .so causando link statico (-lasound ecc.)
+mv $LIBDIR/libSDL2.a      $LIBDIR/libSDL2.a.bak      2>/dev/null || true
+mv $LIBDIR/libSDL2main.a  $LIBDIR/libSDL2main.a.bak  2>/dev/null || true
+mv $LIBDIR/libSDL2_test.a $LIBDIR/libSDL2_test.a.bak 2>/dev/null || true
+```
+
+### 4. Crea symlink /tmp (dopo ogni riavvio)
+
+`build.ninja` usa percorsi `/tmp/`. Dopo ogni riavvio ricreare i symlink:
+
 ```sh
 PROJ=~/luanti/mods/yaportal
 ln -sfn $PROJ/tmp/deps            /tmp/deps
@@ -18,24 +111,16 @@ ln -sfn $PROJ/tmp/luajit-extract  /tmp/luajit-extract
 ln -sfn $PROJ/tmp/leveldb-extract /tmp/leveldb-extract
 ```
 
-**Build normale (dopo symlink):**
-```sh
-NINJA=/usr/bin/ninja
-BUILD_DIR=~/luanti/mods/yaportal/luanti_src/build
+### 5. Configura con CMake (solo prima volta o dopo reset cache)
 
-touch $BUILD_DIR/build.ninja   # evita loop cmake↔ninja
-cd $BUILD_DIR && $NINJA -j$(nproc)
-```
-
-**Solo se build.ninja deve essere rigenerato** (dopo cmake cache delete):
 ```sh
 CMAKE=/usr/bin/cmake
 NINJA=/usr/bin/ninja
 SRC=~/luanti/mods/yaportal/luanti_src
-BUILD_DIR=$SRC/build
+BUILD=$SRC/build
 
-rm -f $BUILD_DIR/CMakeCache.txt
-cd $BUILD_DIR && $CMAKE \
+mkdir -p $BUILD
+cd $BUILD && $CMAKE \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_UNITTESTS=TRUE \
   -DENABLE_POSTGRESQL=OFF \
@@ -51,400 +136,216 @@ cd $BUILD_DIR && $CMAKE \
   -DLEVELDB_INCLUDE_DIR=/tmp/leveldb-extract/usr/include \
   -DLEVELDB_LIBRARY=/tmp/deps/usr/lib/x86_64-linux-gnu/libleveldb.a \
   $SRC
-touch $BUILD_DIR/build.ninja
-cd $BUILD_DIR && $NINJA -j$(nproc)
+touch $BUILD/build.ninja
+cd $BUILD && $NINJA -j$(nproc)
 ```
 
-`ninja` e `cmake` non sono nel PATH di sistema — usare i percorsi assoluti sopra.
+### 6. Build normale (dopo symlink /tmp)
 
-Il binario prodotto è `luanti_src/bin/luanti`. Per avviarlo:
+```sh
+NINJA=/usr/bin/ninja
+cd ~/luanti/mods/yaportal/luanti_src/build && $NINJA -j$(nproc)
+```
+
+### 7. Avvia il gioco
 
 ```sh
 ~/luanti/mods/yaportal/luanti_src/bin/luanti
 ```
 
-### Dipendenze
+---
 
-Le dipendenze vivono in `PROJECT/tmp/` (persistente tra riavvii). `/tmp/deps` ecc. sono symlink → `PROJECT/tmp/` (da ricreare dopo ogni riavvio con il comando sopra).
+## Aggiornare src_patches/ dopo modifiche C++
 
-**Setup da zero** (solo se `PROJECT/tmp/deps` non esiste):
+Dopo ogni modifica ai file C++ in `luanti_src/`, aggiornare `src_patches/` e committare:
 
 ```sh
 PROJ=~/luanti/mods/yaportal
-mkdir -p $PROJ/tmp/deps $PROJ/tmp/luajit-extract $PROJ/tmp/leveldb-extract
-ln -sfn $PROJ/tmp/deps            /tmp/deps
-ln -sfn $PROJ/tmp/luajit-extract  /tmp/luajit-extract
-ln -sfn $PROJ/tmp/leveldb-extract /tmp/leveldb-extract
-cd $PROJ/tmp
+SRC=$PROJ/luanti_src
+DEST=$PROJ/src_patches
 
-apt-get download libsdl2-dev libsdl2-2.0-0 zlib1g-dev libjpeg-turbo8-dev libjpeg8-dev \
-  libpng-dev libgl-dev libopenal-dev libcurl4-openssl-dev libbrotli-dev libbz2-dev \
-  libzstd-dev liblua5.4-dev libsqlite3-dev libleveldb-dev libvorbis-dev libogg-dev \
-  libgmp-dev libfreetype-dev libharfbuzz-dev libglu1-mesa-dev \
-  libsnappy-dev libsnappy1v5
-
-for deb in $PROJ/tmp/*.deb; do dpkg-deb -x "$deb" /tmp/deps; done
-
-LIBDIR=/tmp/deps/usr/lib/x86_64-linux-gnu
-SYSLIB=/usr/lib/x86_64-linux-gnu
-
-ln -sf $SYSLIB/libSDL2-2.0.so.0     $LIBDIR/libSDL2.so
-ln -sf $SYSLIB/libcurl.so.4         $LIBDIR/libcurl.so
-ln -sf $SYSLIB/libjpeg.so.8         $LIBDIR/libjpeg.so
-ln -sf $SYSLIB/libopenal.so.1       $LIBDIR/libopenal.so
-ln -sf $SYSLIB/libGL.so.1           $LIBDIR/libGL.so
-ln -sf $SYSLIB/libGLX.so.0          $LIBDIR/libGLX.so
-ln -sf $SYSLIB/libOpenGL.so.0       $LIBDIR/libOpenGL.so
-ln -sf $SYSLIB/libzstd.so.1         $LIBDIR/libzstd.so
-ln -sf $SYSLIB/libbrotlidec.so.1    $LIBDIR/libbrotlidec.so
-ln -sf $SYSLIB/libbrotlicommon.so.1 $LIBDIR/libbrotlicommon.so
-ln -sf $SYSLIB/libbz2.so.1          $LIBDIR/libbz2.so
-ln -sf $SYSLIB/libGLU.so.1          $LIBDIR/libGLU.so
-
-find $LIBDIR -maxdepth 1 -type l | while read lnk; do
-  target=$(readlink "$lnk")
-  if [[ "$target" != /* ]] && [ ! -e "$(dirname $lnk)/$target" ]; then
-    name=$(basename "$lnk" .so)
-    sys=$(ls $SYSLIB/${name}.so.* 2>/dev/null | head -1)
-    [ -n "$sys" ] && ln -sf "$sys" "$lnk"
-  fi
+for f in $(git -C $SRC diff --name-only HEAD); do
+    mkdir -p "$DEST/$(dirname $f)"
+    cp "$SRC/$f" "$DEST/$f"
+done
+# Nuovi file non tracciati da luanti_src:
+for f in src/portal_manager.cpp src/portal_manager.h \
+          src/client/render/portal.cpp src/client/render/portal.h; do
+    cp "$SRC/$f" "$DEST/$f"
 done
 
-ln -sf /tmp/deps/usr/include/x86_64-linux-gnu/curl /tmp/deps/usr/include/curl
-
-# jconfig.h estratto dal deb finisce come symlink rotto: fixare manualmente
-ln -sf /tmp/deps/usr/include/x86_64-linux-gnu/jconfig.h /tmp/deps/usr/include/jconfig.h
-
-# libSDL2.a nel deb causa link statico (richiede -lasound ecc.) → nasconderla
-mv $LIBDIR/libSDL2.a     $LIBDIR/libSDL2.a.bak     2>/dev/null || true
-mv $LIBDIR/libSDL2main.a $LIBDIR/libSDL2main.a.bak 2>/dev/null || true
-mv $LIBDIR/libSDL2_test.a $LIBDIR/libSDL2_test.a.bak 2>/dev/null || true
+git add src_patches/ && git commit -m "chore: sync src_patches with luanti_src changes"
 ```
 
-**LuaJIT** (libluajit-5.1.so.2):
+---
+
+## Download deb da zero
+
+Solo se `$PROJ/tmp/*.deb` non esistono (già presenti nel progetto):
 
 ```sh
+PROJ=~/luanti/mods/yaportal
 cd $PROJ/tmp
-apt-get download libluajit-5.1-dev libluajit-5.1-2 2>/dev/null || true
-for deb in $PROJ/tmp/libluajit*.deb; do dpkg-deb -x "$deb" /tmp/luajit-extract 2>/dev/null; done
-# copia headers in deps
-mkdir -p /tmp/deps/usr/include/luajit-2.1
-cp -r /tmp/luajit-extract/usr/include/luajit-2.1/. /tmp/deps/usr/include/luajit-2.1/
+apt-get download \
+  libsdl2-dev libsdl2-2.0-0 zlib1g-dev libjpeg-turbo8-dev libjpeg8-dev \
+  libpng-dev libgl-dev libopenal-dev libcurl4-openssl-dev libbrotli-dev libbz2-dev \
+  libzstd-dev libsqlite3-dev libleveldb-dev libvorbis-dev libogg-dev \
+  libgmp-dev libfreetype-dev libharfbuzz-dev libglu1-mesa-dev \
+  libsnappy-dev libsnappy1v5 \
+  libluajit-5.1-dev libluajit-5.1-2
 ```
 
-**LevelDB headers**:
-```sh
-cd $PROJ/tmp
-apt-get download libleveldb-dev
-for deb in $PROJ/tmp/libleveldb*.deb; do dpkg-deb -x "$deb" /tmp/leveldb-extract; done
-```
+---
 
-Il `build.ninja` usa LuaJIT come `.so` condivisa (non `.a` statica) per evitare conflitti IFUNC con glibc.
-Il RUNPATH del binario include `/tmp/luajit-extract/usr/lib/x86_64-linux-gnu`.
+## Problemi noti
 
-**IMPORTANTE**: dopo aver estratto i deb e creato i symlink, rieseguire CMake (vedi comando build nella sezione Comandi build) prima di ninja. CMake deve trovare `libSDL2.so` (non `.a`) per generare il link dinamico corretto.
-
-### Problemi noti
-
-- **IFUNC conflict**: NON usare `libluajit-5.1.a` statica — conflitto `memcpy`/`strcasecmp` con glibc IFUNC. Usare sempre `.so` condivisa.
-- **libSDL2.a nel deb causa link statico**: il deb include `libSDL2.a` che cmake preferisce alla `.so`. Fix: rinominare in `.a.bak` (già nel blocco sh sopra) poi rieseguire cmake. Sintomo: link fallisce con `-lasound not found`.
-- **curl header in path arch-specifico**: dopo estrazione serve il symlink sopra.
+- **IFUNC conflict**: NON usare `libluajit-5.1.a` statica — conflitto `memcpy`/`strcasecmp` con glibc IFUNC. Usare sempre la `.so` condivisa.
+- **libSDL2.a nel deb**: cmake la preferisce alla `.so` → link statico fallisce con `-lasound not found`. Fix: rinominare in `.a.bak` (già nel blocco setup sopra).
+- **curl/jpeg header in path arch-specifico**: richiedono i symlink creati nel setup.
 - **leveldb richiede snappy**: già fixato in `src/CMakeLists.txt`.
-- **libluajit RUNPATH**: se il binario dice "libluajit-5.1.so.2 not found", serve riscrivere il RUNPATH in build.ninja aggiungendo `/tmp/luajit-extract/usr/lib/x86_64-linux-gnu` alla voce `-Wl,-rpath,...` nella riga `LINK_LIBRARIES` e ricompilare.
+- **libluajit RUNPATH**: se il binario dice `libluajit-5.1.so.2 not found`, verificare che il RUNPATH in `build.ninja` includa `/tmp/luajit-extract/usr/lib/x86_64-linux-gnu`. In caso, rigenerare con cmake (passo 5).
+- **ninja/cmake non nel PATH**: usare percorsi assoluti `/usr/bin/ninja` ecc.
 
 ---
 
 ## File portale (C++)
 
-File aggiunti/modificati nel motore:
-
-- `luanti_src/src/client/render/portal.h/.cpp` — rendering RTT + quad portale
-- `luanti_src/src/portal_manager.h/.cpp` — singleton `PortalManager` con 2 `PortalInfo` + cam hint
-- `luanti_src/src/client/clientmap.h/.cpp` — `updatePortalDrawList`, `clearPortalDrawList`, loop in `renderMap`
-- `luanti_src/src/script/lua_api/l_env.cpp/.h` — `l_set_portals`, `l_set_portal_cam_hint`
-- `luanti_src/src/script/lua_api/l_object.cpp/.h` — `l_portal_teleport`
-- `luanti_src/src/network/clientpackethandler.cpp` — `handleCommand_PortalTeleport`
-- `luanti_src/src/server/player_sao.cpp/.h` — `setPlayerYaw`, `getLookPitch`
-- `luanti_src/irr/src/CCameraSceneNode.h/.cpp` — `setRenderProjectionMatrix`, `clearRenderProjectionMatrix`
-
-### API Lua
+### API Lua esposta dal motore
 
 ```lua
--- Imposta/aggiorna posizione portali (chiamato da sync_portals in init.lua)
-minetest.set_portals(p0, p1)
--- p0, p1 = {pos={x,y,z}, normal={x,y,z}, up={x,y,z}} oppure nil
--- pos in coordinate nodo (moltiplicato per BS in C++)
--- normal e up vettori unitari; right = normal × up (calcolato in C++)
+-- Imposta lista portali attivi (chiamato da sync_portals in init.lua)
+-- portal_list: array 1-based, max MAX_PORTALS (8) elementi
+-- Ogni elemento: {pos, normal, up, half_w, half_h, link}
+-- link: indice 0-based del portale destinazione (-1 = nessuno)
+minetest.set_portals(portal_list)
 
--- Pre-renderizza RTT portale destinazione dalla posizione di uscita
-minetest.set_portal_cam_hint(portal_idx, pos_world)
-minetest.clear_portal_cam_hint(portal_idx)
+-- Override posizione camera virtuale per RTT del portale idx (0-based)
+-- Usato pre-teletrasporto per pre-renderizzare il punto di arrivo
+minetest.set_portal_cam_hint(idx, {x, y, z})   -- posizione world in coordinate nodo
+minetest.clear_portal_cam_hint(idx)
 
--- Teletrasporto atomico: pos + yaw + vel_delta in un pacchetto
+-- Teletrasporto atomico: pos + yaw + delta velocità in un pacchetto
+-- vel_delta: delta da aggiungere alla velocità corrente (non assoluto)
 player:portal_teleport(pos, yaw_radians, vel_delta)
--- yaw_radians → converito in gradi → setPlayerYaw(degrees)
--- vel_delta aggiunto alla velocità corrente (delta, non assoluto)
 ```
 
 ### Tecnica di rendering
 
 **PortalPrepareStep** (prima di Draw3D):
-1. Per ogni portale i: posiziona `vcam[i]` tramite `setVirtualCamera`, aggiorna posizione assoluta
-2. Chiama `cmap.updatePortalDrawList(vcam_world_positions)` — aggiunge blocchi vicini a ogni vcam alla `m_portal_drawlist` (bypassa frustum della camera principale)
-3. Per ogni portale i: renderizza scena su `rtex[i]` con `setBypassFrustumCulling(true)`
-4. Chiama `cmap.clearPortalDrawList()` — libera i blocchi extra
+1. `ensureCameras` — crea vcam[i] una sola volta, mai distrugge
+2. Per ogni portale attivo con link: `setVirtualCamera(vcam[i], src, dst, cam_pos)`
+3. `updatePortalDrawList` — aggiunge blocchi vicini a ogni vcam alla `m_portal_drawlist`
+4. Renderizza ogni RTT con bypass frustum culling
+5. `clearPortalDrawList`
 
 **PortalQuadStep** (dopo Draw3D, prima del post-processing):
 - Ordina portali back-to-front
-- Per ognuno: `drawPortalFaces(src, rtex[i], mainCam)`
-- Se camera si è spostata ≥ 4 nodi dall'RTT precedente (intra-frame teleport): ri-renderizza RTT
+- `drawPortalFaces(src, rtex[i], mainCam)` — tunnel a 5 facce + screen-space UV shader
+- Se camera spostata ≥ 4 nodi dall'RTT precedente: ri-renderizza RTT (intra-frame teleport)
 
 Per pipeline senza post-processing: `PortalRenderStep` esegue entrambi i passi.
 
-### Geometria portale 3D (tunnel a 5 facce)
-
-```
-camera →  |front|   center   |RTT face|back|
-           z>0       z=0    -TUNNEL_DEPTH  -0.5BS
-```
-
-Costanti:
-```cpp
-PORTAL_HALF_W      = 1.0f * BS    // metà apertura (2 nodi)
-PORTAL_HALF_H      = 1.5f * BS    // metà altezza (3 nodi)
-PORTAL_TUNNEL_DEPTH = 0.45f * BS  // profondità tunnel
-```
-
-**`drawPortalFaces`**: 4 pareti laterali + 1 faccia RTT posteriore. Tutte e 5 usano lo stesso GLSL shader screen-space (vedi sotto). `side_sign = sign((camPos - src.pos)·src.normal)`.
-
-**Visibilità quad**: `d = (camPos - src.pos)·src.normal`. Portale visibile finché `d >= -0.45*BS` (player è al 95% attraverso il frame).
-
 ### Screen-space UV shader (CRITICO)
 
-Tutte e 5 le facce del tunnel usano un custom GLSL shader:
-
 ```glsl
-// VS: attribute inVertexPosition, uniform uMVP
+// VS
 gl_Position = uMVP * vec4(inVertexPosition, 1.0);
-
-// FS: gl_FragCoord normalizzato per UV
+// FS
 vec2 uv = vec2(gl_FragCoord.x / W, gl_FragCoord.y / H);
 gl_FragColor = texture2D(baseTexture, uv);
 ```
 
-- NON usare `gl_Vertex` o `gl_ModelViewProjectionMatrix` — Irrlicht OpenGL3 non aggiorna il fixed-function stack
-- `inVertexPosition` è il nome Irrlicht per `EVA_POSITION=0`
-- MVP = `getTransform(ETS_PROJECTION) * getTransform(ETS_VIEW) * getTransform(ETS_WORLD)`
-- Y NON invertita: RTT OpenGL ha y=0 in basso, `gl_FragCoord` idem → corrispondenza diretta
+- NON usare `gl_Vertex` / `gl_ModelViewProjectionMatrix` — Irrlicht OpenGL3 non aggiorna il fixed-function stack
+- `inVertexPosition` = nome Irrlicht per `EVA_POSITION=0`
+- Y non invertita: RTT OpenGL ha y=0 in basso, `gl_FragCoord` idem
 
 ### Camera offset (CRITICO)
 
-Luanti sposta la camera Irrlicht vicino all'origine sottraendo un offset da tutte le posizioni di rendering.
-
 ```cpp
 v3f offset = intToFloat(game_cam->getOffset(), BS);
-data.cam_offset_world = offset;
-src.pos -= offset;  // in setVirtualCamera e drawPortalFaces
+src.pos -= offset;
 dst.pos -= offset;
 ```
 
 Senza fix: quad portale appare offset di decine/centinaia di nodi.
 
-### Camera virtuale — `setVirtualCamera`
-
-Trasformazione: decomposizione in base (right, up, normal) del portale sorgente, rimappata sul portale destinazione con **negazione di right e normal**:
+### Camera virtuale — setVirtualCamera
 
 ```cpp
-v3f ar = right_of(src), au = src.up, an = src.normal;  // right = normal × up
-v3f br = right_of(dst), bu = dst.up, bn = dst.normal;
-
-// Posizione
+// right = normal × up (identico in C++ e Lua)
 float lx = rel.dotProduct(ar), ly = rel.dotProduct(au), lz = rel.dotProduct(an);
 v3f vpos = dst_surface + br*(-lx) + bu*ly + bn*(-lz);
-
-// Direzione
+// Direzione: negate right e normal
 float dx = dir.dotProduct(ar), dy = dir.dotProduct(au), dz = dir.dotProduct(an);
 v3f vdir = br*(-dx) + bu*dy + bn*(-dz);
 ```
 
-**Questa è la trasformazione canonica per portali.** Lua usa la stessa formula per velocità e sguardo.
-
 ### Oblique near-plane clipping (Lengyel)
 
-Scopo: GPU clipa geometria davanti al portale, senza area nera nell'RTT.
-
-**Patch critica**: usare `setRenderProjectionMatrix` (NON `setProjectionMatrix`) su `CCameraSceneNode`. `setProjectionMatrix` aggiorna anche il frustum CPU → SceneManager culla entità → aree nere. `setRenderProjectionMatrix` invia solo al driver/shader.
-
-**Formula per Irrlicht LH OpenGL [-1,+1]** (row3=(0,0,1,0), w_clip=z_eye):
-
-```cpp
-float c_e_x = -clip_n.dotProduct(vright_axis);
-float c_e_y =  clip_n.dotProduct(vup);
-float c_e_z =  clip_n.dotProduct(vdir);
-float c_e_w =  clip_n.dotProduct(vpos - dst_surface);
-
-// P^{-T}: (1/M[0], 1/M[5], 0/1/M[14], 1/-M[10]/M[14])
-float cc_x = c_e_x / m[0];
-float cc_y = c_e_y / m[5];
-float cc_z = c_e_w / m[14];
-float cc_w = c_e_z - (m[10] / m[14]) * c_e_w;
-
-float lam = 2.0f / (abs(cc_x) + abs(cc_y) + cc_z + cc_w);
-m[2] = lam*c_e_x; m[6] = lam*c_e_y; m[10] = lam*c_e_z - 1.0f; m[14] = lam*c_e_w;
-vcam->setRenderProjectionMatrix(proj);
-```
-
-### updatePortalDrawList / clearPortalDrawList
-
-Aggiunto in `clientmap.h/.cpp` per risolvere il problema di chunk non caricati quando il portale destinazione è fuori dal frustum principale.
-
-```cpp
-// Popola m_portal_drawlist con blocchi vicini a ogni vcam world position
-void ClientMap::updatePortalDrawList(const std::vector<v3f> &portal_cam_positions);
-
-// Libera refcount e svuota m_portal_drawlist + m_portal_keeplist
-void ClientMap::clearPortalDrawList();
-```
-
-In `renderMap()`, dopo il loop su `m_drawlist`, loop aggiuntivo su `m_portal_drawlist` senza frustum culling.
+`setRenderProjectionMatrix` su `CCameraSceneNode` — NON `setProjectionMatrix` (quella aggiorna il frustum CPU → SceneManager culla entità → aree nere).
 
 ---
 
 ## Logica Lua (init.lua)
 
-### Struttura cornice
-
-- Cornice 4×5 nodi (apertura interna 2×3 nodi di aria)
-- Due colori: `mio_portale:portal_blue`, `mio_portale:portal_orange`
-- `axis=0`: normale ±Z, `axis=1`: normale ±X
-
-### Attivazione
-
-Quando un blocco cornice viene piazzato, `try_activate_near` scansiona angoli possibili e chiama `check_frame`. Se completa: salva `{cx,cy,cz,axis,ns}`, chiama `sync_portals` → `minetest.set_portals`.
-
-`ns` = segno normale: +1 se player è sul lato +Z/+X al momento del piazzamento, -1 altrimenti.
-
-### Base locale portale
+### Struttura dati portali
 
 ```lua
-local function portal_basis(pp)
-    local ns = pp.ns or 1
-    if pp.axis == 0 then
-        return {x=0,y=0,z=ns}, {x=-ns,y=0,z=0}  -- (normal, right)
-    else
-        return {x=ns,y=0,z=0}, {x=0,y=0,z=ns}
-    end
-end
--- right = normal × up (identico a C++ right_of)
+-- portals[name] = {cx, cy, cz, axis, ns, w, h, link, node_name}
+-- portal_index[name] = 0-based C++ index (stabile per ordine alfabetico)
+-- anchors[name] = entity object (invisible, pointable, on_rightclick → config GUI)
 ```
 
-### Trasformazione portale — posizione
+### API pubblica (init.lua)
 
-```lua
-local function portal_transform_pos(v, src_n, src_r, dst_n, dst_r)
-    local lr = dot(v, src_r)
-    local lu = v.y
-    local ln = dot(v, src_n)
-    local dst_ln = -ln  -- clampato a ±0.02 min
-    return {
-        x = (-lr)*dst_r.x + dst_ln*dst_n.x,
-        y = lu,
-        z = (-lr)*dst_r.z + dst_ln*dst_n.z,
-    }
-end
+- `try_activate_near(pos, frame_node, placer)` — scansiona frame vicini, attiva portale
+- `deactivate_if_frame(pos)` — disattiva portale se pos è nel frame
+- `open_portal_config(player, portal_name)` — apre GUI configurazione
+- `ensure_portal_rightclick(node_name)` — patcha `on_rightclick` su nodi esterni usati come cornice
+
+### Geometria portale
+
+```
+axis=0: piano XY, normale ±Z
+axis=1: piano YZ, normale ±X
+ns: segno normale (+1/-1, scelto dal lato del player al momento dell'attivazione)
+inner_center: {cx+(w-1)/2, cy+(h-1)/2, cz} (axis=0) oppure {cx, cy+(h-1)/2, cz+(w-1)/2} (axis=1)
 ```
 
-### Trasformazione portale — direzione (velocità / sguardo)
-
-**Formula identica a `setVirtualCamera` C++**: negate both right and normal components.
-
-```lua
-local function portal_transform_dir(v, src_n, src_r, dst_n, dst_r)
-    local lr = dot(v, src_r)
-    local lu = v.y
-    local ln = dot(v, src_n)
-    return {
-        x = (-lr)*dst_r.x + (-ln)*dst_n.x,
-        y = lu,
-        z = (-lr)*dst_r.z + (-ln)*dst_n.z,
-    }
-end
--- Derivazione: r_src → -r_dst (player_right when entering = r_src;
--- player_right when exiting = -r_dst due to right_of = n×u convention).
--- Verifica: facing portals = direction preserved; same-dir portals = 180° flip; 90° = 90° rotation.
-```
-
-### Convenzione yaw — CRITICO
+### Convenzione yaw (CRITICO)
 
 ```lua
 -- get_look_dir() usa getRadYawDep() = (m_rotation.Y + 90°) × DEGTORAD
--- look.x = cos(rot.Y + 90°) = -sin(rot.Y_rad)
--- look.z = sin(rot.Y + 90°) =  cos(rot.Y_rad)
--- get_look_horizontal() restituisce rot.Y_rad = m_rotation.Y × DEGTORAD
-
--- Per estrarre rot.Y_rad da look direction:
+-- Per estrarre yaw da look direction:
 local new_yaw = math.atan2(-new_look.x, new_look.z)  -- NON atan2(x,z)!
--- atan2(x,z) è sbagliato: porta a errore di 90° per portali con uscita lungo X (axis=1)
 ```
 
 ### Trigger teletrasporto
 
 ```lua
-local TRIGGER_DEPTH = 0.05  -- 5% del nodo = 55% depth da centro
+TRIGGER_DEPTH = 0.05  -- nodi
 
-local function portal_depth(ppos, pp)
-    local ns = pp.ns or 1
-    return pp.axis==0 and (ppos.z - pp.cz)*ns or (ppos.x - pp.cx)*ns
-end
+-- Trigger normale: player entra dal fronte e supera profondità
+past_trigger(ppos, pp)  →  portal_depth < -TRIGGER_DEPTH
 
--- Trigger normale: player entra dal fronte (ns side) e supera 55% di profondità
-local function past_trigger(ppos, pp)
-    return portal_depth(ppos, pp) < -TRIGGER_DEPTH
-end
-
--- Trigger laterale: player entra dai bordi già al centro/oltre il piano
--- border_entry = just_entered AND portal_depth <= 0
+-- Trigger laterale: player entra già al centro/oltre il piano
+border_entry = just_entered AND portal_depth <= 0
 ```
 
-`entered_from_front`: true se al primo frame nei bounds il player era sul lato ns (`on_ns_side`).
-`on_ns_side` usa leniency `>= -TRIGGER_DEPTH` per gestire entrate laterali leggermente oltre il piano.
+`entered_from_front = true` se al primo frame nei bounds il player era sul lato ns.
+`on_ns_side` usa leniency `>= -TRIGGER_DEPTH` per entrate laterali.
 
-### Blocco teletrasporto
-
-```lua
-local src_n, src_r = portal_basis(src)
-local dst_n, dst_r = portal_basis(dst)
-
-local rel     = ppos - inner_center(src)
-local new_off = portal_transform_pos(rel, src_n, src_r, dst_n, dst_r)
-local new_pos = inner_center(dst) + new_off
-
-local vel      = player:get_velocity()
-local new_vel  = portal_transform_dir(vel,  src_n, src_r, dst_n, dst_r)
-local look     = player:get_look_dir()
-local new_look = portal_transform_dir(look, src_n, src_r, dst_n, dst_r)
-local new_yaw  = math.atan2(-new_look.x, new_look.z)  -- vedi convenzione sopra
-
-minetest.set_portal_cam_hint(dst_idx, new_pos)  -- pre-render RTT
-player:portal_teleport(new_pos, new_yaw, {
-    x = new_vel.x - vel.x,
-    y = new_vel.y - vel.y,
-    z = new_vel.z - vel.z,
-})
-```
-
-Cooldown: 0.5s dopo ogni teletrasporto.
-`state[dst_color].entered_from_front = false` blocca re-trigger immediato all'uscita.
-
-### Posizione portale
+### Cam hint lifecycle
 
 ```lua
-local function inner_center(pp)
-    if pp.axis == 0 then
-        return {x=pp.cx+(W-1)/2, y=pp.cy+(H-1)/2, z=pp.cz}
-    else
-        return {x=pp.cx,         y=pp.cy+(H-1)/2, z=pp.cz+(W-1)/2}
-    end
-end
--- Centro geometrico esatto — nessun offset ±ns
+-- Dentro i bounds, entered_from_front=true:
+minetest.set_portal_cam_hint(dst_idx, pos_trasformata)   -- ogni frame globalstep
+
+-- Leave bounds (normale):
+minetest.clear_portal_cam_hint(dst_idx)
+
+-- Dopo teletrasporto (reset diretto state senza leave handler):
+minetest.set_portal_cam_hint(dst_idx, new_pos)   -- pre-render frame di arrivo
+player:portal_teleport(...)
+minetest.clear_portal_cam_hint(dst_idx)           -- lascia prendere la live camera
 ```
