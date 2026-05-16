@@ -685,12 +685,6 @@ minetest.register_globalstep(function(dtime)
         local teleport_src, teleport_dst = nil, nil
 
         for portal_name, pp in pairs(portals) do
-            -- Gun portals are private: only the owner can use them.
-            local gun_owner = portal_name:match("^gun_%a+_(.+)$")
-            if gun_owner and gun_owner ~= pname then
-                state[portal_name] = nil
-            else
-
             if not state[portal_name] then state[portal_name] = {} end
             local s        = state[portal_name]
             local dst_name = pp.link
@@ -742,7 +736,6 @@ minetest.register_globalstep(function(dtime)
                     end
                 end
             end
-            end  -- else (gun owner check)
         end
 
         if teleport_src and teleport_dst then
