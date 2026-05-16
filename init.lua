@@ -50,7 +50,8 @@ minetest.register_entity("mio_portale:anchor", {
     },
     on_activate = function(self) self.object:set_armor_groups({immortal=1}) end,
     on_rightclick = function(self, clicker)
-        if self._portal_name and clicker and clicker:is_player() then
+        if self._portal_name and clicker and clicker:is_player()
+           and not self._portal_name:match("^gun_") then
             open_portal_config(clicker, self._portal_name)
         end
     end,
@@ -970,10 +971,6 @@ minetest.register_node("mio_portale:frame_blue", {
     tiles = {"mio_portale_blue.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
-    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
-        local found = find_portal_for_block(pos)
-        if found then open_portal_config(player, found) end
-    end,
 })
 
 minetest.register_node("mio_portale:frame_orange", {
@@ -981,10 +978,6 @@ minetest.register_node("mio_portale:frame_orange", {
     tiles = {"mio_portale_orange.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
-    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
-        local found = find_portal_for_block(pos)
-        if found then open_portal_config(player, found) end
-    end,
 })
 
 minetest.register_tool("mio_portale:portal_gun", {
