@@ -29,23 +29,9 @@ local player_mat_preview  = {}  -- pname → node_name selected in textlist (not
 local open_portal_config  -- forward declared; assigned below
 local hooked_nodes        = {}  -- node names that received the portal right-click hook
 
--- ── materiali cornice ─────────────────────────────────────────────────────────
+-- ── nodo cornice ─────────────────────────────────────────────────────────────
 
-local FRAME_MATERIALS = {
-    {id="blue",     desc="Blu",       tex="mio_portale_blue.png"},
-    {id="orange",   desc="Arancione", tex="mio_portale_orange.png"},
-    {id="stone",    desc="Pietra",    tex="mio_portale_blue.png^[multiply:#909090"},
-    {id="obsidian", desc="Ossidiana", tex="mio_portale_blue.png^[multiply:#402060"},
-    {id="iron",     desc="Ferro",     tex="mio_portale_blue.png^[multiply:#A0A8B8"},
-    {id="gold",     desc="Oro",       tex="mio_portale_orange.png^[multiply:#FFD060"},
-    {id="emerald",  desc="Smeraldo",  tex="mio_portale_blue.png^[multiply:#20C060"},
-    {id="crystal",  desc="Cristallo", tex="mio_portale_blue.png^[multiply:#80E0FF"},
-}
-
-local ALL_FRAME_NODES = {}
-for _, mat in ipairs(FRAME_MATERIALS) do
-    ALL_FRAME_NODES["mio_portale:frame_" .. mat.id] = true
-end
+local ALL_FRAME_NODES = {["mio_portale:frame"] = true}
 
 -- ── entity ancora ─────────────────────────────────────────────────────────────
 
@@ -477,7 +463,7 @@ open_portal_config = function(player, portal_name)
     local all_nodes = get_all_nodes()
     local mat_items = {}
     local mat_selected = 1
-    local current_node = pp.node_name or "mio_portale:frame_blue"
+    local current_node = pp.node_name or "mio_portale:frame"
     local preview_node = player_mat_preview[pname] or current_node
     for i, name in ipairs(all_nodes) do
         local def = minetest.registered_nodes[name]
@@ -631,36 +617,33 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     minetest.chat_send_player(pname, msg)
 end)
 
--- ── registrazione nodi cornice ────────────────────────────────────────────────
+-- ── registrazione nodo cornice ────────────────────────────────────────────────
 
-for _, mat in ipairs(FRAME_MATERIALS) do
-    local node_name = "mio_portale:frame_" .. mat.id
-    minetest.register_node(node_name, {
-        description = "Cornice Portale " .. mat.desc ..
-            "\n(cornice rettangolare, interno " .. MIN_W .. "x" .. MIN_H ..
-            " a " .. MAX_W .. "x" .. MAX_H .. " nodi di aria)",
-        tiles = {mat.tex},
-        groups = {cracky=3, oddly_breakable_by_hand=3},
-        after_place_node = function(pos, placer)
-            try_activate_near(pos, node_name, placer)
-        end,
-        after_dig_node = function(pos)
-            deactivate_if_frame(pos)
-        end,
-        on_rightclick = function(pos, node, player, itemstack, pointed_thing)
-            local found = find_portal_for_block(pos)
-            if found then
-                open_portal_config(player, found)
-            else
-                minetest.chat_send_player(player:get_player_name(),
-                    "[portale] Questo blocco non fa parte di un portale attivo.")
-            end
-        end,
-    })
-end
+minetest.register_node("mio_portale:frame", {
+    description = "Cornice Portale" ..
+        "\n(cornice rettangolare, interno " .. MIN_W .. "x" .. MIN_H ..
+        " a " .. MAX_W .. "x" .. MAX_H .. " nodi di aria)",
+    tiles = {"mio_portale_blue.png"},
+    groups = {cracky=3, oddly_breakable_by_hand=3},
+    after_place_node = function(pos, placer)
+        try_activate_near(pos, "mio_portale:frame", placer)
+    end,
+    after_dig_node = function(pos)
+        deactivate_if_frame(pos)
+    end,
+    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
+        local found = find_portal_for_block(pos)
+        if found then
+            open_portal_config(player, found)
+        else
+            minetest.chat_send_player(player:get_player_name(),
+                "[portale] Questo blocco non fa parte di un portale attivo.")
+        end
+    end,
+})
 
 -- Global callbacks so frames built from any game node activate/deactivate portals.
--- mio_portale:frame_* nodes already have after_place/after_dig; skip double-call.
+-- mio_portale:frame already has after_place/after_dig; skip double-call.
 minetest.register_on_placenode(function(pos, newnode, placer)
     if ALL_FRAME_NODES[newnode.name] then return end
     try_activate_near(pos, newnode.name, placer)
