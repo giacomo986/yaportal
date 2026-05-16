@@ -610,6 +610,13 @@ minetest.register_globalstep(function(dtime)
                 entered_from_front = false,
                 triggered          = true,
             }
+            -- The cam hint for dst was set above for a seamless pre-render frame.
+            -- Clear it now so the live camera takes over on the next render frame.
+            -- (state[teleport_src] = {in_bounds=false} bypasses the normal leave-bounds
+            -- clearing that would have done this via the source portal's leave handler.)
+            if dst_idx then
+                minetest.clear_portal_cam_hint(dst_idx)
+            end
         end
     end
 end)
