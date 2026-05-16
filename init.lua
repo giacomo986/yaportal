@@ -25,6 +25,9 @@ local portal_index = {}  -- name → 0-based int
 local anchors = {}              -- name → entity object
 local player_states = {}        -- pname → {[portal_name] → {in_bounds,entered_from_front,triggered}}
 local player_form_context = {}  -- pname → portal_name currently being configured
+local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
+local open_portal_config  -- forward declared; assigned below
+local hooked_nodes        = {}  -- node names that received the portal right-click hook
 
 -- ── materiali cornice ─────────────────────────────────────────────────────────
 
@@ -50,10 +53,17 @@ minetest.register_entity("mio_portale:anchor", {
     initial_properties = {
         visual = "cube", visual_size = {x=0, y=0},
         collisionbox = {0,0,0,0,0,0},
+        selectionbox = {-0.5,-0.5,-0.5, 0.5,0.5,0.5},
         collide_with_objects = false, physical = false,
         is_visible = false, static_save = false,
+        pointable = true,
     },
     on_activate = function(self) self.object:set_armor_groups({immortal=1}) end,
+    on_rightclick = function(self, clicker)
+        if self._portal_name and clicker and clicker:is_player() then
+            open_portal_config(clicker, self._portal_name)
+        end
+    end,
 })
 
 local function update_anchor(name, pp)
@@ -71,6 +81,21 @@ local function update_anchor(name, pp)
             pos = {x=pp.cx, y=pp.cy+(h-1)/2, z=pp.cz+(w-1)/2}
         end
         anchors[name] = minetest.add_entity(pos, "mio_portale:anchor")
+        if anchors[name] then
+            local ent = anchors[name]:get_luaentity()
+            if ent then ent._portal_name = name end
+            -- Selectionbox covers the entire portal opening so right-clicking
+            -- the air inside the portal (from either side) hits the anchor.
+            local hw = w / 2
+            local hh = h / 2
+            local sb
+            if pp.axis == 0 then
+                sb = {-hw, -hh, -0.6, hw, hh, 0.6}
+            else
+                sb = {-0.6, -hh, -hw, 0.6, hh, hw}
+            end
+            anchors[name]:set_properties({selectionbox = sb})
+        end
     end
 end
 
@@ -225,6 +250,33 @@ local function block_in_frame(pos, pp)
     end
 end
 
+local function get_frame_positions(pp)
+    local pos_list = {}
+    local w = pp.w or 2
+    local h = pp.h or 3
+    local cx, cy, cz = pp.cx, pp.cy, pp.cz
+    if pp.axis == 0 then
+        for dx = -1, w do
+            pos_list[#pos_list+1] = {x=cx+dx, y=cy-1, z=cz}
+            pos_list[#pos_list+1] = {x=cx+dx, y=cy+h, z=cz}
+        end
+        for dy = 0, h-1 do
+            pos_list[#pos_list+1] = {x=cx-1, y=cy+dy, z=cz}
+            pos_list[#pos_list+1] = {x=cx+w, y=cy+dy, z=cz}
+        end
+    else
+        for dz = -1, w do
+            pos_list[#pos_list+1] = {x=cx, y=cy-1, z=cz+dz}
+            pos_list[#pos_list+1] = {x=cx, y=cy+h, z=cz+dz}
+        end
+        for dy = 0, h-1 do
+            pos_list[#pos_list+1] = {x=cx, y=cy+dy, z=cz-1}
+            pos_list[#pos_list+1] = {x=cx, y=cy+dy, z=cz+w}
+        end
+    end
+    return pos_list
+end
+
 local function find_portal_for_block(pos)
     for name, pp in pairs(portals) do
         if block_in_frame(pos, pp) then return name end
@@ -267,6 +319,30 @@ local function save_portals()
     storage:set_string("portals_v2", minetest.serialize(portals))
 end
 
+-- Injects a portal right-click handler into any external node type used as a
+-- frame material, falling back to the node's original on_rightclick if the
+-- clicked position isn't part of a portal.
+local function ensure_portal_rightclick(node_name)
+    if hooked_nodes[node_name] then return end
+    if ALL_FRAME_NODES[node_name] then return end  -- already handled via node def
+    local def = minetest.registered_nodes[node_name]
+    if not def then return end
+    hooked_nodes[node_name] = true
+    local original_rc = def.on_rightclick
+    minetest.override_item(node_name, {
+        on_rightclick = function(pos, node, player, itemstack, pointed_thing)
+            local found = find_portal_for_block(pos)
+            if found then
+                open_portal_config(player, found)
+                return itemstack
+            end
+            if original_rc then
+                return original_rc(pos, node, player, itemstack, pointed_thing)
+            end
+        end,
+    })
+end
+
 minetest.register_on_mods_loaded(function()
     local s = storage:get_string("portals_v2")
     if s and s ~= "" then
@@ -275,6 +351,9 @@ minetest.register_on_mods_loaded(function()
     sync_portals()
     for name, pp in pairs(portals) do
         update_anchor(name, pp)
+        if pp.node_name then
+            ensure_portal_rightclick(pp.node_name)
+        end
     end
 end)
 
@@ -352,7 +431,22 @@ end
 
 -- ── GUI configurazione ────────────────────────────────────────────────────────
 
-local function open_portal_config(player, portal_name)
+local function get_all_nodes()
+    local result = {}
+    for name, def in pairs(minetest.registered_nodes) do
+        if name ~= "air" and name ~= "ignore"
+           and def.description and def.description ~= ""
+           and def.drawtype ~= "airlike"
+           and def.drawtype ~= "liquid"
+           and def.drawtype ~= "flowingliquid" then
+            result[#result+1] = name
+        end
+    end
+    table.sort(result)
+    return result
+end
+
+open_portal_config = function(player, portal_name)
     local pp = portals[portal_name]
     if not pp then return end
 
@@ -379,27 +473,97 @@ local function open_portal_config(player, portal_name)
     local info = "Dimensioni: " .. (pp.w or "?") .. "x" .. (pp.h or "?") ..
                  " nodi  |  Asse: " .. (pp.axis==0 and "Z" or "X")
 
+    -- Build material textlist from all registered nodes
+    local all_nodes = get_all_nodes()
+    local mat_items = {}
+    local mat_selected = 1
+    local current_node = pp.node_name or "mio_portale:frame_blue"
+    local preview_node = player_mat_preview[pname] or current_node
+    for i, name in ipairs(all_nodes) do
+        local def = minetest.registered_nodes[name]
+        local short_desc = (def and def.description and
+            def.description:match("^([^\n]+)")) or name
+        mat_items[#mat_items+1] = minetest.formspec_escape(short_desc .. " (" .. name .. ")")
+        if name == preview_node then mat_selected = i end
+    end
+
+    local preview_label = preview_node == current_node
+        and "Anteprima:"
+        or  "Anteprima (non applicato):"
+
     minetest.show_formspec(pname, "mio_portale:config",
         "formspec_version[4]" ..
-        "size[8,6.5]" ..
+        "size[9,11.5]" ..
         "label[0.5,0.5;Configura Portale]" ..
         "label[0.5,1.1;" .. minetest.formspec_escape(info) .. "]" ..
-        "field[0.5,2;7,0.8;portal_name;Nome portale;" ..
+        "field[0.5,2;8.5,0.8;portal_name;Nome portale;" ..
             minetest.formspec_escape(portal_name) .. "]" ..
         "label[0.5,3.1;Collega a:]" ..
-        "dropdown[0.5,3.6;7,0.8;portal_link;" ..
+        "dropdown[0.5,3.6;8.5,0.8;portal_link;" ..
             table.concat(link_items, ",") .. ";" .. selected .. "]" ..
-        "button[2,5.5;4,0.8;save;Salva]"
+        "label[0.5,4.8;Materiale cornice:]" ..
+        "label[4.5,4.8;" .. minetest.formspec_escape(preview_label) .. "]" ..
+        "item_image[7.5,4.4;1.2,1.2;" .. preview_node .. "]" ..
+        "textlist[0.5,5.6;8.5,4.0;material_list;" ..
+            table.concat(mat_items, ",") .. ";" .. mat_selected .. "]" ..
+        "button[0.5,10.1;4,0.8;apply_material;Applica Materiale]" ..
+        "button[5,10.1;3.5,0.8;save;Salva]"
     )
 end
 
 minetest.register_on_player_receive_fields(function(player, formname, fields)
     if formname ~= "mio_portale:config" then return end
-    if not fields.save then return end
 
     local pname = player:get_player_name()
     local portal_name = player_form_context[pname]
     if not portal_name or not portals[portal_name] then return end
+
+    -- Form closed
+    if fields.quit then
+        player_mat_preview[pname] = nil
+        return
+    end
+
+    -- Textlist selection changed → update preview and reopen (live preview)
+    if fields.material_list and not fields.save and not fields.apply_material then
+        local evt, idx_str = fields.material_list:match("^([A-Z]+):(%d+)$")
+        if evt and evt ~= "INV" then
+            local idx = tonumber(idx_str)
+            local node = idx and get_all_nodes()[idx]
+            if node then
+                player_mat_preview[pname] = node
+                open_portal_config(player, portal_name)
+            end
+        end
+        return
+    end
+
+    -- "Applica Materiale" button → swap frame blocks to selected node
+    if fields.apply_material then
+        local pp = portals[portal_name]
+        if pp then
+            local new_node = player_mat_preview[pname]
+            if new_node and new_node ~= pp.node_name then
+                local old_node = pp.node_name
+                for _, fpos in ipairs(get_frame_positions(pp)) do
+                    if minetest.get_node(fpos).name == old_node then
+                        minetest.swap_node(fpos, {name = new_node})
+                    end
+                end
+                pp.node_name = new_node
+                ensure_portal_rightclick(new_node)
+                save_portals()
+                minetest.chat_send_player(pname,
+                    "[portale] Materiale applicato: " .. new_node)
+            end
+            open_portal_config(player, portal_name)
+        end
+        return
+    end
+
+    if not fields.save then return end
+
+    -- "Salva" button → rename + link
 
     -- Parse and sanitize new name
     local new_name = ((fields.portal_name or portal_name):match("^%s*(.-)%s*$"))
@@ -410,9 +574,8 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     local selected_str = fields.portal_link or "(nessuno)"
     local link_name = nil
     if selected_str ~= "(nessuno)" then
-        local unescaped = selected_str
-        if portals[unescaped] and unescaped ~= portal_name then
-            link_name = unescaped
+        if portals[selected_str] and selected_str ~= portal_name then
+            link_name = selected_str
         end
     end
 
@@ -425,6 +588,11 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
         end
         anchors[new_name] = anchors[portal_name]
         anchors[portal_name] = nil
+        if anchors[new_name] then
+            local ent = anchors[new_name]:get_luaentity()
+            if ent then ent._portal_name = new_name end
+        end
+        player_mat_preview[new_name] = player_mat_preview[pname]
         player_form_context[pname] = new_name
         portal_name = new_name
     end
@@ -443,7 +611,6 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     pp.link = link_name
     if link_name and portals[link_name] then
         local lt = portals[link_name]
-        -- Remove lt's old back-link if it pointed elsewhere
         if lt.link and lt.link ~= portal_name and portals[lt.link] then
             if portals[lt.link].link == link_name then
                 portals[lt.link].link = nil
@@ -492,12 +659,25 @@ for _, mat in ipairs(FRAME_MATERIALS) do
     })
 end
 
+-- Global callbacks so frames built from any game node activate/deactivate portals.
+-- mio_portale:frame_* nodes already have after_place/after_dig; skip double-call.
+minetest.register_on_placenode(function(pos, newnode, placer)
+    if ALL_FRAME_NODES[newnode.name] then return end
+    try_activate_near(pos, newnode.name, placer)
+end)
+
+minetest.register_on_dignode(function(pos, oldnode)
+    if ALL_FRAME_NODES[oldnode.name] then return end
+    deactivate_if_frame(pos)
+end)
+
 -- ── teletrasporto ────────────────────────────────────────────────────────────
 
 minetest.register_on_leaveplayer(function(player)
     local name = player:get_player_name()
     player_states[name] = nil
     player_form_context[name] = nil
+    player_mat_preview[name] = nil
 end)
 
 minetest.register_globalstep(function(dtime)
