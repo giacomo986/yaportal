@@ -793,8 +793,7 @@ end)
 
 local GUN_W, GUN_H = 2, 3  -- interior 2×3 → outer frame 4×5
 
--- on_floor: skip the bottom frame row check (it's the mounting surface).
-local function portal_gun_can_place(cx, cy, cz, axis, w, h, on_floor)
+local function portal_gun_can_place(cx, cy, cz, axis, w, h)
     if axis == 0 then
         for dx = 0, w-1 do
             for dy = 0, h-1 do
@@ -802,7 +801,7 @@ local function portal_gun_can_place(cx, cy, cz, axis, w, h, on_floor)
             end
         end
         for dx = -1, w do
-            if not on_floor and node_at(cx+dx, cy-1, cz) ~= "air" then return false end
+            if node_at(cx+dx, cy-1, cz) ~= "air" then return false end
             if node_at(cx+dx, cy+h,  cz) ~= "air" then return false end
         end
         for dy = 0, h-1 do
@@ -816,7 +815,7 @@ local function portal_gun_can_place(cx, cy, cz, axis, w, h, on_floor)
             end
         end
         for dz = -1, w do
-            if not on_floor and node_at(cx, cy-1, cz+dz) ~= "air" then return false end
+            if node_at(cx, cy-1, cz+dz) ~= "air" then return false end
             if node_at(cx, cy+h,  cz+dz) ~= "air" then return false end
         end
         for dy = 0, h-1 do
@@ -893,7 +892,6 @@ local function portal_gun_shoot(player, pointed_thing, color)
         or {x=above.x, y=above.y, z=above.z}
 
     local axis, ns, cx, cy, cz
-    local on_floor = false
 
     if dy ~= 0 then
         -- Horizontal surface hit.
@@ -904,22 +902,22 @@ local function portal_gun_shoot(player, pointed_thing, color)
         end
         -- Floor: create a vertical portal standing on the floor.
         -- Orientation comes from the player's horizontal look direction.
-        on_floor = true
+        -- cy = above.y + 1 so the bottom frame row is at above.y (air), not the floor block.
         local look = player:get_look_dir()
-        cy = above.y  -- interior bottom at first air block above floor
+        cy = above.y + 1
         if math.abs(look.z) >= math.abs(look.x) then
             axis = 0
             ns   = (look.z < 0) and 1 or -1
             cz   = above.z
             cx   = portal_gun_find_h(math.floor(ip.x), above.x, function(try_cx)
-                return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H, on_floor)
+                return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H)
             end)
         else
             axis = 1
             ns   = (look.x < 0) and 1 or -1
             cx   = above.x
             cz   = portal_gun_find_h(math.floor(ip.z), above.z, function(try_cz)
-                return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H, on_floor)
+                return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H)
             end)
         end
     elseif dz ~= 0 then
@@ -928,7 +926,7 @@ local function portal_gun_shoot(player, pointed_thing, color)
         cz   = above.z
         cy   = math.floor(ip.y - 0.5)
         cx   = portal_gun_find_h(math.floor(ip.x), above.x, function(try_cx)
-            return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H, on_floor)
+            return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H)
         end)
     else
         -- X-facing wall.
@@ -936,7 +934,7 @@ local function portal_gun_shoot(player, pointed_thing, color)
         cx   = above.x
         cy   = math.floor(ip.y - 0.5)
         cz   = portal_gun_find_h(math.floor(ip.z), above.z, function(try_cz)
-            return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H, on_floor)
+            return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H)
         end)
     end
 
