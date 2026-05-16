@@ -31,7 +31,11 @@ local hooked_nodes        = {}  -- node names that received the portal right-cli
 
 -- ── nodo cornice ─────────────────────────────────────────────────────────────
 
-local ALL_FRAME_NODES = {["mio_portale:frame"] = true}
+local ALL_FRAME_NODES = {
+    ["mio_portale:frame"]        = true,
+    ["mio_portale:frame_blue"]   = true,
+    ["mio_portale:frame_orange"] = true,
+}
 
 -- ── entity ancora ─────────────────────────────────────────────────────────────
 
@@ -661,6 +665,7 @@ minetest.register_on_leaveplayer(function(player)
     player_states[name] = nil
     player_form_context[name] = nil
     player_mat_preview[name] = nil
+    -- gun portal cleanup is done by a second register_on_leaveplayer in the portal gun section
 end)
 
 minetest.register_globalstep(function(dtime)
@@ -781,5 +786,186 @@ minetest.register_globalstep(function(dtime)
                 minetest.clear_portal_cam_hint(dst_idx)
             end
         end
+    end
+end)
+
+-- ── portal gun ────────────────────────────────────────────────────────────────
+
+local GUN_W, GUN_H = 2, 3  -- interior 2×3 → outer frame 4×5
+
+local function portal_gun_check_space(cx, cy, cz, axis, w, h)
+    if axis == 0 then
+        for dx = 0, w-1 do
+            for dy = 0, h-1 do
+                if node_at(cx+dx, cy+dy, cz) ~= "air" then return false end
+            end
+        end
+        for dx = -1, w do
+            if node_at(cx+dx, cy-1, cz) ~= "air" then return false end
+            if node_at(cx+dx, cy+h,  cz) ~= "air" then return false end
+        end
+        for dy = 0, h-1 do
+            if node_at(cx-1, cy+dy, cz) ~= "air" then return false end
+            if node_at(cx+w, cy+dy, cz) ~= "air" then return false end
+        end
+    else
+        for dz = 0, w-1 do
+            for dy = 0, h-1 do
+                if node_at(cx, cy+dy, cz+dz) ~= "air" then return false end
+            end
+        end
+        for dz = -1, w do
+            if node_at(cx, cy-1, cz+dz) ~= "air" then return false end
+            if node_at(cx, cy+h,  cz+dz) ~= "air" then return false end
+        end
+        for dy = 0, h-1 do
+            if node_at(cx, cy+dy, cz-1) ~= "air" then return false end
+            if node_at(cx, cy+dy, cz+w) ~= "air" then return false end
+        end
+    end
+    return true
+end
+
+local function portal_gun_place_frame(cx, cy, cz, axis, w, h, node_name)
+    if axis == 0 then
+        for dx = -1, w do
+            minetest.set_node({x=cx+dx, y=cy-1, z=cz}, {name=node_name})
+            minetest.set_node({x=cx+dx, y=cy+h,  z=cz}, {name=node_name})
+        end
+        for dy = 0, h-1 do
+            minetest.set_node({x=cx-1, y=cy+dy, z=cz}, {name=node_name})
+            minetest.set_node({x=cx+w, y=cy+dy, z=cz}, {name=node_name})
+        end
+    else
+        for dz = -1, w do
+            minetest.set_node({x=cx, y=cy-1, z=cz+dz}, {name=node_name})
+            minetest.set_node({x=cx, y=cy+h,  z=cz+dz}, {name=node_name})
+        end
+        for dy = 0, h-1 do
+            minetest.set_node({x=cx, y=cy+dy, z=cz-1}, {name=node_name})
+            minetest.set_node({x=cx, y=cy+dy, z=cz+w}, {name=node_name})
+        end
+    end
+end
+
+-- Removes a player's gun portal of one color. Does NOT call save/sync — caller must.
+local function portal_gun_remove(pname, color)
+    local portal_name = "gun_" .. color .. "_" .. pname
+    local pp = portals[portal_name]
+    if not pp then return end
+    for _, fpos in ipairs(get_frame_positions(pp)) do
+        if minetest.get_node(fpos).name == pp.node_name then
+            minetest.remove_node(fpos)
+        end
+    end
+    if pp.link and portals[pp.link] then
+        portals[pp.link].link = nil
+    end
+    portals[portal_name] = nil
+    update_anchor(portal_name, nil)
+end
+
+local function portal_gun_shoot(player, pointed_thing, color)
+    if pointed_thing.type ~= "node" then return end
+    local pname = player:get_player_name()
+    local under = pointed_thing.under
+    local above = pointed_thing.above
+    local dz = above.z - under.z
+    local dx = above.x - under.x
+    local dy = above.y - under.y
+    local axis, ns
+    if dz ~= 0 then
+        axis, ns = 0, dz
+    elseif dx ~= 0 then
+        axis, ns = 1, dx
+    else
+        minetest.chat_send_player(pname,
+            "[portale] Impossibile piazzare portali su pavimenti o soffitti.")
+        return
+    end
+    -- intersection_point gives sub-block precision for centering the frame.
+    local ip = pointed_thing.intersection_point
+        or {x=above.x, y=above.y, z=above.z}
+    local cx, cy, cz
+    if axis == 0 then
+        -- Frame in XY plane; interior center-x at cx+0.5, center-y at cy+1.
+        cx = math.floor(ip.x)
+        cy = math.floor(ip.y - 0.5)
+        cz = above.z
+    else
+        -- Frame in ZY plane; interior center-z at cz+0.5, center-y at cy+1.
+        cx = above.x
+        cy = math.floor(ip.y - 0.5)
+        cz = math.floor(ip.z)
+    end
+    if not portal_gun_check_space(cx, cy, cz, axis, GUN_W, GUN_H) then
+        minetest.chat_send_player(pname,
+            "[portale] Spazio insufficiente per il portale.")
+        return
+    end
+    local frame_node  = "mio_portale:frame_" .. color
+    local portal_name = "gun_" .. color .. "_" .. pname
+    portal_gun_remove(pname, color)
+    portal_gun_place_frame(cx, cy, cz, axis, GUN_W, GUN_H, frame_node)
+    portals[portal_name] = {
+        cx=cx, cy=cy, cz=cz,
+        axis=axis, ns=ns,
+        w=GUN_W, h=GUN_H,
+        node_name=frame_node,
+    }
+    local other_color = color == "blue" and "orange" or "blue"
+    local other_name  = "gun_" .. other_color .. "_" .. pname
+    if portals[other_name] then
+        portals[portal_name].link = other_name
+        portals[other_name].link  = portal_name
+    end
+    save_portals()
+    sync_portals()
+    update_anchor(portal_name, portals[portal_name])
+end
+
+minetest.register_node("mio_portale:frame_blue", {
+    description = "Cornice Portale Blu (portal gun, indistruttibile)",
+    tiles = {"mio_portale_blue.png"},
+    groups = {not_in_creative_inventory=1},
+    diggable = false,
+    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
+        local found = find_portal_for_block(pos)
+        if found then open_portal_config(player, found) end
+    end,
+})
+
+minetest.register_node("mio_portale:frame_orange", {
+    description = "Cornice Portale Arancione (portal gun, indistruttibile)",
+    tiles = {"mio_portale_orange.png"},
+    groups = {not_in_creative_inventory=1},
+    diggable = false,
+    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
+        local found = find_portal_for_block(pos)
+        if found then open_portal_config(player, found) end
+    end,
+})
+
+minetest.register_tool("mio_portale:portal_gun", {
+    description = "Portal Gun\nClic sinistro: portale blu\nClic destro: portale arancione",
+    inventory_image = "mio_portale_gun.png",
+    on_use = function(itemstack, user, pointed_thing)
+        portal_gun_shoot(user, pointed_thing, "blue")
+        return itemstack
+    end,
+    on_place = function(itemstack, placer, pointed_thing)
+        portal_gun_shoot(placer, pointed_thing, "orange")
+        return itemstack
+    end,
+})
+
+minetest.register_on_leaveplayer(function(player)
+    local name = player:get_player_name()
+    local had_gun = portals["gun_blue_"..name] or portals["gun_orange_"..name]
+    portal_gun_remove(name, "blue")
+    portal_gun_remove(name, "orange")
+    if had_gun then
+        save_portals()
+        sync_portals()
     end
 end)
