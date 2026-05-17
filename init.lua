@@ -331,7 +331,7 @@ local function ensure_portal_rightclick(node_name)
             if original_rc then
                 return original_rc(pos, node, player, itemstack, pointed_thing)
             end
-            return minetest.item_place(itemstack, player, pointed_thing)
+            return minetest.item_place_node(itemstack, player, pointed_thing)
         end,
     })
 end
