@@ -76,9 +76,11 @@ local function update_anchor(name, pp)
             local ent = anchors[name]:get_luaentity()
             if ent then ent._portal_name = name end
             -- Selectionbox covers the entire portal opening so right-clicking
-            -- the air inside the portal (from either side) hits the anchor.
-            local hw = w / 2
-            local hh = h / 2
+            -- Selectionbox covers interior + 1-node frame border on all sides.
+            -- Depth ±0.6 protrudes slightly past frame block faces (±0.5) so
+            -- the entity intercepts clicks before the underlying node.
+            local hw = w / 2 + 1
+            local hh = h / 2 + 1
             local sb
             if pp.axis == 0 then
                 sb = {-hw, -hh, -0.6, hw, hh, 0.6}
