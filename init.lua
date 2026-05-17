@@ -28,7 +28,6 @@ local player_form_context = {}  -- pname → portal_name currently being configu
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
 local player_mat_filter   = {}  -- pname → filter string for material textlist
 local open_portal_config  -- forward declared; assigned below
-local hooked_nodes        = {}  -- node names that received the portal right-click hook
 
 -- ── nodo cornice ─────────────────────────────────────────────────────────────
 
@@ -77,9 +76,11 @@ local function update_anchor(name, pp)
             local ent = anchors[name]:get_luaentity()
             if ent then ent._portal_name = name end
             -- Selectionbox covers the entire portal opening so right-clicking
-            -- the air inside the portal (from either side) hits the anchor.
-            local hw = w / 2
-            local hh = h / 2
+            -- Selectionbox covers interior + 1-node frame border on all sides.
+            -- Depth ±0.6 protrudes slightly past frame block faces (±0.5) so
+            -- the entity intercepts clicks before the underlying node.
+            local hw = w / 2 + 1
+            local hh = h / 2 + 1
             local sb
             if pp.axis == 0 then
                 sb = {-hw, -hh, -0.6, hw, hh, 0.6}
@@ -311,29 +312,6 @@ local function save_portals()
     storage:set_string("portals_v2", minetest.serialize(portals))
 end
 
--- Injects a portal right-click handler into any external node type used as a
--- frame material, falling back to the node's original on_rightclick if the
--- clicked position isn't part of a portal.
-local function ensure_portal_rightclick(node_name)
-    if hooked_nodes[node_name] then return end
-    if ALL_FRAME_NODES[node_name] then return end  -- already handled via node def
-    local def = minetest.registered_nodes[node_name]
-    if not def then return end
-    hooked_nodes[node_name] = true
-    local original_rc = def.on_rightclick
-    minetest.override_item(node_name, {
-        on_rightclick = function(pos, node, player, itemstack, pointed_thing)
-            local found = find_portal_for_block(pos)
-            if found then
-                open_portal_config(player, found)
-                return itemstack
-            end
-            if original_rc then
-                return original_rc(pos, node, player, itemstack, pointed_thing)
-            end
-        end,
-    })
-end
 
 minetest.register_on_mods_loaded(function()
     local s = storage:get_string("portals_v2")
@@ -341,11 +319,30 @@ minetest.register_on_mods_loaded(function()
         portals = minetest.deserialize(s) or {}
     end
     sync_portals()
+    -- Migrate portals with external frame materials to mio_portale:frame.
+    -- Avoids injecting on_rightclick globally into common node types.
+    local migrated = false
+    for name, pp in pairs(portals) do
+        if pp.node_name and not ALL_FRAME_NODES[pp.node_name] then
+            local ok, err = pcall(function()
+                for _, fpos in ipairs(get_frame_positions(pp)) do
+                    if minetest.get_node(fpos).name == pp.node_name then
+                        minetest.swap_node(fpos, {name = "mio_portale:frame"})
+                    end
+                end
+            end)
+            if ok then
+                pp.node_name = "mio_portale:frame"
+                migrated = true
+            else
+                minetest.log("warning", "[mio_portale] skip migration for '" ..
+                    name .. "': " .. tostring(err))
+            end
+        end
+    end
+    if migrated then save_portals() end
     for name, pp in pairs(portals) do
         update_anchor(name, pp)
-        if pp.node_name then
-            ensure_portal_rightclick(pp.node_name)
-        end
     end
 end)
 
@@ -590,7 +587,6 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
                     end
                 end
                 pp.node_name = new_node
-                ensure_portal_rightclick(new_node)
                 save_portals()
                 minetest.chat_send_player(pname,
                     "[portale] Materiale applicato: " .. new_node)
@@ -688,10 +684,8 @@ minetest.register_node("mio_portale:frame", {
         local found = find_portal_for_block(pos)
         if found then
             open_portal_config(player, found)
-        else
-            minetest.chat_send_player(player:get_player_name(),
-                "[portale] Questo blocco non fa parte di un portale attivo.")
         end
+        return itemstack
     end,
 })
 
