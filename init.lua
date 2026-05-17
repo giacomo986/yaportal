@@ -331,6 +331,7 @@ local function ensure_portal_rightclick(node_name)
             if original_rc then
                 return original_rc(pos, node, player, itemstack, pointed_thing)
             end
+            return minetest.item_place(itemstack, player, pointed_thing)
         end,
     })
 end
@@ -688,10 +689,9 @@ minetest.register_node("mio_portale:frame", {
         local found = find_portal_for_block(pos)
         if found then
             open_portal_config(player, found)
-        else
-            minetest.chat_send_player(player:get_player_name(),
-                "[portale] Questo blocco non fa parte di un portale attivo.")
+            return itemstack
         end
+        return minetest.item_place(itemstack, player, pointed_thing)
     end,
 })
 
