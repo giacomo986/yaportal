@@ -704,12 +704,6 @@ local function is_known_frame_material(node_name)
     return false
 end
 
-minetest.register_on_placenode(function(pos, newnode, placer)
-    if ALL_FRAME_NODES[newnode.name] then return end
-    if not is_known_frame_material(newnode.name) then return end
-    try_activate_near(pos, newnode.name, placer)
-end)
-
 minetest.register_on_dignode(function(pos, oldnode)
     if ALL_FRAME_NODES[oldnode.name] then return end
     if not is_known_frame_material(oldnode.name) then return end
