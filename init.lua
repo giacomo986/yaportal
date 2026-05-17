@@ -26,6 +26,7 @@ local anchors = {}              -- name → entity object
 local player_states = {}        -- pname → {[portal_name] → {in_bounds,entered_from_front,triggered}}
 local player_form_context = {}  -- pname → portal_name currently being configured
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
+local player_mat_filter   = {}  -- pname → filter string for material textlist
 local open_portal_config  -- forward declared; assigned below
 local hooked_nodes        = {}  -- node names that received the portal right-click hook
 
@@ -464,14 +465,30 @@ open_portal_config = function(player, portal_name)
     local info = "Dimensioni: " .. (pp.w or "?") .. "x" .. (pp.h or "?") ..
                  " nodi  |  Asse: " .. (pp.axis==0 and "Z" or "X")
 
-    -- Build material textlist from all registered nodes
-    local all_nodes = get_all_nodes()
-    local mat_items = {}
+    -- Build filtered material textlist
+    local filter      = (player_mat_filter[pname] or ""):lower()
+    local all_nodes   = get_all_nodes()
+    local nodes       = {}
+    for _, name in ipairs(all_nodes) do
+        if filter == "" then
+            nodes[#nodes+1] = name
+        else
+            local def  = minetest.registered_nodes[name]
+            local desc = (def and def.description and
+                def.description:match("^([^\n]+)")) or name
+            if name:lower():find(filter, 1, true)
+               or desc:lower():find(filter, 1, true) then
+                nodes[#nodes+1] = name
+            end
+        end
+    end
+
+    local mat_items    = {}
     local mat_selected = 1
     local current_node = pp.node_name or "mio_portale:frame"
     local preview_node = player_mat_preview[pname] or current_node
-    for i, name in ipairs(all_nodes) do
-        local def = minetest.registered_nodes[name]
+    for i, name in ipairs(nodes) do
+        local def        = minetest.registered_nodes[name]
         local short_desc = (def and def.description and
             def.description:match("^([^\n]+)")) or name
         mat_items[#mat_items+1] = minetest.formspec_escape(short_desc .. " (" .. name .. ")")
@@ -495,7 +512,9 @@ open_portal_config = function(player, portal_name)
         "label[0.5,4.8;Materiale cornice:]" ..
         "label[4.5,4.8;" .. minetest.formspec_escape(preview_label) .. "]" ..
         "item_image[7.5,4.4;1.2,1.2;" .. preview_node .. "]" ..
-        "textlist[0.5,5.6;8.5,4.0;material_list;" ..
+        "field[0.5,5.3;8.5,0.7;mat_filter;Filtra:;" ..
+            minetest.formspec_escape(player_mat_filter[pname] or "") .. "]" ..
+        "textlist[0.5,6.1;8.5,3.5;material_list;" ..
             table.concat(mat_items, ",") .. ";" .. mat_selected .. "]" ..
         "button[0.5,10.1;4,0.8;apply_material;Applica Materiale]" ..
         "button[5,10.1;3.5,0.8;save;Salva]"
@@ -512,6 +531,14 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     -- Form closed
     if fields.quit then
         player_mat_preview[pname] = nil
+        player_mat_filter[pname]  = nil
+        return
+    end
+
+    -- Filter field: Enter key → rebuild filtered list
+    if fields.key_enter_field == "mat_filter" then
+        player_mat_filter[pname] = fields.mat_filter or ""
+        open_portal_config(player, portal_name)
         return
     end
 
@@ -519,8 +546,24 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     if fields.material_list and not fields.save and not fields.apply_material then
         local evt, idx_str = fields.material_list:match("^([A-Z]+):(%d+)$")
         if evt and evt ~= "INV" then
-            local idx = tonumber(idx_str)
-            local node = idx and get_all_nodes()[idx]
+            local idx    = tonumber(idx_str)
+            local filter = (player_mat_filter[pname] or ""):lower()
+            local all    = get_all_nodes()
+            local nodes  = {}
+            for _, name in ipairs(all) do
+                if filter == "" then
+                    nodes[#nodes+1] = name
+                else
+                    local def  = minetest.registered_nodes[name]
+                    local desc = (def and def.description and
+                        def.description:match("^([^\n]+)")) or name
+                    if name:lower():find(filter, 1, true)
+                       or desc:lower():find(filter, 1, true) then
+                        nodes[#nodes+1] = name
+                    end
+                end
+            end
+            local node = idx and nodes[idx]
             if node then
                 player_mat_preview[pname] = node
                 open_portal_config(player, portal_name)
@@ -666,6 +709,7 @@ minetest.register_on_leaveplayer(function(player)
     player_states[name] = nil
     player_form_context[name] = nil
     player_mat_preview[name] = nil
+    player_mat_filter[name]  = nil
     -- gun portal cleanup is done by a second register_on_leaveplayer in the portal gun section
 end)
 
