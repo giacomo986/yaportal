@@ -331,7 +331,6 @@ local function ensure_portal_rightclick(node_name)
             if original_rc then
                 return original_rc(pos, node, player, itemstack, pointed_thing)
             end
-            return minetest.item_place_node(itemstack, player, pointed_thing)
         end,
     })
 end
@@ -684,14 +683,6 @@ minetest.register_node("mio_portale:frame", {
     end,
     after_dig_node = function(pos)
         deactivate_if_frame(pos)
-    end,
-    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
-        local found = find_portal_for_block(pos)
-        if found then
-            open_portal_config(player, found)
-            return itemstack
-        end
-        return minetest.item_place(itemstack, player, pointed_thing)
     end,
 })
 
