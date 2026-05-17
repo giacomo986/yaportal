@@ -656,6 +656,13 @@ minetest.register_node("mio_portale:frame", {
     after_dig_node = function(pos)
         deactivate_if_frame(pos)
     end,
+    on_rightclick = function(pos, node, player, itemstack, pointed_thing)
+        local found = find_portal_for_block(pos)
+        if found then
+            open_portal_config(player, found)
+        end
+        return itemstack
+    end,
 })
 
 -- Global callbacks so frames built from any game node activate/deactivate portals.
