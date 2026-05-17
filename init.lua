@@ -562,7 +562,6 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
                     end
                 end
                 pp.node_name = new_node
-                ensure_portal_rightclick(new_node)
                 save_portals()
                 minetest.chat_send_player(pname,
                     "[portale] Materiale applicato: " .. new_node)
