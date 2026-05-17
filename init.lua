@@ -310,6 +310,31 @@ local function save_portals()
     storage:set_string("portals_v2", minetest.serialize(portals))
 end
 
+-- Injects portal right-click (config open only) into external node types used
+-- as frame material in old portals. No item placement attempted.
+local hooked_nodes = {}
+local function ensure_portal_rightclick(node_name)
+    if hooked_nodes[node_name] then return end
+    if ALL_FRAME_NODES[node_name] then return end
+    local def = minetest.registered_nodes[node_name]
+    if not def then return end
+    hooked_nodes[node_name] = true
+    local original_rc = def.on_rightclick
+    minetest.override_item(node_name, {
+        on_rightclick = function(pos, node, player, itemstack, pointed_thing)
+            local found = find_portal_for_block(pos)
+            if found then
+                open_portal_config(player, found)
+                return itemstack
+            end
+            if original_rc then
+                return original_rc(pos, node, player, itemstack, pointed_thing)
+            end
+            return itemstack
+        end,
+    })
+end
+
 minetest.register_on_mods_loaded(function()
     local s = storage:get_string("portals_v2")
     if s and s ~= "" then
@@ -318,6 +343,9 @@ minetest.register_on_mods_loaded(function()
     sync_portals()
     for name, pp in pairs(portals) do
         update_anchor(name, pp)
+        if pp.node_name then
+            ensure_portal_rightclick(pp.node_name)
+        end
     end
 end)
 
@@ -562,6 +590,7 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
                     end
                 end
                 pp.node_name = new_node
+                ensure_portal_rightclick(new_node)
                 save_portals()
                 minetest.chat_send_player(pname,
                     "[portale] Materiale applicato: " .. new_node)
