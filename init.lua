@@ -28,7 +28,6 @@ local player_form_context = {}  -- pname → portal_name currently being configu
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
 local player_mat_filter   = {}  -- pname → filter string for material textlist
 local open_portal_config  -- forward declared; assigned below
-local hooked_nodes        = {}  -- node names that received the portal right-click hook
 
 -- ── nodo cornice ─────────────────────────────────────────────────────────────
 
@@ -311,30 +310,6 @@ local function save_portals()
     storage:set_string("portals_v2", minetest.serialize(portals))
 end
 
--- Injects a portal right-click handler into any external node type used as a
--- frame material, falling back to the node's original on_rightclick if the
--- clicked position isn't part of a portal.
-local function ensure_portal_rightclick(node_name)
-    if hooked_nodes[node_name] then return end
-    if ALL_FRAME_NODES[node_name] then return end  -- already handled via node def
-    local def = minetest.registered_nodes[node_name]
-    if not def then return end
-    hooked_nodes[node_name] = true
-    local original_rc = def.on_rightclick
-    minetest.override_item(node_name, {
-        on_rightclick = function(pos, node, player, itemstack, pointed_thing)
-            local found = find_portal_for_block(pos)
-            if found then
-                open_portal_config(player, found)
-                return itemstack
-            end
-            if original_rc then
-                return original_rc(pos, node, player, itemstack, pointed_thing)
-            end
-        end,
-    })
-end
-
 minetest.register_on_mods_loaded(function()
     local s = storage:get_string("portals_v2")
     if s and s ~= "" then
@@ -343,9 +318,6 @@ minetest.register_on_mods_loaded(function()
     sync_portals()
     for name, pp in pairs(portals) do
         update_anchor(name, pp)
-        if pp.node_name then
-            ensure_portal_rightclick(pp.node_name)
-        end
     end
 end)
 
