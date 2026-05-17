@@ -512,8 +512,9 @@ open_portal_config = function(player, portal_name)
         "label[0.5,4.8;Materiale cornice:]" ..
         "label[4.5,4.8;" .. minetest.formspec_escape(preview_label) .. "]" ..
         "item_image[7.5,4.4;1.2,1.2;" .. preview_node .. "]" ..
-        "field[0.5,5.3;8.5,0.7;mat_filter;Filtra:;" ..
+        "field[0.5,5.3;5.5,0.7;mat_filter;Filtra:;" ..
             minetest.formspec_escape(player_mat_filter[pname] or "") .. "]" ..
+        "button[6.1,5.3;1.3,0.7;cerca_material;Cerca]" ..
         "textlist[0.5,6.1;8.5,3.5;material_list;" ..
             table.concat(mat_items, ",") .. ";" .. mat_selected .. "]" ..
         "button[0.5,10.1;4,0.8;apply_material;Applica Materiale]" ..
@@ -535,9 +536,13 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
         return
     end
 
-    -- Filter field: Enter key → rebuild filtered list
-    if fields.key_enter_field == "mat_filter" then
-        player_mat_filter[pname] = fields.mat_filter or ""
+    -- Always sync filter from current form state
+    if fields.mat_filter ~= nil then
+        player_mat_filter[pname] = fields.mat_filter
+    end
+
+    -- Filter applied via button or Enter key
+    if fields.cerca_material or fields.key_enter_field == "mat_filter" then
         open_portal_config(player, portal_name)
         return
     end
