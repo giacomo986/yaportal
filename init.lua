@@ -321,15 +321,21 @@ minetest.register_on_mods_loaded(function()
     -- Avoids injecting on_rightclick globally into common node types.
     local migrated = false
     for name, pp in pairs(portals) do
-        if pp.node_name and not ALL_FRAME_NODES[pp.node_name]
-                and pp.cx and pp.cy and pp.cz and pp.axis ~= nil then
-            for _, fpos in ipairs(get_frame_positions(pp)) do
-                if minetest.get_node(fpos).name == pp.node_name then
-                    minetest.swap_node(fpos, {name = "mio_portale:frame"})
+        if pp.node_name and not ALL_FRAME_NODES[pp.node_name] then
+            local ok, err = pcall(function()
+                for _, fpos in ipairs(get_frame_positions(pp)) do
+                    if minetest.get_node(fpos).name == pp.node_name then
+                        minetest.swap_node(fpos, {name = "mio_portale:frame"})
+                    end
                 end
+            end)
+            if ok then
+                pp.node_name = "mio_portale:frame"
+                migrated = true
+            else
+                minetest.log("warning", "[mio_portale] skip migration for '" ..
+                    name .. "': " .. tostring(err))
             end
-            pp.node_name = "mio_portale:frame"
-            migrated = true
         end
     end
     if migrated then save_portals() end
