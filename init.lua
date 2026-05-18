@@ -187,7 +187,7 @@ local function portal_depth(ppos, pp)
 end
 
 local function past_trigger(ppos, pp)
-    return portal_depth(ppos, pp) < -TRIGGER_DEPTH
+    return portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
 end
 
 local function portal_basis(pp)
@@ -760,7 +760,7 @@ minetest.register_globalstep(function(dtime)
                     end
                 end
 
-                local border_entry = just_entered and portal_depth(ppos, pp) <= 0
+                local border_entry = just_entered and portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
                 if s.entered_from_front and not s.triggered and dst
                    and not teleport_src
                    and (past_trigger(ppos, pp) or border_entry)
@@ -795,6 +795,11 @@ minetest.register_globalstep(function(dtime)
 
             local rel     = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
             local new_off = portal_transform_pos(rel, src_n, src_r, dst_n, dst_r)
+            -- Place exit just outside exit frame face, in the block beyond the frame
+            local cur_n = new_off.x * dst_n.x + new_off.z * dst_n.z
+            local adj   = 0.6 - cur_n
+            new_off.x   = new_off.x + adj * dst_n.x
+            new_off.z   = new_off.z + adj * dst_n.z
             local new_pos = {
                 x=dst_c.x+new_off.x,
                 y=dst_c.y+new_off.y,
