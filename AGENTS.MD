@@ -284,6 +284,27 @@ v3f vdir = br*(-dx) + bu*dy + bn*(-dz);
 
 `setRenderProjectionMatrix` su `CCameraSceneNode` — NON `setProjectionMatrix` (quella aggiorna il frustum CPU → SceneManager culla entità → aree nere).
 
+Attivo **solo quando `side < 0`** (vcam sul lato destinazione). Quando `side > 0` (player dentro il portale, vcam sul lato sorgente): `clearRenderProjectionMatrix()` e skip. Motivo: con `side > 0`, `c_e_w = -side + 0.49*BS` diventa negativo per `side > 0.49*BS` → il near plane obliquo finisce dietro la camera → tutto clippato.
+
+### Piani di clipping laterali (gl_ClipDistance)
+
+Quattro piani frustum calcolati per ogni RTT pass, trasmessi come uniform `portalClipPlanes[4]` a tutti gli shader vertex (`nodes_shader`, `object_shader`). Impediscono al frame del portale destinazione di leakare nell'RTT ad angoli obliqui dove il piano di Lengyel è insufficiente.
+
+**Calcolo** (in `renderPortalRTTs`, Phase 2):
+- `vpos` = posizione camera virtuale (render space)
+- Se `apex_side > 0` (camera sul lato destinazione = player dentro il portale): check laterale `|lx| < hw && |ly| < hh`; se entrambe vere → **clip planes disabilitate** (player completamente dentro l'apertura)
+- Se `apex_side <= 0`: standoff minimo `-0.05*BS` lungo la normale, poi 4 piani frustum da `vpos` attraverso i bordi del portale destinazione
+
+**Ogni piano**: `dot(worldPosition, n) + d >= 0` → dentro (visibile nell'RTT).
+
+**Clamping `nbn < 0`** (inclinazione all'indietro): il piano viene proiettato sul piano del portale (componente `bn` rimossa) e ancorato a `edge_center` → piano corridoio perpendicolare alla faccia. Evita che geometria destinazione venga clippata quando l'apice è spostato lateralmente oltre il bordo.
+
+**Abilitazione GPU**: `GL.Enable(GL_CLIP_DISTANCE0..3)` prima di `drawAll()`, `GL.Disable` subito dopo. Attivi solo se `use_clip_planes = true`.
+
+**Shader**: uniform `portalClipPlanes[4]` dichiarata in entrambi i vertex shader; quattro righe `gl_ClipDistance[k] = dot(worldPosition, portalClipPlanes[k].xyz) + portalClipPlanes[k].w` dopo il calcolo di `worldPosition`.
+
+**`PortalManager`**: `setClipPlanes` / `getClipPlanes` — `GameGlobalShaderUniformSetter::onSetUniforms` legge `getClipPlanes().data` e lo passa all'uniform a ogni cambio materiale/programma.
+
 ---
 
 ## Logica Lua (init.lua)

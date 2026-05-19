@@ -16,6 +16,15 @@ struct PortalInfo {
 	bool active = false;
 };
 
+// Lateral clip planes for one RTT pass: 4 planes that bound the exit portal
+// opening (right/left/top/bottom). gl_ClipDistance[k] = dot(worldPos, n) + d.
+// active=false when not in an RTT pass; the shader still writes gl_ClipDistance
+// but GL_CLIP_DISTANCEn is disabled so the values are ignored.
+struct PortalClipPlanes {
+	bool  active = false;
+	float data[16] = {}; // [k*4+0..2]=normal, [k*4+3]=d, for k=0..3
+};
+
 // Non-thread-safe singleton. Access only from the main thread.
 class PortalManager {
 public:
@@ -38,8 +47,13 @@ public:
 	// Lua calls this when the player leaves the source portal bounds.
 	void clearCamHint(int id);
 
+	// Active lateral clip planes for the current RTT pass.
+	void setClipPlanes(const PortalClipPlanes &cp) { m_clip_planes = cp; }
+	const PortalClipPlanes &getClipPlanes() const  { return m_clip_planes; }
+
 private:
 	PortalInfo m_portals[MAX_PORTALS];
 	struct CamHintSlot { v3f pos = {}; bool valid = false; };
 	CamHintSlot m_cam_hint[MAX_PORTALS];
+	PortalClipPlanes m_clip_planes;
 };

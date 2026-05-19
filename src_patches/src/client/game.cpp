@@ -52,6 +52,7 @@
 #include <ICameraSceneNode.h>
 #include "util/tracy_wrapper.h"
 #include "item_visuals_manager.h"
+#include "portal_manager.h"
 
 #if USE_SOUND
 	#include "client/sound/sound_openal.h"
@@ -109,6 +110,9 @@ class GameGlobalShaderUniformSetter : public IShaderUniformSetter
 	CachedPixelShaderSetting<float> m_moon_brightness_pixel{"moonBrightness"};
 	CachedPixelShaderSetting<float>
 		m_volumetric_light_strength_pixel{"volumetricLightStrength"};
+	// Portal lateral clip planes: 4×vec4(normal, d) for gl_ClipDistance[0..3].
+	// Always sent; GPU ignores gl_ClipDistance when GL_CLIP_DISTANCEn is disabled.
+	CachedVertexShaderSetting<float, 16, false> m_portal_clip_planes{"portalClipPlanes"};
 
 	static constexpr std::array<const char*, 1> SETTING_CALLBACKS = {
 		"exposure_compensation",
@@ -256,6 +260,8 @@ public:
 			float volumetric_light_strength = lighting.volumetric_light_strength;
 			m_volumetric_light_strength_pixel.set(&volumetric_light_strength, services);
 		}
+
+		m_portal_clip_planes.set(PortalManager::get().getClipPlanes().data, services);
 	}
 
 	void onSetMaterial(const video::SMaterial &material) override

@@ -9,6 +9,8 @@
 #include "client/clientenvironment.h"
 #include "client/clientmap.h"
 #include "client/camera.h"
+#include "client/content_cao.h"
+#include "client/localplayer.h"
 #include "util/numeric.h"
 
 #include <ISceneManager.h>
@@ -19,11 +21,13 @@
 #include <IGPUProgrammingServices.h>
 #include <IShaderConstantSetCallBack.h>
 #include <IMaterialRendererServices.h>
+#include <mt_opengl.h>
 #include <cmath>
 #include <algorithm>
 
-// Depth of the portal tunnel from the center plane.
-static constexpr float PORTAL_TUNNEL_DEPTH = 0.45f * BS;
+// Depth of the portal tunnel beyond the inner face of the frame.
+// 0 = RTT face flush with inner face; frame block itself provides the tunnel depth.
+static constexpr float PORTAL_TUNNEL_DEPTH = 0.0f * BS;
 
 static inline v3f right_of(const PortalInfo &p)
 {
@@ -98,7 +102,7 @@ static void setVirtualCamera(
 	                                      : mainCam->getAbsolutePosition();
 	v3f rel = actual_cam_pos - src_surface;
 	float lx = rel.dotProduct(ar), ly = rel.dotProduct(au), lz = rel.dotProduct(an);
-	v3f vpos = dst_surface + br * (-lx) + bu * ly + bn * (-lz);
+	v3f vpos = dst_surface + br * (-lx) + bu * ly + bn * (-lz) + bn * (1.0f * BS);
 
 	v3f dir = mainCam->getTarget() - mainCam->getAbsolutePosition();
 	dir.normalize();
@@ -135,15 +139,21 @@ static void setVirtualCamera(
 	{
 		// clip_n points from portal surface INTO the scene (away from vcam).
 		float side = (vpos - dst_surface).dotProduct(bn);
-		if (std::abs(side) > 0.001f * BS) {
-			v3f clip_n = (side > 0.0f) ? -bn : bn;
+		// Only apply Lengyel when vcam is on the destination side (side < 0).
+		// When side > 0 (vcam on source side, player inside portal), c_e_w can
+		// go negative and the oblique near plane ends up behind the camera,
+		// clipping all geometry.  The clip is unnecessary there anyway.
+		if (side < -0.001f * BS) {
+			v3f clip_n = bn;
 
 			// Eye-space plane. Camera basis: right=vup×vdir, up=vup, fwd=vdir (+z_eye in LH).
 			// right_eye = vup×vdir = -vright_axis (vright_axis = vdir×vup).
 			float c_e_x = -clip_n.dotProduct(vright_axis); // right_eye component
 			float c_e_y =  clip_n.dotProduct(vup);
 			float c_e_z =  clip_n.dotProduct(vdir);        // +z_eye = forward in LH
-			float c_e_w =  clip_n.dotProduct(vpos - dst_surface); // d_e, verified negative
+			// Clip just inside outer face of dst frame to avoid z-fighting with adjacent blocks.
+			v3f clip_origin = dst_surface + bn * (0.49f * BS);
+			float c_e_w =  clip_n.dotProduct(vpos - clip_origin); // d_e, verified negative
 
 			if (c_e_z > 1e-4f) {
 				core::matrix4 proj = vcam->getProjectionMatrix();
@@ -262,10 +272,11 @@ static void drawPortalFaces(
 {
 	v3f r = right_of(src);
 	v3f u = src.up;
-	v3f c = src.pos;
+	// Shift render start to inner face of frame; pos stays at frame center for camera math.
+	v3f c = src.pos - src.normal * (side_sign * 0.5f * BS);
 	v3f bk = src.normal * (-side_sign * PORTAL_TUNNEL_DEPTH);
 
-	static constexpr float EPS = 0.02f * BS;
+	static constexpr float EPS = 0.005f * BS;
 	float hw = src.half_w - EPS;
 	float hh = src.half_h - EPS;
 
@@ -294,11 +305,12 @@ static void drawPortalFaces(
 
 	// --- 4 walls ---
 	{
+		v3f wf = src.pos + src.normal * (side_sign * 0.5f * BS);
 		v3f walls[4][4] = {
-			{ c-r*hw-u*hh, c-r*hw+u*hh, c-r*hw+u*hh+bk, c-r*hw-u*hh+bk },  // Left
-			{ c+r*hw-u*hh, c+r*hw+u*hh, c+r*hw+u*hh+bk, c+r*hw-u*hh+bk },  // Right
-			{ c-r*hw-u*hh, c+r*hw-u*hh, c+r*hw-u*hh+bk, c-r*hw-u*hh+bk },  // Bottom
-			{ c-r*hw+u*hh, c+r*hw+u*hh, c+r*hw+u*hh+bk, c-r*hw+u*hh+bk },  // Top
+			{ wf-r*hw-u*hh, wf-r*hw+u*hh, c-r*hw+u*hh+bk, c-r*hw-u*hh+bk },  // Left
+			{ wf+r*hw-u*hh, wf+r*hw+u*hh, c+r*hw+u*hh+bk, c+r*hw-u*hh+bk },  // Right
+			{ wf-r*hw-u*hh, wf+r*hw-u*hh, c+r*hw-u*hh+bk, c-r*hw-u*hh+bk },  // Bottom
+			{ wf-r*hw+u*hh, wf+r*hw+u*hh, c+r*hw+u*hh+bk, c-r*hw+u*hh+bk },  // Top
 		};
 		static const u16 *widx[4] = { idx_cw, idx_ccw, idx_ccw, idx_cw };
 
@@ -313,11 +325,13 @@ static void drawPortalFaces(
 
 	// --- back face ---
 	{
+		// Offset slightly toward camera to avoid z-fighting with frame inner face.
+		v3f bp = c + bk + src.normal * (side_sign * 0.01f * BS);
 		v3f back[4] = {
-			c + bk - r*src.half_w - u*src.half_h,
-			c + bk + r*src.half_w - u*src.half_h,
-			c + bk + r*src.half_w + u*src.half_h,
-			c + bk - r*src.half_w + u*src.half_h,
+			bp - r*src.half_w - u*src.half_h,
+			bp + r*src.half_w - u*src.half_h,
+			bp + r*src.half_w + u*src.half_h,
+			bp - r*src.half_w + u*src.half_h,
 		};
 		video::S3DVertex verts[4];
 		for (int i = 0; i < 4; ++i)
@@ -403,15 +417,121 @@ static void renderPortalRTTs(
 			continue;
 		if (!pm.portal(src.link).active || !data.rtex[i] || !data.vcam[i])
 			continue;
+
+		// Compute 4 frustum clip planes from the virtual camera through the exit
+		// portal opening edges.  Each plane passes through vpos and one portal edge,
+		// with the normal pointing inward.  gl_ClipDistance[k] >= 0 → inside.
+		// This prevents exit-portal frame blocks from leaking into the RTT at
+		// oblique viewing angles where the Lengyel near-plane clip is insufficient.
+		bool use_clip_planes = false;
+		{
+			PortalInfo dst_r = pm.portal(src.link);
+			dst_r.pos -= offset; // to render space (matches worldPosition in shader)
+			v3f pr = right_of(dst_r);
+			v3f pu = dst_r.up;
+			v3f pc = dst_r.pos;
+			float hw = dst_r.half_w, hh = dst_r.half_h;
+			// Virtual camera position (render space, set in Phase 1).
+			v3f vpos = data.vcam[i]->getAbsolutePosition();
+			float apex_side = (vpos - pc).dotProduct(dst_r.normal);
+			v3f delta = vpos - pc;
+			float lx = delta.dotProduct(pr);
+			float ly = delta.dotProduct(pu);
+			// Skip clip planes only when the player is fully inside the portal
+			// opening: on the destination side AND within width/height bounds.
+			// If only the depth condition is met (player at frame level but outside
+			// the opening laterally), keep clip planes active to prevent leaking.
+			bool player_inside_frame = apex_side > 0.0f
+					&& std::abs(lx) < hw
+					&& std::abs(ly) < hh;
+			if (!player_inside_frame) {
+				// Mirror across portal plane: flip only the bn component, preserve lateral.
+				// (apex_side <= 0 means no mirror needed, but apply standoff clamp.)
+				float side = apex_side;
+				if (side > -0.05f * BS)
+					vpos -= dst_r.normal * (side + 0.05f * BS);
+
+				// Helper: plane through 'from' and a portal edge (edge_center, edge_dir),
+				// normal pointing toward interior_pt.
+				// Plane eq: dot(p, n) + d >= 0 → inside.
+				// If computed normal tilts backward (nbn < 0): fall back to corridor plane
+				// (remove bn component, anchor to edge_center) so destination geometry
+				// is never clipped when apex is laterally displaced past the portal edge.
+				v3f bn = dst_r.normal;
+				auto makePlane = [&bn](v3f from, v3f edge_center, v3f edge_dir,
+				                       v3f interior_pt, float *out) {
+					v3f v = edge_center - from;
+					v3f n = v.crossProduct(edge_dir);
+					float len = n.getLength();
+					if (len < 1e-6f) {
+						out[0] = 0; out[1] = 0; out[2] = 1; out[3] = 1e15f;
+						return;
+					}
+					n /= len;
+					if (n.dotProduct(interior_pt - from) < 0) n = -n;
+
+					float nbn = n.dotProduct(bn);
+					if (nbn < 0.0f) {
+						// Backward tilt: clamp to corridor plane (perpendicular to portal face).
+						n -= bn * nbn;
+						float nlen = n.getLength();
+						if (nlen < 1e-6f) {
+							out[0] = 0; out[1] = 0; out[2] = 1; out[3] = 1e15f;
+							return;
+						}
+						n /= nlen;
+						float d = -n.dotProduct(edge_center);
+						out[0] = n.X; out[1] = n.Y; out[2] = n.Z; out[3] = d;
+						return;
+					}
+
+					float d = -n.dotProduct(from);
+					out[0] = n.X; out[1] = n.Y; out[2] = n.Z; out[3] = d;
+				};
+
+				PortalClipPlanes cp;
+				cp.active = true;
+				makePlane(vpos, pc + pr * hw, pu, pc - pr * hw, &cp.data[0]);  // right
+				makePlane(vpos, pc - pr * hw, pu, pc + pr * hw, &cp.data[4]);  // left
+				makePlane(vpos, pc + pu * hh, pr, pc - pu * hh, &cp.data[8]);  // top
+				makePlane(vpos, pc - pu * hh, pr, pc + pu * hh, &cp.data[12]); // bottom
+				pm.setClipPlanes(cp);
+				use_clip_planes = true;
+			}
+		}
+		if (use_clip_planes) {
+			GL.Enable(GL.CLIP_DISTANCE0);
+			GL.Enable(GL.CLIP_DISTANCE1);
+			GL.Enable(GL.CLIP_DISTANCE2);
+			GL.Enable(GL.CLIP_DISTANCE3);
+		}
+
 		driver->setRenderTarget(data.rtex[i],
 			video::ECBF_COLOR | video::ECBF_DEPTH,
 			ctx.clear_color);
 		smgr->setActiveCamera(data.vcam[i]);
+		// Temporarily show the local player mesh so it appears in portal views.
+		// In first-person mode updateMeshCulling() hides it via double-face-culling;
+		// that flag is global and would hide the player from portal cameras too.
+		GenericCAO *lp_cao = nullptr;
+		if (LocalPlayer *lp = ctx.client->getEnv().getLocalPlayer())
+			lp_cao = lp->getCAO();
+		if (lp_cao)
+			lp_cao->setPortalRendering(true);
 		// Skip player-camera frustum culling so the virtual camera sees terrain
 		// outside the main camera's frustum (ClientMap::renderMap uses game Camera).
 		cmap.setBypassFrustumCulling(true);
 		smgr->drawAll();
 		cmap.setBypassFrustumCulling(false);
+		if (lp_cao)
+			lp_cao->setPortalRendering(false);
+
+		GL.Disable(GL.CLIP_DISTANCE0);
+		GL.Disable(GL.CLIP_DISTANCE1);
+		GL.Disable(GL.CLIP_DISTANCE2);
+		GL.Disable(GL.CLIP_DISTANCE3);
+		{ PortalClipPlanes off; pm.setClipPlanes(off); }
+
 		driver->setRenderTarget(nullptr, 0);
 		smgr->setActiveCamera(mainCam);
 	}
@@ -453,8 +573,8 @@ static void drawPortalQuads(
 		src.pos -= data.cam_offset_world;
 
 		float d = (camPos - src.pos).dotProduct(src.normal);
-		// Render until camera is 95% through the 1-node-thick portal frame.
-		if (d < -0.45f * BS)
+		float dist = (camPos - src.pos).getLength();
+		if (d <= 0.0f || dist < 0.001f * BS || d / dist < 0.1f)
 			continue;
 
 		drawPortalFaces(driver, src, 1.0f, data.rtex[i], mainCam);
