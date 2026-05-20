@@ -2,3 +2,4 @@ luanti_src/
 tmp/
 *.deb
 .vscode/
+.claude/

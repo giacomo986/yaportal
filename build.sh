@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-PROJ="~/luanti/mods/yaportal"
-NINJA="/usr/bin/ninja"
+PROJ="$(cd "$(dirname "$0")" && pwd)"
+NINJA="${NINJA:-ninja}"
 DEPS_LIB="$PROJ/tmp/deps/usr/lib/x86_64-linux-gnu"
 
 ln -sfn "$PROJ/tmp/deps"            /tmp/deps

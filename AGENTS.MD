@@ -9,7 +9,7 @@ Seguire i passi in ordine. Richiede Ubuntu 24.04 x86_64 con accesso a `apt-get d
 ### 1. Clona il motore Luanti
 
 ```sh
-PROJ=~/luanti/mods/yaportal
+PROJ=/path/to/mio_portale   # directory di questo repo
 git clone https://github.com/luanti-org/luanti.git $PROJ/luanti_src
 # Il commit base usato per le patch:
 git -C $PROJ/luanti_src checkout a6c948946
@@ -18,7 +18,7 @@ git -C $PROJ/luanti_src checkout a6c948946
 ### 2. Applica le patch al sorgente
 
 ```sh
-PROJ=~/luanti/mods/yaportal
+PROJ=/path/to/mio_portale
 cp -r $PROJ/src_patches/. $PROJ/luanti_src/
 ```
 
@@ -52,10 +52,10 @@ File aggiunti/modificati dal progetto (tutti in `src_patches/`):
 
 ### 3. Prepara le dipendenze
 
-Le dipendenze binarie vivono in `$PROJ/tmp/` (persistente tra riavvii). I `.deb` sono già scaricati in `$PROJ/tmp/`. Se mancano, eseguire il download (vedi sezione [Download deb da zero](#download-deb-da-zero)).
+Le dipendenze binarie vivono in `$PROJ/tmp/` (persistente tra riavvii). Se mancano, eseguire il download (vedi sezione [Download deb da zero](#download-deb-da-zero)).
 
 ```sh
-PROJ=~/luanti/mods/yaportal
+PROJ=/path/to/mio_portale
 
 mkdir -p $PROJ/tmp/deps $PROJ/tmp/luajit-extract $PROJ/tmp/leveldb-extract
 
@@ -105,29 +105,32 @@ mv $LIBDIR/libSDL2_test.a $LIBDIR/libSDL2_test.a.bak 2>/dev/null || true
 `build.ninja` usa percorsi `/tmp/`. Dopo ogni riavvio ricreare i symlink:
 
 ```sh
-PROJ=~/luanti/mods/yaportal
+PROJ=/path/to/mio_portale
 ln -sfn $PROJ/tmp/deps            /tmp/deps
 ln -sfn $PROJ/tmp/luajit-extract  /tmp/luajit-extract
 ln -sfn $PROJ/tmp/leveldb-extract /tmp/leveldb-extract
 ```
 
+In alternativa, usare `build.sh` (lo fa automaticamente):
+
+```sh
+./build.sh
+```
+
 ### 5. Configura con CMake (solo prima volta o dopo reset cache)
 
 ```sh
-CMAKE=/usr/bin/cmake
-NINJA=/usr/bin/ninja
-SRC=~/luanti/mods/yaportal/luanti_src
+PROJ=/path/to/mio_portale
+SRC=$PROJ/luanti_src
 BUILD=$SRC/build
 
 mkdir -p $BUILD
-cd $BUILD && $CMAKE \
+cd $BUILD && cmake \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_UNITTESTS=TRUE \
   -DENABLE_POSTGRESQL=OFF \
   -DENABLE_REDIS=OFF \
   -DENABLE_SYSTEM_GMP=ON \
-  -DGMP_LIBRARY=/usr/lib/libgmp.so \
-  -DGMP_INCLUDE_DIR=/usr/include \
   -DCMAKE_PREFIX_PATH=/tmp/deps/usr \
   -DCMAKE_INCLUDE_PATH="/tmp/deps/usr/include;/tmp/deps/usr/include/x86_64-linux-gnu;/tmp/luajit-extract/usr/include" \
   -DCMAKE_LIBRARY_PATH="/tmp/deps/usr/lib/x86_64-linux-gnu;/tmp/luajit-extract/usr/lib/x86_64-linux-gnu" \
@@ -135,22 +138,26 @@ cd $BUILD && $CMAKE \
   -DLUA_LIBRARY=/tmp/luajit-extract/usr/lib/x86_64-linux-gnu/libluajit-5.1.so \
   -DLEVELDB_INCLUDE_DIR=/tmp/leveldb-extract/usr/include \
   -DLEVELDB_LIBRARY=/tmp/deps/usr/lib/x86_64-linux-gnu/libleveldb.a \
+  -GNinja \
   $SRC
 touch $BUILD/build.ninja
-cd $BUILD && $NINJA -j$(nproc)
+cd $BUILD && ninja -j$(nproc)
 ```
+
+> Se cmake o ninja non sono nel PATH, impostare le variabili d'ambiente `CMAKE` e `NINJA` con il percorso assoluto prima di eseguire.
 
 ### 6. Build normale (dopo symlink /tmp)
 
 ```sh
-NINJA=/usr/bin/ninja
-cd ~/luanti/mods/yaportal/luanti_src/build && $NINJA -j$(nproc)
+./build.sh
+# oppure:
+cd /path/to/mio_portale/luanti_src/build && ninja -j$(nproc)
 ```
 
 ### 7. Avvia il gioco
 
 ```sh
-~/luanti/mods/yaportal/luanti_src/bin/luanti
+/path/to/mio_portale/luanti_src/bin/luanti
 ```
 
 ---
@@ -160,7 +167,7 @@ cd ~/luanti/mods/yaportal/luanti_src/build && $NINJA -j$(nproc)
 Dopo ogni modifica ai file C++ in `luanti_src/`, aggiornare `src_patches/` e committare:
 
 ```sh
-PROJ=~/luanti/mods/yaportal
+PROJ=/path/to/mio_portale
 SRC=$PROJ/luanti_src
 DEST=$PROJ/src_patches
 
@@ -181,10 +188,11 @@ git add src_patches/ && git commit -m "chore: sync src_patches with luanti_src c
 
 ## Download deb da zero
 
-Solo se `$PROJ/tmp/*.deb` non esistono (già presenti nel progetto):
+Solo se `$PROJ/tmp/*.deb` non esistono:
 
 ```sh
-PROJ=~/luanti/mods/yaportal
+PROJ=/path/to/mio_portale
+mkdir -p $PROJ/tmp
 cd $PROJ/tmp
 apt-get download \
   libsdl2-dev libsdl2-2.0-0 zlib1g-dev libjpeg-turbo8-dev libjpeg8-dev \
@@ -204,7 +212,7 @@ apt-get download \
 - **curl/jpeg header in path arch-specifico**: richiedono i symlink creati nel setup.
 - **leveldb richiede snappy**: già fixato in `src/CMakeLists.txt`.
 - **libluajit RUNPATH**: se il binario dice `libluajit-5.1.so.2 not found`, verificare che il RUNPATH in `build.ninja` includa `/tmp/luajit-extract/usr/lib/x86_64-linux-gnu`. In caso, rigenerare con cmake (passo 5).
-- **ninja/cmake non nel PATH**: usare percorsi assoluti `/usr/bin/ninja` ecc.
+- **ninja/cmake non nel PATH**: impostare `NINJA=/percorso/ninja ninja -j$(nproc)` o aggiungere la directory al PATH.
 
 ---
 
