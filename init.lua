@@ -4,6 +4,22 @@
 
 minetest.log("action", "[mio_portale] Caricamento mod v2...")
 
+-- Intercetta register_abm di tutti i mod che caricano DOPO questo.
+-- Blocca ABM il cui nodo è dentro una pocket dimension → niente spawn naturale.
+-- Mob introdotti manualmente da player (uova, comandi) non passano per ABM.
+local _pocket_spawn_blocker = nil  -- fn(pos)→bool, settato dopo caricamento
+do
+    local _orig_abm = minetest.register_abm
+    minetest.register_abm = function(def)
+        local orig_action = def.action
+        def.action = function(pos, node, aoc, aocw)
+            if _pocket_spawn_blocker and _pocket_spawn_blocker(pos) then return end
+            return orig_action(pos, node, aoc, aocw)
+        end
+        return _orig_abm(def)
+    end
+end
+
 local storage = minetest.get_mod_storage()
 
 -- ── costanti ──────────────────────────────────────────────────────────────────
@@ -17,6 +33,7 @@ local TRIGGER_DEPTH = 0.05
 
 -- portals[name] = {cx,cy,cz,axis,ns,w,h,link,node_name}
 local portals = {}
+local _pocket_areas = {}  -- pname → {bx,by,bz}, cache aree pocket per ABM blocker
 
 -- C++ indice 0-based per ogni portale (ricostruito da sync_portals, stabile
 -- tra chiamate consecutive se i nomi non cambiano grazie all'ordine alfabetico)
@@ -35,6 +52,7 @@ local ALL_FRAME_NODES = {
     ["mio_portale:frame"]        = true,
     ["mio_portale:frame_blue"]   = true,
     ["mio_portale:frame_orange"] = true,
+    ["mio_portale:frame_green"]  = true,
 }
 
 -- ── entity ancora ─────────────────────────────────────────────────────────────
@@ -51,7 +69,8 @@ minetest.register_entity("mio_portale:anchor", {
     on_activate = function(self) self.object:set_armor_groups({immortal=1}) end,
     on_rightclick = function(self, clicker)
         if self._portal_name and clicker and clicker:is_player()
-           and not self._portal_name:match("^gun_") then
+           and not self._portal_name:match("^gun_")
+           and not self._portal_name:match("^pocket_") then
             open_portal_config(clicker, self._portal_name)
         end
     end,
@@ -343,6 +362,18 @@ minetest.register_on_mods_loaded(function()
     if migrated then save_portals() end
     for name, pp in pairs(portals) do
         update_anchor(name, pp)
+    end
+    -- Ricostruisce cache aree pocket da storage
+    local names_s = storage:get_string("pocket_players")
+    if names_s ~= "" then
+        local names = minetest.deserialize(names_s) or {}
+        for _, pname in ipairs(names) do
+            local s = storage:get_string("pocket_pos_" .. pname)
+            if s ~= "" then
+                local t = minetest.deserialize(s)
+                if t then _pocket_areas[pname] = t end
+            end
+        end
     end
 end)
 
@@ -1054,3 +1085,200 @@ minetest.register_on_leaveplayer(function(player)
         sync_portals()
     end
 end)
+
+-- ── pocket dimension gun ───────────────────────────────────────────────────────
+
+local POCKET_SIZE = 32  -- piattaforma 32×32
+
+minetest.register_node("mio_portale:bedrock", {
+    description = "Bedrock (indistruttibile)",
+    tiles = {"mio_portale_bedrock.png"},
+    groups = {not_in_creative_inventory=1},
+    diggable = false,
+})
+
+minetest.register_node("mio_portale:frame_green", {
+    description = "Cornice Portale Verde (pocket dimension, indistruttibile)",
+    tiles = {"mio_portale_green.png"},
+    groups = {not_in_creative_inventory=1},
+    diggable = false,
+})
+
+local function _in_any_pocket(pos)
+    for _, t in pairs(_pocket_areas) do
+        if pos.x >= t.bx - 1 and pos.x <= t.bx + POCKET_SIZE
+           and pos.y >= t.by - 1 and pos.y <= t.by + 40
+           and pos.z >= t.bz - 1 and pos.z <= t.bz + POCKET_SIZE then
+            return true
+        end
+    end
+    return false
+end
+_pocket_spawn_blocker = _in_any_pocket
+
+-- Restituisce {bx,by,bz} angolo in basso a sinistra della piattaforma del player.
+-- Alloca un nuovo slot al primo accesso.
+local function pocket_get_or_alloc(pname)
+    local key = "pocket_pos_" .. pname
+    local s = storage:get_string(key)
+    if s and s ~= "" then
+        local t = minetest.deserialize(s)
+        if t then
+            _pocket_areas[pname] = t
+            return t
+        end
+    end
+    local slot = storage:get_int("pocket_slot_count")
+    storage:set_int("pocket_slot_count", slot + 1)
+    local t = {bx = slot * 300, by = -20001, bz = 0}
+    storage:set_string(key, minetest.serialize(t))
+    -- mantieni lista player con pocket per ricostruire cache al restart
+    local names_s = storage:get_string("pocket_players")
+    local names = (names_s ~= "" and minetest.deserialize(names_s)) or {}
+    names[#names+1] = pname
+    storage:set_string("pocket_players", minetest.serialize(names))
+    _pocket_areas[pname] = t
+    return t
+end
+
+-- Genera la piattaforma e il portale fisso nella dimensione (callback async).
+-- Se il portale esiste già chiama callback subito.
+local function pocket_ensure(pname, callback)
+    local t = pocket_get_or_alloc(pname)
+    if portals["pocket_in_" .. pname] then
+        callback(t); return
+    end
+    local bx, by, bz = t.bx, t.by, t.bz
+    local pos1 = {x=bx-1,   y=by-1, z=bz-1}
+    local pos2 = {x=bx+POCKET_SIZE, y=by+GUN_H+3, z=bz+POCKET_SIZE}
+    minetest.emerge_area(pos1, pos2, function(_, _, remaining)
+        if remaining > 0 then return end
+        -- piattaforma bedrock
+        for dx = 0, POCKET_SIZE-1 do
+            for dz = 0, POCKET_SIZE-1 do
+                minetest.set_node({x=bx+dx, y=by, z=bz+dz},
+                    {name="mio_portale:bedrock"})
+            end
+        end
+        -- portale fisso centrato sulla piattaforma, asse Z, interno verso +z
+        local cx = bx + 15
+        local cy = by + 1  -- bottom frame a by (bedrock), interno parte da by+1
+        local cz = bz  -- portale al bordo -z, piattaforma tutta in avanti (+z, ns=1)
+        portal_gun_place_frame(cx, cy, cz, 0, GUN_W, GUN_H, "mio_portale:frame_green")
+        local in_name = "pocket_in_" .. pname
+        portals[in_name] = {
+            cx=cx, cy=cy, cz=cz,
+            axis=0, ns=1,
+            w=GUN_W, h=GUN_H,
+            node_name="mio_portale:frame_green",
+        }
+        update_anchor(in_name, portals[in_name])
+        callback(t)
+    end)
+end
+
+local function pocket_remove_world(pname)
+    local out_name = "pocket_out_" .. pname
+    local pp = portals[out_name]
+    if not pp then return end
+    for _, fpos in ipairs(get_frame_positions(pp)) do
+        if minetest.get_node(fpos).name == pp.node_name then
+            minetest.remove_node(fpos)
+        end
+    end
+    local in_name = "pocket_in_" .. pname
+    if portals[in_name] then portals[in_name].link = nil end
+    portals[out_name] = nil
+    update_anchor(out_name, nil)
+end
+
+local function pocket_gun_shoot(player, pointed_thing)
+    if pointed_thing.type ~= "node" then return end
+    local pname = player:get_player_name()
+    local under = pointed_thing.under
+    local above = pointed_thing.above
+    local dz    = above.z - under.z
+    local dx    = above.x - under.x
+    local dy    = above.y - under.y
+    local ip    = pointed_thing.intersection_point
+        or {x=above.x, y=above.y, z=above.z}
+
+    local axis, ns, cx, cy, cz
+
+    if dy ~= 0 then
+        if dy < 0 then
+            minetest.chat_send_player(pname,
+                "[pocket] Impossibile piazzare portali sul soffitto.")
+            return
+        end
+        local look = player:get_look_dir()
+        cy = above.y + 1
+        if math.abs(look.z) >= math.abs(look.x) then
+            axis = 0; ns = (look.z < 0) and 1 or -1; cz = above.z
+            cx = portal_gun_find_h(math.floor(ip.x), above.x, function(try_cx)
+                return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H)
+            end)
+        else
+            axis = 1; ns = (look.x < 0) and 1 or -1; cx = above.x
+            cz = portal_gun_find_h(math.floor(ip.z), above.z, function(try_cz)
+                return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H)
+            end)
+        end
+    elseif dz ~= 0 then
+        axis = 0; ns = dz; cz = above.z
+        cy = math.floor(ip.y - 0.5)
+        cx = portal_gun_find_h(math.floor(ip.x), above.x, function(try_cx)
+            return portal_gun_can_place(try_cx, cy, cz, axis, GUN_W, GUN_H)
+        end)
+    else
+        axis = 1; ns = dx; cx = above.x
+        cy = math.floor(ip.y - 0.5)
+        cz = portal_gun_find_h(math.floor(ip.z), above.z, function(try_cz)
+            return portal_gun_can_place(cx, cy, try_cz, axis, GUN_W, GUN_H)
+        end)
+    end
+
+    if not cx or not cz then
+        minetest.chat_send_player(pname,
+            "[pocket] Spazio insufficiente per il portale.")
+        return
+    end
+
+    pocket_ensure(pname, function()
+        pocket_remove_world(pname)
+        portal_gun_place_frame(cx, cy, cz, axis, GUN_W, GUN_H, "mio_portale:frame_green")
+        local out_name = "pocket_out_" .. pname
+        local in_name  = "pocket_in_" .. pname
+        portals[out_name] = {
+            cx=cx, cy=cy, cz=cz,
+            axis=axis, ns=ns,
+            w=GUN_W, h=GUN_H,
+            node_name="mio_portale:frame_green",
+            link=in_name,
+        }
+        if portals[in_name] then portals[in_name].link = out_name end
+        save_portals()
+        sync_portals()
+        update_anchor(out_name, portals[out_name])
+    end)
+end
+
+minetest.register_tool("mio_portale:pocket_gun", {
+    description = "Pocket Dimension Gun\nClic sx: apri portale | Clic dx: chiudi portale",
+    inventory_image = "mio_portale_gun.png^[colorize:#00cc00:120",
+    on_use = function(itemstack, user, pointed_thing)
+        pocket_gun_shoot(user, pointed_thing)
+        return itemstack
+    end,
+    on_place = function(itemstack, placer, pointed_thing)
+        local pname = placer:get_player_name()
+        pocket_remove_world(pname)
+        if portals["pocket_in_" .. pname] then
+            portals["pocket_in_" .. pname].link = nil
+        end
+        save_portals()
+        sync_portals()
+        return itemstack
+    end,
+})
+
