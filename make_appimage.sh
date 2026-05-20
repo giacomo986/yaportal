@@ -38,13 +38,24 @@ if [ ! -f "$APPIMAGETOOL" ]; then
     chmod +x "$APPIMAGETOOL"
 fi
 
+# ── ricrea symlink /tmp (cancellati a ogni riavvio) ───────────────────────────
+ln -sfn "$PROJ/tmp/deps"            /tmp/deps
+ln -sfn "$PROJ/tmp/leveldb-extract" /tmp/leveldb-extract
+ln -sfn "$PROJ/tmp/luajit-extract"  /tmp/luajit-extract
+
+# SDL2/_real_SDL_config.h è in un path arch-specifico; crea symlink nel path generico
+# così #include <SDL2/_real_SDL_config.h> lo trova anche senza -I arch-specifico
+SDLINC="$PROJ/tmp/deps/usr/include"
+ln -sf "$SDLINC/x86_64-linux-gnu/SDL2/_real_SDL_config.h" \
+       "$SDLINC/SDL2/_real_SDL_config.h" 2>/dev/null || true
+
 # ── ricompila con RUN_IN_PLACE=TRUE ───────────────────────────────────────────
 # Necessario perché senza RUN_IN_PLACE il binario cerca dati in percorso assoluto
 # compilato (STATIC_SHAREDIR). Con RUN_IN_PLACE cerca in ../  rispetto al binario.
 echo ">>> Riconfigura cmake con RUN_IN_PLACE=TRUE..."
-"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=TRUE -GNinja > /dev/null
+"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=TRUE > /dev/null
 echo ">>> Build..."
-"$NINJA" -C "$BUILD" -j"$(nproc)"
+"$CMAKE" --build "$BUILD" -j"$(nproc)"
 
 # ── crea AppDir ────────────────────────────────────────────────────────────────
 # Layout: AppDir/bin/luanti  →  path_share = AppDir/
@@ -60,6 +71,9 @@ cp "$SRC/bin/luanti" "$APPDIR/bin/luanti"
 for dir in games builtin fonts textures locale clientmods; do
     [ -d "$SRC/$dir" ] && cp -r "$SRC/$dir" "$APPDIR/$dir"
 done
+# Shaders: Luanti cerca path_share/client/shaders/
+mkdir -p "$APPDIR/client"
+[ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
 # Mod mio_portale
 mkdir -p "$APPDIR/mods/mio_portale"
@@ -98,10 +112,7 @@ cat > "$APPDIR/AppRun" <<'EOF'
 #!/bin/bash
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$APPDIR/lib:${LD_LIBRARY_PATH}"
-exec "$APPDIR/bin/luanti" \
-    --gamepath "$APPDIR/games" \
-    --worldpath "${XDG_DATA_HOME:-$HOME/.local/share}/luanti/worlds" \
-    "$@"
+exec "$APPDIR/bin/luanti" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
 
@@ -119,7 +130,7 @@ cp "$SRC/misc/luanti-xorg-icon-128.png" "$APPDIR/luanti.png"
 
 # ── crea AppImage ──────────────────────────────────────────────────────────────
 echo ">>> Crea AppImage..."
-ARCH=x86_64 "$APPIMAGETOOL" --comp gzip "$APPDIR" "$OUT"
+ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
 
 echo ""
 echo "✓ AppImage creata: $OUT"
