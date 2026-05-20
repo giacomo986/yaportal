@@ -205,6 +205,48 @@ apt-get download \
 
 ---
 
+## Creare un AppImage portabile
+
+Produce `Luanti-portal-x86_64.AppImage` (~70 MB) eseguibile su qualsiasi Linux x86_64.
+
+### Prerequisiti
+
+```sh
+sudo apt install patchelf wget libfuse2t64
+```
+
+### Esecuzione
+
+```sh
+PROJ=/path/to/mio_portale
+CMAKE=/percorso/cmake $PROJ/make_appimage.sh
+```
+
+Se `cmake` è nel PATH si può omettere la variabile. Lo script:
+1. Ricrea i symlink `/tmp/deps`, `/tmp/leveldb-extract`, `/tmp/luajit-extract`
+2. Crea il symlink `SDL2/_real_SDL_config.h` (header arch-specifico richiesto dalla build)
+3. Ricompila con `RUN_IN_PLACE=TRUE` (il binario cerca dati in `../` rispetto a sé)
+4. Patcha RPATH a `$ORIGIN/../lib` con patchelf
+5. Raccoglie tutte le `.so` dipendenti (esclude GL/EGL, driver-specifiche)
+6. Scarica `appimagetool` in `tmp/appimage-tools/` (solo la prima volta)
+7. Produce l'AppImage nella root del repo
+
+### Note
+
+- `make_appimage.sh` è idempotente: rieseguirlo ricompila solo i file modificati.
+- GL/EGL/Vulkan **non** sono incluse — ogni macchina usa i propri driver.
+- Struttura AppDir:
+  ```
+  AppDir/
+    bin/luanti          ← binario (RPATH: $ORIGIN/../lib)
+    lib/*.so            ← dipendenze bundled
+    client/shaders/     ← shader GLSL (Luanti cerca path_share/client/shaders/)
+    games/ builtin/ fonts/ textures/ locale/ clientmods/
+    mods/mio_portale/   ← mod inclusa nell'AppImage
+  ```
+
+---
+
 ## Problemi noti
 
 - **IFUNC conflict**: NON usare `libluajit-5.1.a` statica — conflitto `memcpy`/`strcasecmp` con glibc IFUNC. Usare sempre la `.so` condivisa.
