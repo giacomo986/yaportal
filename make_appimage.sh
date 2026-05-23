@@ -112,6 +112,29 @@ cat > "$APPDIR/AppRun" <<'EOF'
 #!/bin/bash
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$APPDIR/lib:${LD_LIBRARY_PATH}"
+
+# Detect user data dir: Arch/CachyOS uses ~/.minetest, others use ~/.luanti
+if [ -d "$HOME/.minetest" ]; then
+    LUANTI_USER="$HOME/.minetest"
+else
+    LUANTI_USER="$HOME/.luanti"
+fi
+export MINETEST_USER_PATH="$LUANTI_USER"
+
+# Sync mod to detected user mods path
+USERMOD="$LUANTI_USER/mods/mio_portale"
+if [ ! -d "$USERMOD" ] || [ "$APPDIR/mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
+    mkdir -p "$LUANTI_USER/mods"
+    rm -rf "$USERMOD"
+    cp -r "$APPDIR/mods/mio_portale" "$USERMOD"
+fi
+
+# Fix world.mt entries that stored an absolute/wrong mod path (e.g. share/mio_portale)
+find "$LUANTI_USER/worlds" -name "world.mt" 2>/dev/null | while read -r wmt; do
+    grep -q "^load_mod_mio_portale = " "$wmt" && \
+        sed -i 's|^load_mod_mio_portale = .*|load_mod_mio_portale = true|' "$wmt"
+done
+
 exec "$APPDIR/bin/luanti" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
