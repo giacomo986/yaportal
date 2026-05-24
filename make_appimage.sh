@@ -113,9 +113,11 @@ cat > "$APPDIR/AppRun" <<'EOF'
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$APPDIR/lib:${LD_LIBRARY_PATH}"
 
-# Detect user data dir: Arch/CachyOS uses ~/.minetest, others use ~/.luanti
+# Detect user data dir (priority: ~/.minetest > XDG ~/.local/share/luanti > ~/.luanti)
 if [ -d "$HOME/.minetest" ]; then
     LUANTI_USER="$HOME/.minetest"
+elif [ -d "$HOME/.local/share/luanti" ]; then
+    LUANTI_USER="$HOME/.local/share/luanti"
 else
     LUANTI_USER="$HOME/.luanti"
 fi
@@ -154,6 +156,11 @@ cp "$SRC/misc/luanti-xorg-icon-128.png" "$APPDIR/luanti.png"
 # ── crea AppImage ──────────────────────────────────────────────────────────────
 echo ">>> Crea AppImage..."
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
+
+# ── ripristina configurazione dev (RUN_IN_PLACE=FALSE) ────────────────────────
+echo ">>> Ripristina RUN_IN_PLACE=FALSE per build dev..."
+"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=FALSE > /dev/null
+"$CMAKE" --build "$BUILD" -j"$(nproc)"
 
 echo ""
 echo "✓ AppImage creata: $OUT"

@@ -12,7 +12,7 @@ Seguire i passi in ordine. Richiede Ubuntu 24.04 x86_64 con accesso a `apt-get d
 PROJ=/path/to/mio_portale   # directory di questo repo
 git clone https://github.com/luanti-org/luanti.git $PROJ/luanti_src
 # Il commit base usato per le patch:
-git -C $PROJ/luanti_src checkout a6c948946
+git -C $PROJ/luanti_src checkout e35647861  # 5.16.1
 ```
 
 ### 2. Applica le patch al sorgente

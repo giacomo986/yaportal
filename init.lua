@@ -360,9 +360,11 @@ minetest.register_on_mods_loaded(function()
         end
     end
     if migrated then save_portals() end
-    for name, pp in pairs(portals) do
-        update_anchor(name, pp)
-    end
+    minetest.after(0, function()
+        for name, pp in pairs(portals) do
+            update_anchor(name, pp)
+        end
+    end)
     -- Ricostruisce cache aree pocket da storage
     local names_s = storage:get_string("pocket_players")
     if names_s ~= "" then
@@ -775,22 +777,6 @@ minetest.register_globalstep(function(dtime)
                     s.triggered          = false
                 end
 
-                -- Update RTT camera hint for destination portal
-                if s.entered_from_front and dst then
-                    local src_n, src_r = portal_basis(pp)
-                    local dst_n, dst_r = portal_basis(dst)
-                    local src_c = inner_center(pp)
-                    local dst_c = inner_center(dst)
-                    local rel = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
-                    local off = portal_transform_pos(rel, src_n, src_r, dst_n, dst_r)
-                    local dst_idx = portal_index[dst_name]
-                    if dst_idx then
-                        minetest.set_portal_cam_hint(dst_idx, {
-                            x=dst_c.x+off.x, y=dst_c.y+off.y, z=dst_c.z+off.z
-                        })
-                    end
-                end
-
                 local border_entry = just_entered and portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
                 if s.entered_from_front and not s.triggered and dst
                    and not teleport_src
@@ -804,13 +790,6 @@ minetest.register_globalstep(function(dtime)
                 if s.in_bounds then
                     s.in_bounds  = false
                     s.triggered  = false
-                    -- Clear cam hint for destination
-                    if dst_name then
-                        local dst_idx = portal_index[dst_name]
-                        if dst_idx then
-                            minetest.clear_portal_cam_hint(dst_idx)
-                        end
-                    end
                 end
             end
         end
@@ -845,7 +824,13 @@ minetest.register_globalstep(function(dtime)
 
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
-                minetest.set_portal_cam_hint(dst_idx, new_pos)
+                -- Hint is in destination render space; add eye height so the
+                -- virtual camera matches the actual eye position, not the feet.
+                local props = player:get_properties()
+                local eye_h = (props and props.eye_height) or 1.625
+                minetest.set_portal_cam_hint(dst_idx, {
+                    x=new_pos.x, y=new_pos.y + eye_h, z=new_pos.z
+                })
             end
 
             player:portal_teleport(new_pos, new_yaw, {
