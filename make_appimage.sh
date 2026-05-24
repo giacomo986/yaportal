@@ -50,10 +50,11 @@ ln -sf "$SDLINC/x86_64-linux-gnu/SDL2/_real_SDL_config.h" \
        "$SDLINC/SDL2/_real_SDL_config.h" 2>/dev/null || true
 
 # ── ricompila con RUN_IN_PLACE=TRUE ───────────────────────────────────────────
-# Necessario perché senza RUN_IN_PLACE il binario cerca dati in percorso assoluto
-# compilato (STATIC_SHAREDIR). Con RUN_IN_PLACE cerca in ../  rispetto al binario.
-echo ">>> Riconfigura cmake con RUN_IN_PLACE=TRUE..."
-"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=TRUE > /dev/null
+# RUN_IN_PLACE=FALSE: setSystemPaths() legge LUANTI_USER_PATH (scrivibile) e
+# scopre path_share da bindir/../builtin = AppDir/builtin. Con RUN_IN_PLACE=TRUE
+# path_user è hardcoded all'AppImage read-only → crash su debug.txt.
+echo ">>> Riconfigura cmake con RUN_IN_PLACE=FALSE..."
+"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=FALSE > /dev/null
 echo ">>> Build..."
 "$CMAKE" --build "$BUILD" -j"$(nproc)"
 
@@ -121,7 +122,7 @@ elif [ -d "$HOME/.local/share/luanti" ]; then
 else
     LUANTI_USER="$HOME/.luanti"
 fi
-export MINETEST_USER_PATH="$LUANTI_USER"
+export LUANTI_USER_PATH="$LUANTI_USER"
 mkdir -p "$LUANTI_USER"
 
 # Sync mod to detected user mods path
@@ -158,9 +159,9 @@ cp "$SRC/misc/luanti-xorg-icon-128.png" "$APPDIR/luanti.png"
 echo ">>> Crea AppImage..."
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
 
-# ── ripristina configurazione dev (RUN_IN_PLACE=FALSE) ────────────────────────
-echo ">>> Ripristina RUN_IN_PLACE=FALSE per build dev..."
-"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=FALSE > /dev/null
+# ── ripristina configurazione dev (Debug) ────────────────────────────────────
+echo ">>> Ripristina Debug per build dev..."
+"$CMAKE" -S "$SRC" -B "$BUILD" -DCMAKE_BUILD_TYPE=Debug > /dev/null
 "$CMAKE" --build "$BUILD" -j"$(nproc)"
 
 echo ""

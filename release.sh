@@ -62,11 +62,14 @@ if [ ! -f "$APPIMAGETOOL" ]; then
     chmod +x "$APPIMAGETOOL"
 fi
 
-# ── configura Release + RUN_IN_PLACE ─────────────────────────────────────────
-echo ">>> cmake Release + RUN_IN_PLACE=TRUE..."
+# ── configura Release ────────────────────────────────────────────────────────
+# RUN_IN_PLACE=FALSE: setSystemPaths() legge LUANTI_USER_PATH e scopre
+# path_share da bindir/../builtin (= AppDir/builtin). Con TRUE path_user
+# è hardcoded all'AppImage read-only → crash su debug.txt.
+echo ">>> cmake Release..."
 "$CMAKE" -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DRUN_IN_PLACE=TRUE \
+    -DRUN_IN_PLACE=FALSE \
     > /dev/null
 
 # ── compila ───────────────────────────────────────────────────────────────────
@@ -128,7 +131,7 @@ elif [ -d "$HOME/.local/share/luanti" ]; then
 else
     LUANTI_USER="$HOME/.luanti"
 fi
-export MINETEST_USER_PATH="$LUANTI_USER"
+export LUANTI_USER_PATH="$LUANTI_USER"
 mkdir -p "$LUANTI_USER"
 
 USERMOD="$LUANTI_USER/mods/mio_portale"
@@ -163,10 +166,9 @@ echo ">>> Crea AppImage..."
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
 
 # ── ripristina build dev ──────────────────────────────────────────────────────
-echo ">>> Ripristina Debug + RUN_IN_PLACE=FALSE per build dev..."
+echo ">>> Ripristina Debug per build dev..."
 "$CMAKE" -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DRUN_IN_PLACE=FALSE \
     > /dev/null
 "$NINJA" -C "$BUILD" -j"$(nproc)"
 
