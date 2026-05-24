@@ -534,17 +534,30 @@ static void renderPortalRTTs(
 		video::SColor clear_col = ctx.clear_color;
 		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
 			if (data.sky) data.sky->setSceneActive(false);
-			clear_col = video::SColor(sky_cfg.clear_color_argb);
+			if (data.void_sky) {
+				data.void_sky->setSceneActive(true);
+				clear_col = data.void_sky->getBgColor();
+			} else {
+				clear_col = video::SColor(sky_cfg.clear_color_argb);
+			}
 		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD) {
 			if (data.sky) data.sky->setSceneActive(false);
-			if (data.overworld_sky) data.overworld_sky->setSceneActive(true);
+			if (data.overworld_sky) {
+				data.overworld_sky->setSceneActive(true);
+				clear_col = data.overworld_sky->getBgColor();
+			}
 		}
 
 		// Override driver fog to match the portal's destination sky.
 		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
-			driver->setFog(video::SColor(sky_cfg.clear_color_argb),
+			video::SColor void_fog = data.void_sky
+					? data.void_sky->getFogColor()
+					: video::SColor(sky_cfg.clear_color_argb);
+			float void_fog_start = data.void_sky ? data.void_sky->getFogStart()
+					: (data.sky ? data.sky->getFogStart() : 0.0f);
+			driver->setFog(void_fog,
 					video::EFT_FOG_LINEAR,
-					ctx.fog_range * (data.sky ? data.sky->getFogStart() : 0.0f),
+					ctx.fog_range * void_fog_start,
 					ctx.fog_range, 0.f, false, ctx.fog_enabled);
 		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD && data.overworld_sky) {
 			driver->setFog(data.overworld_sky->getFogColor(),
@@ -585,6 +598,7 @@ static void renderPortalRTTs(
 		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT) {
 			if (data.sky) data.sky->setSceneActive(true);
 			if (data.overworld_sky) data.overworld_sky->setSceneActive(false);
+			if (data.void_sky) data.void_sky->setSceneActive(false);
 		}
 
 		GL.Disable(GL.CLIP_DISTANCE0);
@@ -660,6 +674,7 @@ void PortalPrepareStep::run(PipelineContext &ctx)
 	m_data->main_cam = mainCam;
 	m_data->sky = ctx.sky;
 	m_data->overworld_sky = ctx.overworld_sky;
+	m_data->void_sky = ctx.void_sky;
 	mainCam->updateAbsolutePosition();
 	renderPortalRTTs(*m_data, ctx, mainCam);
 	// Render target is now at FBO=0/screen. Draw3D's m_target->activate() will
@@ -725,6 +740,7 @@ void PortalRenderStep::run(PipelineContext &ctx)
 
 	m_data.sky = ctx.sky;
 	m_data.overworld_sky = ctx.overworld_sky;
+	m_data.void_sky = ctx.void_sky;
 	// Render RTTs. Leaves render target at FBO=0 (screen) — correct for non-PP.
 	renderPortalRTTs(m_data, ctx, mainCam);
 
