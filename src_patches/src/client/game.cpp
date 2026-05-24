@@ -3471,23 +3471,19 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 			m_cache_enable_free_move &&
 			client->checkPrivilege("fly");
 	if (lplayer->sky_sunlit_override_frames > 0) {
-		// Portal teleport: immediately snap sky brightness from the pre-warmed
-		// sky_overworld / sky_void node (which is already at the correct brightness)
-		// to bypass the sky's internal slow lerp (2-5% per frame).
-		// Hold until getBackgroundBrightness() agrees (unloaded blocks look sunlit,
-		// so we can't release until real block data confirms the expected state);
-		// then count down 3 confirmation frames before releasing.
-		Sky *ref_sky = lplayer->sky_sunlit_override_value
-				? sky_overworld.get() : sky_void.get();
-		sky->setForceBrightness(ref_sky->getBrightness());
-
+		// Portal teleport: prime the target brightness each frame so sky->update()'s
+		// slow lerp (2-5% per frame) is overridden by the primed value applied after
+		// the lerp. sky_overworld/sky_void are already at the correct brightness.
 		sunlight_seen     = lplayer->sky_sunlit_override_value;
 		direct_brightness = sunlight_seen ? time_brightness : 0.0f;
+		sky->primeBrightness(direct_brightness);
 
+		// Release once getBackgroundBrightness() confirms real block data agrees;
+		// unloaded blocks appear sunlit, so we wait for the actual block state.
 		bool bg_sunlit;
 		client->getEnv().getClientMap()
 				.getBackgroundBrightness(MYMIN(runData.fog_range * 1.2, 60 * BS),
-						daynight_ratio, (int)(ref_sky->getBrightness() * 255.5), &bg_sunlit);
+						daynight_ratio, (int)(direct_brightness * 255.5), &bg_sunlit);
 		if (bg_sunlit == lplayer->sky_sunlit_override_value)
 			lplayer->sky_sunlit_override_frames--;
 	} else if (!sky->getAutoCaveBrightness() || noclip_fly) {
