@@ -398,13 +398,20 @@ void ClientMap::updatePortalDrawList(const std::vector<v3f> &portal_cam_position
 		const MapSector *sector = sector_it.second;
 		for (const auto &entry : sector->getBlocks()) {
 			MapBlock *block = entry.second.get();
-			if (!block->mesh)
-				continue;
 
 			v3s16 block_pos_nodes = block->getPosRelative();
-			v3f mesh_sphere_center = intToFloat(block_pos_nodes, BS)
-					+ block->mesh->getBoundingSphereCenter();
-			f32 mesh_sphere_radius = block->mesh->getBoundingRadius();
+			v3f mesh_sphere_center;
+			f32 mesh_sphere_radius;
+			if (block->mesh) {
+				mesh_sphere_center = intToFloat(block_pos_nodes, BS)
+						+ block->mesh->getBoundingSphereCenter();
+				mesh_sphere_radius = block->mesh->getBoundingRadius();
+			} else {
+				// Use block AABB center as fallback when mesh not yet generated.
+				mesh_sphere_center = intToFloat(block_pos_nodes, BS)
+						+ v3f((MAP_BLOCKSIZE * 0.5f - 0.5f) * BS);
+				mesh_sphere_radius = 0.0f;
+			}
 
 			// Check if in range of any portal camera
 			bool in_range = false;
@@ -418,7 +425,12 @@ void ClientMap::updatePortalDrawList(const std::vector<v3f> &portal_cam_position
 			if (!in_range)
 				continue;
 
+			// Keep block alive even without a mesh so it isn't evicted while the
+			// portal needs it.  Air blocks have no mesh (empty geometry); re-queuing
+			// them every frame would flood the mesh update queue, so just skip.
 			block->resetUsageTimer();
+			if (!block->mesh)
+				continue;
 
 			v3s16 mesh_pos = mesh_grid.getMeshPos(block->getPos());
 
@@ -431,6 +443,7 @@ void ClientMap::updatePortalDrawList(const std::vector<v3f> &portal_cam_position
 					MapBlock *mesh_block = getBlockNoCreateNoEx(mesh_pos);
 					if (mesh_block && mesh_block->mesh) {
 						mesh_block->refGrab();
+						mesh_block->mesh->consolidateTransparentBuffers();
 						m_portal_drawlist[mesh_pos] = mesh_block;
 					}
 				}
@@ -442,6 +455,7 @@ void ClientMap::updatePortalDrawList(const std::vector<v3f> &portal_cam_position
 			} else {
 				if (!m_portal_drawlist.count(block->getPos())) {
 					block->refGrab();
+					block->mesh->consolidateTransparentBuffers();
 					m_portal_drawlist[block->getPos()] = block;
 				}
 			}

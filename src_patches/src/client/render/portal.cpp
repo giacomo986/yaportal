@@ -96,13 +96,17 @@ static void setVirtualCamera(
 	v3f src_surface = src.pos;
 	v3f dst_surface = dst.pos;
 
-	// cam_pos_override: set when Lua pre-renders the destination portal from the
-	// expected exit position before the player physically teleports there.
-	v3f actual_cam_pos = cam_pos_override ? *cam_pos_override
-	                                      : mainCam->getAbsolutePosition();
-	v3f rel = actual_cam_pos - src_surface;
-	float lx = rel.dotProduct(ar), ly = rel.dotProduct(au), lz = rel.dotProduct(an);
-	v3f vpos = dst_surface + br * (-lx) + bu * ly + bn * (-lz) + bn * (1.0f * BS);
+	// cam_pos_override: pre-computed virtual camera position in render space.
+	// Already accounts for the destination frame — use it directly.
+	// Without override: mirror the main camera's eye position through the portal.
+	v3f vpos;
+	if (cam_pos_override) {
+		vpos = *cam_pos_override;
+	} else {
+		v3f rel = mainCam->getAbsolutePosition() - src_surface;
+		float lx = rel.dotProduct(ar), ly = rel.dotProduct(au), lz = rel.dotProduct(an);
+		vpos = dst_surface + br * (-lx) + bu * ly + bn * (-lz) + bn * (1.0f * BS);
+	}
 
 	v3f dir = mainCam->getTarget() - mainCam->getAbsolutePosition();
 	dir.normalize();
@@ -116,6 +120,23 @@ static void setVirtualCamera(
 	vcam->setPosition(vpos);
 	vcam->setTarget(vpos + vdir);
 	vcam->setUpVector(vup);
+
+	// Build a float32-precise view matrix from the known-normalized vdir.
+	// Avoids buildCameraLookAtMatrixLH's 'zaxis = target - pos' subtraction
+	// which loses precision when vpos has large magnitude (other-world portals).
+	{
+		v3f zaxis = vdir;   // already normalized
+		v3f xaxis = vup.crossProduct(zaxis); xaxis.normalize();
+		v3f yaxis = zaxis.crossProduct(xaxis);
+		core::matrix4 vm;
+		float *m = vm.pointer();
+		m[0] = xaxis.X; m[4] = xaxis.Y; m[8]  = xaxis.Z; m[12] = -xaxis.dotProduct(vpos);
+		m[1] = yaxis.X; m[5] = yaxis.Y; m[9]  = yaxis.Z; m[13] = -yaxis.dotProduct(vpos);
+		m[2] = zaxis.X; m[6] = zaxis.Y; m[10] = zaxis.Z; m[14] = -zaxis.dotProduct(vpos);
+		m[3] = 0;       m[7] = 0;       m[11] = 0;        m[15] = 1;
+		vcam->setRenderViewMatrix(vm);
+	}
+
 	vcam->setAspectRatio(mainCam->getAspectRatio());
 
 	v3f vright_axis = vdir.crossProduct(vup);
