@@ -9,6 +9,7 @@
 
 namespace scene { class ICameraSceneNode; class ISceneManager; }
 namespace video { class IVideoDriver; class ITexture; }
+class Sky;
 
 // Shared RTT state for portal rendering when post-processing is enabled.
 // PortalPrepareStep and PortalQuadStep both reference the same instance.
@@ -26,6 +27,8 @@ struct PortalRTTData {
 	// Non-owning pointer to the scene render target (TextureBuffer in PP mode).
 	// Used to restore the render target after re-rendering RTTs in PortalQuadStep.
 	RenderTarget *scene_rt = nullptr;
+	// Non-owning pointer to the sky node; set each frame from PipelineContext.
+	Sky *sky = nullptr;
 
 	~PortalRTTData();
 	void ensureCameras(scene::ISceneManager *smgr);

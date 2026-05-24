@@ -323,6 +323,13 @@ local function sync_portals()
             half_h = (pp.h or 3) / 2,
             link   = link_idx,
         }
+        -- If this portal's destination is a pocket dimension, show a void sky in its RTT.
+        local slot = i - 1
+        if pp.link and pp.link:match("^pocket_in_") then
+            minetest.set_portal_sky(slot, {visible=false, clear_color="#000A14"})
+        else
+            minetest.clear_portal_sky(slot)
+        end
     end
     minetest.set_portals(portal_list)
 end

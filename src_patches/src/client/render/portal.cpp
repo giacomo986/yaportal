@@ -3,6 +3,7 @@
 #include "portal.h"
 
 #include "irrlichttypes_bloated.h"
+#include "client/sky.h"
 #include "constants.h"
 #include "log.h"
 #include "client/client.h"
@@ -432,6 +433,9 @@ static void renderPortalRTTs(
 	cmap.updatePortalDrawList(vcam_world_positions);
 
 	// Phase 2: render each portal RTT.
+	// Save the sky's current visibility so per-portal overrides can be restored.
+	const bool orig_sky_visible = data.sky ? data.sky->isVisible() : true;
+
 	for (int i = 0; i < MAX_PORTALS; ++i) {
 		const PortalInfo &src = pm.portal(i);
 		if (!src.active || src.link < 0 || src.link >= MAX_PORTALS)
@@ -527,9 +531,19 @@ static void renderPortalRTTs(
 			GL.Enable(GL.CLIP_DISTANCE3);
 		}
 
+		// Apply per-portal sky config before clearing the RTT.
+		const PortalSkySlot &sky_cfg = pm.getSkyConfig(i);
+		video::SColor clear_col = ctx.clear_color;
+		if (sky_cfg.active) {
+			if (data.sky)
+				data.sky->setVisible(sky_cfg.sky_visible);
+			if (!sky_cfg.sky_visible)
+				clear_col = video::SColor(sky_cfg.clear_color_argb);
+		}
+
 		driver->setRenderTarget(data.rtex[i],
 			video::ECBF_COLOR | video::ECBF_DEPTH,
-			ctx.clear_color);
+			clear_col);
 		smgr->setActiveCamera(data.vcam[i]);
 		// Temporarily show the local player mesh so it appears in portal views.
 		// In first-person mode updateMeshCulling() hides it via double-face-culling;
@@ -546,6 +560,10 @@ static void renderPortalRTTs(
 		cmap.setBypassFrustumCulling(false);
 		if (lp_cao)
 			lp_cao->setPortalRendering(false);
+
+		// Restore sky state so the next portal (or main render) sees the original.
+		if (sky_cfg.active && data.sky)
+			data.sky->setVisible(orig_sky_visible);
 
 		GL.Disable(GL.CLIP_DISTANCE0);
 		GL.Disable(GL.CLIP_DISTANCE1);
@@ -618,6 +636,7 @@ void PortalPrepareStep::run(PipelineContext &ctx)
 		return;
 
 	m_data->main_cam = mainCam;
+	m_data->sky = ctx.sky;
 	mainCam->updateAbsolutePosition();
 	renderPortalRTTs(*m_data, ctx, mainCam);
 	// Render target is now at FBO=0/screen. Draw3D's m_target->activate() will
@@ -681,6 +700,7 @@ void PortalRenderStep::run(PipelineContext &ctx)
 	if (!mainCam)
 		return;
 
+	m_data.sky = ctx.sky;
 	// Render RTTs. Leaves render target at FBO=0 (screen) — correct for non-PP.
 	renderPortalRTTs(m_data, ctx, mainCam);
 

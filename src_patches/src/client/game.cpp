@@ -3711,7 +3711,7 @@ void Game::drawScene(ProfilerGraph *graph, RunStats *stats)
 		draw_crosshair = false;
 
 	this->m_rendering_engine->draw_scene(sky_color, this->m_game_ui->m_flags.show_hud,
-			draw_wield_tool, draw_crosshair);
+			draw_wield_tool, draw_crosshair, sky.get());
 
 	/*
 		Profiler graph
