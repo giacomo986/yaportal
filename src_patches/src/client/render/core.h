@@ -44,7 +44,8 @@ public:
 
 	void draw(video::SColor _skycolor, bool _show_hud,
 			bool _draw_wield_tool, bool _draw_crosshair,
-			Sky *_sky = nullptr, Sky *_overworld_sky = nullptr);
+			Sky *_sky = nullptr, Sky *_overworld_sky = nullptr,
+			float _fog_range = 0.0f, bool _fog_enabled = true);
 
 	v2u32 getVirtualSize() const;
 

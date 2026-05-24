@@ -132,7 +132,8 @@ public:
 
 	void draw_scene(video::SColor skycolor, bool show_hud,
 			bool draw_wield_tool, bool draw_crosshair,
-			Sky *sky = nullptr, Sky *overworld_sky = nullptr);
+			Sky *sky = nullptr, Sky *overworld_sky = nullptr,
+			float fog_range = 0.0f, bool fog_enabled = true);
 
 	void initialize(Client *client, Hud *hud);
 	void finalize();

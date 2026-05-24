@@ -404,9 +404,11 @@ void RenderingEngine::finalize()
 }
 
 void RenderingEngine::draw_scene(video::SColor skycolor, bool show_hud,
-		bool draw_wield_tool, bool draw_crosshair, Sky *sky, Sky *overworld_sky)
+		bool draw_wield_tool, bool draw_crosshair,
+		Sky *sky, Sky *overworld_sky, float fog_range, bool fog_enabled)
 {
-	core->draw(skycolor, show_hud, draw_wield_tool, draw_crosshair, sky, overworld_sky);
+	core->draw(skycolor, show_hud, draw_wield_tool, draw_crosshair,
+			sky, overworld_sky, fog_range, fog_enabled);
 }
 
 const VideoDriverInfo &RenderingEngine::getVideoDriverInfo(video::E_DRIVER_TYPE type)

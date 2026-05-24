@@ -44,6 +44,8 @@ struct PipelineContext
 
 	Sky *sky = nullptr;
 	Sky *overworld_sky = nullptr;
+	float fog_range = 0.0f;
+	bool  fog_enabled = true;
 };
 
 /**

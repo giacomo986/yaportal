@@ -540,6 +540,19 @@ static void renderPortalRTTs(
 			if (data.overworld_sky) data.overworld_sky->setSceneActive(true);
 		}
 
+		// Override driver fog to match the portal's destination sky.
+		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
+			driver->setFog(video::SColor(sky_cfg.clear_color_argb),
+					video::EFT_FOG_LINEAR,
+					ctx.fog_range * (data.sky ? data.sky->getFogStart() : 0.0f),
+					ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD && data.overworld_sky) {
+			driver->setFog(data.overworld_sky->getFogColor(),
+					video::EFT_FOG_LINEAR,
+					ctx.fog_range * data.overworld_sky->getFogStart(),
+					ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		}
+
 		driver->setRenderTarget(data.rtex[i],
 			video::ECBF_COLOR | video::ECBF_DEPTH,
 			clear_col);
@@ -559,6 +572,14 @@ static void renderPortalRTTs(
 		cmap.setBypassFrustumCulling(false);
 		if (lp_cao)
 			lp_cao->setPortalRendering(false);
+
+		// Restore fog to the main-world sky's settings.
+		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT && data.sky) {
+			driver->setFog(data.sky->getFogColor(),
+					video::EFT_FOG_LINEAR,
+					ctx.fog_range * data.sky->getFogStart(),
+					ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		}
 
 		// Restore sky scene nodes so the next portal (or main render) sees the original.
 		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT) {
