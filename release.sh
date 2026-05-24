@@ -89,9 +89,11 @@ done
 mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
-mkdir -p "$APPDIR/mods/mio_portale"
-cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/mods/mio_portale/"
-cp -r "$PROJ/textures" "$APPDIR/mods/mio_portale/"
+# Mod in bundled_mods/ (non auto-scoperto da Luanti come global mods).
+# AppRun la copia in $LUANTI_USER/mods/ al primo avvio.
+mkdir -p "$APPDIR/bundled_mods/mio_portale"
+cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/bundled_mods/mio_portale/"
+cp -r "$PROJ/textures" "$APPDIR/bundled_mods/mio_portale/"
 
 # ── raccoglie .so ─────────────────────────────────────────────────────────────
 echo ">>> Raccoglie librerie..."
@@ -135,14 +137,14 @@ export LUANTI_USER_PATH="$LUANTI_USER"
 mkdir -p "$LUANTI_USER"
 
 USERMOD="$LUANTI_USER/mods/mio_portale"
-if [ ! -d "$USERMOD" ] || [ "$APPDIR/mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
+if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
     mkdir -p "$LUANTI_USER/mods"
     rm -rf "$USERMOD"
-    cp -r "$APPDIR/mods/mio_portale" "$USERMOD"
+    cp -r "$APPDIR/bundled_mods/mio_portale" "$USERMOD"
 fi
 
 find "$LUANTI_USER/worlds" -name "world.mt" 2>/dev/null | while read -r wmt; do
-    grep -q "^load_mod_mio_portale = " "$wmt" && \
+    grep -q "^load_mod_mio_portale" "$wmt" && \
         sed -i 's|^load_mod_mio_portale = .*|load_mod_mio_portale = true|' "$wmt"
 done
 

@@ -77,9 +77,9 @@ mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
 # Mod mio_portale
-mkdir -p "$APPDIR/mods/mio_portale"
-cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/mods/mio_portale/"
-cp -r "$PROJ/textures" "$APPDIR/mods/mio_portale/"
+mkdir -p "$APPDIR/bundled_mods/mio_portale"
+cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/bundled_mods/mio_portale/"
+cp -r "$PROJ/textures" "$APPDIR/bundled_mods/mio_portale/"
 
 # ── raccoglie .so dipendenti ───────────────────────────────────────────────────
 echo ">>> Raccoglie librerie..."
@@ -127,10 +127,10 @@ mkdir -p "$LUANTI_USER"
 
 # Sync mod to detected user mods path
 USERMOD="$LUANTI_USER/mods/mio_portale"
-if [ ! -d "$USERMOD" ] || [ "$APPDIR/mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
+if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
     mkdir -p "$LUANTI_USER/mods"
     rm -rf "$USERMOD"
-    cp -r "$APPDIR/mods/mio_portale" "$USERMOD"
+    cp -r "$APPDIR/bundled_mods/mio_portale" "$USERMOD"
 fi
 
 # Fix world.mt entries that stored an absolute/wrong mod path (e.g. share/mio_portale)
