@@ -131,7 +131,8 @@ public:
 			float dtime = 0, int percent = 0, float *indef_pos = nullptr);
 
 	void draw_scene(video::SColor skycolor, bool show_hud,
-			bool draw_wield_tool, bool draw_crosshair, Sky *sky = nullptr);
+			bool draw_wield_tool, bool draw_crosshair,
+			Sky *sky = nullptr, Sky *overworld_sky = nullptr);
 
 	void initialize(Client *client, Hud *hud);
 	void finalize();

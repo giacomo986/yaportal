@@ -659,6 +659,7 @@ void Game::shutdown()
 	gui_chat_console.reset();
 
 	sky.reset();
+	sky_overworld.reset();
 
 	// only if the shutdown progress bar isn't shown yet
 	if (m_shutdown_progress == 0.0f)
@@ -923,6 +924,12 @@ bool Game::createClient(const GameStartData &start_data)
 	 */
 	sky = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
 	scsf->setSky(sky.get());
+
+	// Overworld sky: always "regular", updated with time-of-day, normally inactive.
+	// Used by portal RTTs to show overworld sky when player is in another dimension.
+	sky_overworld = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
+	sky_overworld->setVisible(true);
+	sky_overworld->setSceneActive(false);
 
 	if (!initGui())
 		return false;
@@ -3488,6 +3495,9 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	sky->update(time_of_day_smooth, time_brightness, direct_brightness,
 			sunlight_seen, camera->getCameraMode(), player->getYaw(),
 			player->getPitch());
+	sky_overworld->update(time_of_day_smooth, time_brightness, direct_brightness,
+			sunlight_seen, camera->getCameraMode(), player->getYaw(),
+			player->getPitch());
 
 	/*
 		Update clouds
@@ -3711,7 +3721,7 @@ void Game::drawScene(ProfilerGraph *graph, RunStats *stats)
 		draw_crosshair = false;
 
 	this->m_rendering_engine->draw_scene(sky_color, this->m_game_ui->m_flags.show_hud,
-			draw_wield_tool, draw_crosshair, sky.get());
+			draw_wield_tool, draw_crosshair, sky.get(), sky_overworld.get());
 
 	/*
 		Profiler graph

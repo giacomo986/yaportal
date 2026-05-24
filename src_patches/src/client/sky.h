@@ -83,7 +83,11 @@ public:
 	const video::SColorf &getCloudColor() const { return m_cloudcolor_f; }
 
 	void setVisible(bool visible) { m_visible = visible; }
-	bool isVisible() const { return m_visible; }
+
+	// Controls whether this node registers for rendering at all (Irrlicht IsVisible).
+	// Distinct from setVisible() which only controls the gradient/fog layer.
+	void setSceneActive(bool active) { ISceneNode::setVisible(active); }
+	bool isSceneActive() const { return IsVisible; }
 
 	// Set only from set_sky API
 	void setCloudsEnabled(bool clouds_enabled) { m_clouds_enabled = clouds_enabled; }

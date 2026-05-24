@@ -26,11 +26,11 @@ struct PortalClipPlanes {
 };
 
 // Sky configuration override for a portal's RTT rendering.
-// sky_visible=false: sky renders nothing → RTT shows clear_color_argb as background.
+// VOID: suppress all sky, use clear_color_argb as RTT background.
+// OVERWORLD: swap main sky for the secondary overworld sky node.
 struct PortalSkySlot {
-	bool active = false;
-	bool sky_visible = true;
-	u32  clear_color_argb = 0xFF000000;
+	enum class SkyMode { DEFAULT = 0, VOID, OVERWORLD } mode = SkyMode::DEFAULT;
+	u32  clear_color_argb = 0xFF000A14; // used only for VOID
 };
 
 // Non-thread-safe singleton. Access only from the main thread.
@@ -56,7 +56,7 @@ public:
 	void clearCamHint(int id);
 
 	// Per-portal sky configuration for RTT rendering.
-	void setSkyConfig(int id, bool sky_visible, u32 clear_color_argb);
+	void setSkyConfig(int id, PortalSkySlot::SkyMode mode, u32 clear_color_argb = 0xFF000A14);
 	void clearSkyConfig(int id);
 	const PortalSkySlot &getSkyConfig(int id) const { return m_sky_config[id]; }
 

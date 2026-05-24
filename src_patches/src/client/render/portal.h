@@ -29,6 +29,7 @@ struct PortalRTTData {
 	RenderTarget *scene_rt = nullptr;
 	// Non-owning pointer to the sky node; set each frame from PipelineContext.
 	Sky *sky = nullptr;
+	Sky *overworld_sky = nullptr;
 
 	~PortalRTTData();
 	void ensureCameras(scene::ISceneManager *smgr);

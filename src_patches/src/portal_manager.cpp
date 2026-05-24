@@ -58,14 +58,15 @@ void PortalManager::clearCamHint(int id)
 	m_cam_hint[id].valid = false;
 }
 
-void PortalManager::setSkyConfig(int id, bool sky_visible, u32 clear_color_argb)
+void PortalManager::setSkyConfig(int id, PortalSkySlot::SkyMode mode, u32 clear_color_argb)
 {
 	assert(id >= 0 && id < MAX_PORTALS);
-	m_sky_config[id] = {true, sky_visible, clear_color_argb};
+	m_sky_config[id].mode = mode;
+	m_sky_config[id].clear_color_argb = clear_color_argb;
 }
 
 void PortalManager::clearSkyConfig(int id)
 {
 	assert(id >= 0 && id < MAX_PORTALS);
-	m_sky_config[id].active = false;
+	m_sky_config[id] = {};
 }

@@ -433,8 +433,6 @@ static void renderPortalRTTs(
 	cmap.updatePortalDrawList(vcam_world_positions);
 
 	// Phase 2: render each portal RTT.
-	// Save the sky's current visibility so per-portal overrides can be restored.
-	const bool orig_sky_visible = data.sky ? data.sky->isVisible() : true;
 
 	for (int i = 0; i < MAX_PORTALS; ++i) {
 		const PortalInfo &src = pm.portal(i);
@@ -531,14 +529,15 @@ static void renderPortalRTTs(
 			GL.Enable(GL.CLIP_DISTANCE3);
 		}
 
-		// Apply per-portal sky config before clearing the RTT.
+		// Apply per-portal sky mode before clearing the RTT.
 		const PortalSkySlot &sky_cfg = pm.getSkyConfig(i);
 		video::SColor clear_col = ctx.clear_color;
-		if (sky_cfg.active) {
-			if (data.sky)
-				data.sky->setVisible(sky_cfg.sky_visible);
-			if (!sky_cfg.sky_visible)
-				clear_col = video::SColor(sky_cfg.clear_color_argb);
+		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
+			if (data.sky) data.sky->setSceneActive(false);
+			clear_col = video::SColor(sky_cfg.clear_color_argb);
+		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD) {
+			if (data.sky) data.sky->setSceneActive(false);
+			if (data.overworld_sky) data.overworld_sky->setSceneActive(true);
 		}
 
 		driver->setRenderTarget(data.rtex[i],
@@ -561,9 +560,11 @@ static void renderPortalRTTs(
 		if (lp_cao)
 			lp_cao->setPortalRendering(false);
 
-		// Restore sky state so the next portal (or main render) sees the original.
-		if (sky_cfg.active && data.sky)
-			data.sky->setVisible(orig_sky_visible);
+		// Restore sky scene nodes so the next portal (or main render) sees the original.
+		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT) {
+			if (data.sky) data.sky->setSceneActive(true);
+			if (data.overworld_sky) data.overworld_sky->setSceneActive(false);
+		}
 
 		GL.Disable(GL.CLIP_DISTANCE0);
 		GL.Disable(GL.CLIP_DISTANCE1);
@@ -637,6 +638,7 @@ void PortalPrepareStep::run(PipelineContext &ctx)
 
 	m_data->main_cam = mainCam;
 	m_data->sky = ctx.sky;
+	m_data->overworld_sky = ctx.overworld_sky;
 	mainCam->updateAbsolutePosition();
 	renderPortalRTTs(*m_data, ctx, mainCam);
 	// Render target is now at FBO=0/screen. Draw3D's m_target->activate() will
@@ -701,6 +703,7 @@ void PortalRenderStep::run(PipelineContext &ctx)
 		return;
 
 	m_data.sky = ctx.sky;
+	m_data.overworld_sky = ctx.overworld_sky;
 	// Render RTTs. Leaves render target at FBO=0 (screen) — correct for non-PP.
 	renderPortalRTTs(m_data, ctx, mainCam);
 

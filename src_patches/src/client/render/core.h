@@ -43,7 +43,8 @@ public:
 	RenderingCore &operator=(RenderingCore &&) = delete;
 
 	void draw(video::SColor _skycolor, bool _show_hud,
-			bool _draw_wield_tool, bool _draw_crosshair, Sky *_sky = nullptr);
+			bool _draw_wield_tool, bool _draw_crosshair,
+			Sky *_sky = nullptr, Sky *_overworld_sky = nullptr);
 
 	v2u32 getVirtualSize() const;
 

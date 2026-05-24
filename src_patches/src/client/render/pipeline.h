@@ -43,6 +43,7 @@ struct PipelineContext
 	bool draw_crosshair {true};
 
 	Sky *sky = nullptr;
+	Sky *overworld_sky = nullptr;
 };
 
 /**
