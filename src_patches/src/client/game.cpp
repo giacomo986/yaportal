@@ -3463,12 +3463,20 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	float direct_brightness;
 	bool sunlight_seen;
 
+	LocalPlayer *lplayer = client->getEnv().getLocalPlayer();
+
 	// When in noclip mode force same sky brightness as above ground so you
 	// can see properly
 	bool noclip_fly = draw_control->allow_noclip &&
 			m_cache_enable_free_move &&
 			client->checkPrivilege("fly");
-	if (!sky->getAutoCaveBrightness() || noclip_fly) {
+	if (lplayer->sky_sunlit_override_frames > 0) {
+		// Portal teleport: force sunlight_seen for a few frames so the sky switches
+		// instantly instead of glitching for 1-2 frames while block data settles.
+		sunlight_seen     = lplayer->sky_sunlit_override_value;
+		direct_brightness = sunlight_seen ? time_brightness : 0.0f;
+		lplayer->sky_sunlit_override_frames--;
+	} else if (!sky->getAutoCaveBrightness() || noclip_fly) {
 		direct_brightness = time_brightness;
 		sunlight_seen = true;
 	} else {

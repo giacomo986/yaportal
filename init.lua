@@ -844,11 +844,20 @@ minetest.register_globalstep(function(dtime)
                 })
             end
 
+            -- sky_sunlit hint forces sunlight_seen on the client for 3 frames so the
+            -- sky switches instantly instead of glitching while block data settles.
+            local sky_sunlit
+            if teleport_src:match("^pocket_in_") then
+                sky_sunlit = false   -- arriving in void/pocket dim
+            elseif teleport_src:match("^pocket_out_") then
+                sky_sunlit = true    -- arriving in overworld
+            end
+
             player:portal_teleport(new_pos, new_yaw, {
                 x=new_vel.x-vel.x,
                 y=new_vel.y-vel.y,
                 z=new_vel.z-vel.z,
-            })
+            }, sky_sunlit ~= nil and {sky_sunlit = sky_sunlit} or nil)
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}

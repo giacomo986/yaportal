@@ -2299,11 +2299,11 @@ void Server::SendPlayerSpeed(session_t peer_id, const v3f &added_vel)
 	Send(&pkt);
 }
 
-void Server::SendPortalTeleport(PlayerSAO *sao, const v3f &pos, f32 pitch, f32 yaw, const v3f &vel_delta)
+void Server::SendPortalTeleport(PlayerSAO *sao, const v3f &pos, f32 pitch, f32 yaw, const v3f &vel_delta, u8 sky_sunlit)
 {
 	sao->sendOutdatedData();
 	NetworkPacket pkt(TOCLIENT_PORTAL_TELEPORT, 0, sao->getPeerID());
-	pkt << pos << pitch << yaw << vel_delta;
+	pkt << pos << pitch << yaw << vel_delta << sky_sunlit;
 	Send(&pkt);
 }
 

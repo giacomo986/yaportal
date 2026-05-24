@@ -184,8 +184,10 @@ int ObjectRef::l_set_pos_look(lua_State *L)
 	return 0;
 }
 
-// portal_teleport(self, pos, yaw_radians, vel_delta)
+// portal_teleport(self, pos, yaw_radians, vel_delta [, {sky_sunlit=bool}])
 // Single-packet portal teleport: pos + camera snap + velocity delta atomically.
+// Optional 5th arg table: {sky_sunlit=bool} forces sunlight_seen for 3 frames on the
+// client to prevent sky-type glitch after dimension change.
 int ObjectRef::l_portal_teleport(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
@@ -201,10 +203,18 @@ int ObjectRef::l_portal_teleport(lua_State *L)
 	float yaw     = readParam<float>(L, 3) * core::RADTODEG;
 	v3f vel_delta = checkFloatPos(L, 4);
 
+	u8 sky_sunlit = 0;
+	if (lua_istable(L, 5)) {
+		lua_getfield(L, 5, "sky_sunlit");
+		if (!lua_isnil(L, -1))
+			sky_sunlit = lua_toboolean(L, -1) ? 2 : 1;
+		lua_pop(L, 1);
+	}
+
 	playersao->setPlayerYaw(yaw);
 	playersao->setPosTeleportNoSend(pos);
 	playersao->setMaxSpeedOverride(vel_delta);
-	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, vel_delta);
+	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, vel_delta, sky_sunlit);
 	return 0;
 }
 

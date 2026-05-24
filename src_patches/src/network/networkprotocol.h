@@ -715,7 +715,9 @@ enum ToClientCommand : u16
 		f32 pitch
 		f32 yaw
 		v3f vel_delta
+		u8  sky_sunlit_override   (0=none, 1=force sunlit=false, 2=force sunlit=true)
 		Atomically teleports player: sets pos, snaps camera to pitch/yaw, adds vel_delta.
+		sky_sunlit_override forces sunlight_seen for 3 frames to hide post-teleport sky glitch.
 	*/
 
 	TOCLIENT_NUM_MSG_TYPES = 0x66,
