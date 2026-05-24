@@ -19,10 +19,8 @@ class Hud;
 class Sky;
 class ShadowRenderer;
 
-namespace video
-{
-	class IRenderTarget;
-}
+namespace video { class IRenderTarget; }
+namespace scene { class ISceneNode; }
 
 struct PipelineContext
 {
@@ -44,8 +42,10 @@ struct PipelineContext
 
 	Sky *sky = nullptr;
 	Sky *overworld_sky = nullptr;
+	Sky *void_sky = nullptr;
 	float fog_range = 0.0f;
 	bool  fog_enabled = true;
+	scene::ISceneNode *clouds_node = nullptr;
 };
 
 /**

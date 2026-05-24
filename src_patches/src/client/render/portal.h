@@ -7,7 +7,7 @@
 #include "irrlichttypes_bloated.h"
 #include <memory>
 
-namespace scene { class ICameraSceneNode; class ISceneManager; }
+namespace scene { class ICameraSceneNode; class ISceneManager; class ISceneNode; }
 namespace video { class IVideoDriver; class ITexture; }
 class Sky;
 
@@ -31,6 +31,7 @@ struct PortalRTTData {
 	Sky *sky = nullptr;
 	Sky *overworld_sky = nullptr;
 	Sky *void_sky = nullptr;
+	scene::ISceneNode *clouds_node = nullptr;
 
 	~PortalRTTData();
 	void ensureCameras(scene::ISceneManager *smgr);

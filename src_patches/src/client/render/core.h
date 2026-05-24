@@ -17,6 +17,8 @@ class Hud;
 class Sky;
 class RenderPipeline;
 
+namespace scene { class ISceneNode; }
+
 class RenderingCore
 {
 protected:
@@ -45,7 +47,9 @@ public:
 	void draw(video::SColor _skycolor, bool _show_hud,
 			bool _draw_wield_tool, bool _draw_crosshair,
 			Sky *_sky = nullptr, Sky *_overworld_sky = nullptr,
-			float _fog_range = 0.0f, bool _fog_enabled = true);
+			float _fog_range = 0.0f, bool _fog_enabled = true,
+			Sky *_void_sky = nullptr,
+			scene::ISceneNode *_clouds_node = nullptr);
 
 	v2u32 getVirtualSize() const;
 

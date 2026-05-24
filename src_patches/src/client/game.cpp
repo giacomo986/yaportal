@@ -660,6 +660,7 @@ void Game::shutdown()
 
 	sky.reset();
 	sky_overworld.reset();
+	sky_void.reset();
 
 	// only if the shutdown progress bar isn't shown yet
 	if (m_shutdown_progress == 0.0f)
@@ -930,6 +931,12 @@ bool Game::createClient(const GameStartData &start_data)
 	sky_overworld = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
 	sky_overworld->setVisible(true);
 	sky_overworld->setSceneActive(false);
+
+	// Void sky: simulates underground/cave conditions, normally inactive.
+	// Used by portal RTTs to show void sky when player is in the overworld.
+	sky_void = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
+	sky_void->setVisible(true);
+	sky_void->setSceneActive(false);
 
 	if (!initGui())
 		return false;
@@ -3500,6 +3507,10 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	sky_overworld->update(time_of_day_smooth, time_brightness, time_brightness,
 			true, camera->getCameraMode(), player->getYaw(),
 			player->getPitch());
+	// sky_void always simulates cave/void conditions: no sunlight, no direct brightness.
+	sky_void->update(time_of_day_smooth, time_brightness, 0.0f,
+			false, camera->getCameraMode(), player->getYaw(),
+			player->getPitch());
 
 	/*
 		Update clouds
@@ -3724,7 +3735,7 @@ void Game::drawScene(ProfilerGraph *graph, RunStats *stats)
 
 	this->m_rendering_engine->draw_scene(sky_color, this->m_game_ui->m_flags.show_hud,
 			draw_wield_tool, draw_crosshair, sky.get(), sky_overworld.get(),
-			runData.fog_range, fogEnabled());
+			runData.fog_range, fogEnabled(), sky_void.get(), clouds.get());
 
 	/*
 		Profiler graph

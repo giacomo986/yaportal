@@ -22,7 +22,8 @@ RenderingCore::~RenderingCore() = default;
 void RenderingCore::draw(video::SColor _skycolor, bool _show_hud,
 		bool _draw_wield_tool, bool _draw_crosshair,
 		Sky *_sky, Sky *_overworld_sky,
-		float _fog_range, bool _fog_enabled)
+		float _fog_range, bool _fog_enabled,
+		Sky *_void_sky, scene::ISceneNode *_clouds_node)
 {
 	v2u32 screensize = device->getVideoDriver()->getScreenSize();
 	virtual_size = v2u32(screensize.X * virtual_size_scale.X, screensize.Y * virtual_size_scale.Y);
@@ -35,6 +36,8 @@ void RenderingCore::draw(video::SColor _skycolor, bool _show_hud,
 	context.overworld_sky = _overworld_sky;
 	context.fog_range   = _fog_range;
 	context.fog_enabled = _fog_enabled;
+	context.void_sky    = _void_sky;
+	context.clouds_node = _clouds_node;
 
 	pipeline->reset(context);
 	pipeline->run(context);
