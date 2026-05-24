@@ -3495,8 +3495,10 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	sky->update(time_of_day_smooth, time_brightness, direct_brightness,
 			sunlight_seen, camera->getCameraMode(), player->getYaw(),
 			player->getPitch());
-	sky_overworld->update(time_of_day_smooth, time_brightness, direct_brightness,
-			sunlight_seen, camera->getCameraMode(), player->getYaw(),
+	// sky_overworld always simulates above-ground overworld conditions regardless
+	// of where the player actually is (no cave-dimming, always sunlit).
+	sky_overworld->update(time_of_day_smooth, time_brightness, time_brightness,
+			true, camera->getCameraMode(), player->getYaw(),
 			player->getPitch());
 
 	/*
