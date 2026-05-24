@@ -45,6 +45,7 @@ public:
 			bool sunlight_seen, CameraMode cam_mode, float yaw, float pitch);
 
 	float getBrightness() { return m_brightness; }
+	void  setForceBrightness(float b) { m_brightness = b; }
 
 	video::SColor getBgColor() const
 	{
