@@ -122,6 +122,7 @@ else
     LUANTI_USER="$HOME/.luanti"
 fi
 export MINETEST_USER_PATH="$LUANTI_USER"
+mkdir -p "$LUANTI_USER"
 
 # Sync mod to detected user mods path
 USERMOD="$LUANTI_USER/mods/mio_portale"
