@@ -25,6 +25,14 @@ struct PortalClipPlanes {
 	float data[16] = {}; // [k*4+0..2]=normal, [k*4+3]=d, for k=0..3
 };
 
+// Sky configuration override for a portal's RTT rendering.
+// VOID: suppress all sky, use clear_color_argb as RTT background.
+// OVERWORLD: swap main sky for the secondary overworld sky node.
+struct PortalSkySlot {
+	enum class SkyMode { DEFAULT = 0, VOID, OVERWORLD } mode = SkyMode::DEFAULT;
+	u32  clear_color_argb = 0xFF000A14; // used only for VOID
+};
+
 // Non-thread-safe singleton. Access only from the main thread.
 class PortalManager {
 public:
@@ -47,6 +55,11 @@ public:
 	// Lua calls this when the player leaves the source portal bounds.
 	void clearCamHint(int id);
 
+	// Per-portal sky configuration for RTT rendering.
+	void setSkyConfig(int id, PortalSkySlot::SkyMode mode, u32 clear_color_argb = 0xFF000A14);
+	void clearSkyConfig(int id);
+	const PortalSkySlot &getSkyConfig(int id) const { return m_sky_config[id]; }
+
 	// Active lateral clip planes for the current RTT pass.
 	void setClipPlanes(const PortalClipPlanes &cp) { m_clip_planes = cp; }
 	const PortalClipPlanes &getClipPlanes() const  { return m_clip_planes; }
@@ -55,5 +68,6 @@ private:
 	PortalInfo m_portals[MAX_PORTALS];
 	struct CamHintSlot { v3f pos = {}; bool valid = false; };
 	CamHintSlot m_cam_hint[MAX_PORTALS];
+	PortalSkySlot m_sky_config[MAX_PORTALS];
 	PortalClipPlanes m_clip_planes;
 };

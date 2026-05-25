@@ -659,6 +659,8 @@ void Game::shutdown()
 	gui_chat_console.reset();
 
 	sky.reset();
+	sky_overworld.reset();
+	sky_void.reset();
 
 	// only if the shutdown progress bar isn't shown yet
 	if (m_shutdown_progress == 0.0f)
@@ -923,6 +925,18 @@ bool Game::createClient(const GameStartData &start_data)
 	 */
 	sky = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
 	scsf->setSky(sky.get());
+
+	// Overworld sky: always "regular", updated with time-of-day, normally inactive.
+	// Used by portal RTTs to show overworld sky when player is in another dimension.
+	sky_overworld = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
+	sky_overworld->setVisible(true);
+	sky_overworld->setSceneActive(false);
+
+	// Void sky: simulates underground/cave conditions, normally inactive.
+	// Used by portal RTTs to show void sky when player is in the overworld.
+	sky_void = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
+	sky_void->setVisible(true);
+	sky_void->setSceneActive(false);
 
 	if (!initGui())
 		return false;
@@ -3449,12 +3463,34 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	float direct_brightness;
 	bool sunlight_seen;
 
+	LocalPlayer *lplayer = client->getEnv().getLocalPlayer();
+
 	// When in noclip mode force same sky brightness as above ground so you
 	// can see properly
 	bool noclip_fly = draw_control->allow_noclip &&
 			m_cache_enable_free_move &&
 			client->checkPrivilege("fly");
-	if (!sky->getAutoCaveBrightness() || noclip_fly) {
+	if (lplayer->sky_sunlit_override_frames > 0) {
+		// Portal teleport: on the first override frame, reset the sky so the
+		// 100-iteration flood in sky->update() snaps all state (brightness + colors)
+		// to the target dimension's values immediately, bypassing the slow lerp.
+		if (lplayer->sky_override_reset_pending) {
+			sky->forceReset();
+			lplayer->sky_override_reset_pending = false;
+		}
+		sunlight_seen     = lplayer->sky_sunlit_override_value;
+		direct_brightness = sunlight_seen ? time_brightness : 0.0f;
+
+		// Release once getBackgroundBrightness() confirms real block data agrees;
+		// unloaded blocks appear non-sunlit (CONTENT_IGNORE → rays fail), so the
+		// override holds until actual block data confirms the expected state.
+		bool bg_sunlit;
+		client->getEnv().getClientMap()
+				.getBackgroundBrightness(MYMIN(runData.fog_range * 1.2, 60 * BS),
+						daynight_ratio, (int)(direct_brightness * 255.5), &bg_sunlit);
+		if (bg_sunlit == lplayer->sky_sunlit_override_value)
+			lplayer->sky_sunlit_override_frames--;
+	} else if (!sky->getAutoCaveBrightness() || noclip_fly) {
 		direct_brightness = time_brightness;
 		sunlight_seen = true;
 	} else {
@@ -3487,6 +3523,15 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 
 	sky->update(time_of_day_smooth, time_brightness, direct_brightness,
 			sunlight_seen, camera->getCameraMode(), player->getYaw(),
+			player->getPitch());
+	// sky_overworld always simulates above-ground overworld conditions regardless
+	// of where the player actually is (no cave-dimming, always sunlit).
+	sky_overworld->update(time_of_day_smooth, time_brightness, time_brightness,
+			true, camera->getCameraMode(), player->getYaw(),
+			player->getPitch());
+	// sky_void always simulates cave/void conditions: no sunlight, no direct brightness.
+	sky_void->update(time_of_day_smooth, time_brightness, 0.0f,
+			false, camera->getCameraMode(), player->getYaw(),
 			player->getPitch());
 
 	/*
@@ -3711,7 +3756,8 @@ void Game::drawScene(ProfilerGraph *graph, RunStats *stats)
 		draw_crosshair = false;
 
 	this->m_rendering_engine->draw_scene(sky_color, this->m_game_ui->m_flags.show_hud,
-			draw_wield_tool, draw_crosshair);
+			draw_wield_tool, draw_crosshair, sky.get(), sky_overworld.get(),
+			runData.fog_range, fogEnabled(), sky_void.get(), clouds.get());
 
 	/*
 		Profiler graph

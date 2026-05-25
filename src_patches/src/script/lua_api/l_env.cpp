@@ -1445,6 +1445,48 @@ int ModApiEnv::l_clear_portal_cam_hint(lua_State *L)
 	return 0;
 }
 
+// set_portal_sky(portal_id, {mode="void"|"overworld", clear_color="#rrggbb"})
+// Overrides the sky rendered inside the portal's RTT.
+// mode="void": suppress sky entirely; clear_color becomes the RTT background.
+// mode="overworld": use the secondary overworld sky node (regular sky params).
+int ModApiEnv::l_set_portal_sky(lua_State *L)
+{
+	int id = luaL_checkint(L, 1);
+	if (id < 0 || id >= MAX_PORTALS)
+		return 0;
+	PortalSkySlot::SkyMode mode = PortalSkySlot::SkyMode::DEFAULT;
+	u32 argb = 0xFF000A14;
+	if (lua_istable(L, 2)) {
+		lua_getfield(L, 2, "mode");
+		if (lua_isstring(L, -1)) {
+			std::string m = lua_tostring(L, -1);
+			if (m == "void") mode = PortalSkySlot::SkyMode::VOID;
+			else if (m == "overworld") mode = PortalSkySlot::SkyMode::OVERWORLD;
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, 2, "clear_color");
+		if (lua_isstring(L, -1)) {
+			video::SColor c(0xFF000A14);
+			parseColorString(lua_tostring(L, -1), c, false, 0xFF);
+			argb = c.color;
+		}
+		lua_pop(L, 1);
+	}
+	PortalManager::get().setSkyConfig(id, mode, argb);
+	return 0;
+}
+
+// clear_portal_sky(portal_id)
+// Removes the sky override so the RTT uses the main world's sky again.
+int ModApiEnv::l_clear_portal_sky(lua_State *L)
+{
+	int id = luaL_checkint(L, 1);
+	if (id < 0 || id >= MAX_PORTALS)
+		return 0;
+	PortalManager::get().clearSkyConfig(id);
+	return 0;
+}
+
 void ModApiEnv::Initialize(lua_State *L, int top)
 {
 	API_FCT(set_node);
@@ -1503,6 +1545,8 @@ void ModApiEnv::Initialize(lua_State *L, int top)
 	API_FCT(set_portals);
 	API_FCT(set_portal_cam_hint);
 	API_FCT(clear_portal_cam_hint);
+	API_FCT(set_portal_sky);
+	API_FCT(clear_portal_sky);
 }
 
 void ModApiEnv::InitializeClient(lua_State *L, int top)

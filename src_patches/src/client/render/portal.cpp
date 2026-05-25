@@ -3,6 +3,7 @@
 #include "portal.h"
 
 #include "irrlichttypes_bloated.h"
+#include "client/sky.h"
 #include "constants.h"
 #include "log.h"
 #include "client/client.h"
@@ -96,13 +97,17 @@ static void setVirtualCamera(
 	v3f src_surface = src.pos;
 	v3f dst_surface = dst.pos;
 
-	// cam_pos_override: set when Lua pre-renders the destination portal from the
-	// expected exit position before the player physically teleports there.
-	v3f actual_cam_pos = cam_pos_override ? *cam_pos_override
-	                                      : mainCam->getAbsolutePosition();
-	v3f rel = actual_cam_pos - src_surface;
-	float lx = rel.dotProduct(ar), ly = rel.dotProduct(au), lz = rel.dotProduct(an);
-	v3f vpos = dst_surface + br * (-lx) + bu * ly + bn * (-lz) + bn * (1.0f * BS);
+	// cam_pos_override: pre-computed virtual camera position in render space.
+	// Already accounts for the destination frame — use it directly.
+	// Without override: mirror the main camera's eye position through the portal.
+	v3f vpos;
+	if (cam_pos_override) {
+		vpos = *cam_pos_override;
+	} else {
+		v3f rel = mainCam->getAbsolutePosition() - src_surface;
+		float lx = rel.dotProduct(ar), ly = rel.dotProduct(au), lz = rel.dotProduct(an);
+		vpos = dst_surface + br * (-lx) + bu * ly + bn * (-lz) + bn * (1.0f * BS);
+	}
 
 	v3f dir = mainCam->getTarget() - mainCam->getAbsolutePosition();
 	dir.normalize();
@@ -116,6 +121,23 @@ static void setVirtualCamera(
 	vcam->setPosition(vpos);
 	vcam->setTarget(vpos + vdir);
 	vcam->setUpVector(vup);
+
+	// Build a float32-precise view matrix from the known-normalized vdir.
+	// Avoids buildCameraLookAtMatrixLH's 'zaxis = target - pos' subtraction
+	// which loses precision when vpos has large magnitude (other-world portals).
+	{
+		v3f zaxis = vdir;   // already normalized
+		v3f xaxis = vup.crossProduct(zaxis); xaxis.normalize();
+		v3f yaxis = zaxis.crossProduct(xaxis);
+		core::matrix4 vm;
+		float *m = vm.pointer();
+		m[0] = xaxis.X; m[4] = xaxis.Y; m[8]  = xaxis.Z; m[12] = -xaxis.dotProduct(vpos);
+		m[1] = yaxis.X; m[5] = yaxis.Y; m[9]  = yaxis.Z; m[13] = -yaxis.dotProduct(vpos);
+		m[2] = zaxis.X; m[6] = zaxis.Y; m[10] = zaxis.Z; m[14] = -zaxis.dotProduct(vpos);
+		m[3] = 0;       m[7] = 0;       m[11] = 0;        m[15] = 1;
+		vcam->setRenderViewMatrix(vm);
+	}
+
 	vcam->setAspectRatio(mainCam->getAspectRatio());
 
 	v3f vright_axis = vdir.crossProduct(vup);
@@ -411,6 +433,7 @@ static void renderPortalRTTs(
 	cmap.updatePortalDrawList(vcam_world_positions);
 
 	// Phase 2: render each portal RTT.
+
 	for (int i = 0; i < MAX_PORTALS; ++i) {
 		const PortalInfo &src = pm.portal(i);
 		if (!src.active || src.link < 0 || src.link >= MAX_PORTALS)
@@ -506,9 +529,52 @@ static void renderPortalRTTs(
 			GL.Enable(GL.CLIP_DISTANCE3);
 		}
 
+		// Apply per-portal sky mode before clearing the RTT.
+		const PortalSkySlot &sky_cfg = pm.getSkyConfig(i);
+		video::SColor clear_col = ctx.clear_color;
+		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
+			if (data.sky) data.sky->setSceneActive(false);
+			if (data.void_sky) data.void_sky->setSceneActive(true);
+			// Use the Lua-configured tint as clear colour so dark terrain has
+			// visible contrast against the background (avoid pure-black-on-black).
+			clear_col = video::SColor(sky_cfg.clear_color_argb);
+		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD) {
+			if (data.sky) data.sky->setSceneActive(false);
+			if (data.overworld_sky) {
+				data.overworld_sky->setSceneActive(true);
+				// getSkyColor() = upper sky tint; matches what beginScene() uses
+				// in the main render, preventing a colour shift at the top of the portal.
+				clear_col = data.overworld_sky->getSkyColor();
+			}
+		}
+
+		// Override driver fog to match the portal's destination sky.
+		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
+			float void_fog_start = data.void_sky ? data.void_sky->getFogStart()
+					: (data.sky ? data.sky->getFogStart() : 0.0f);
+			driver->setFog(video::SColor(sky_cfg.clear_color_argb),
+					video::EFT_FOG_LINEAR,
+					ctx.fog_range * void_fog_start,
+					ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD && data.overworld_sky) {
+			driver->setFog(data.overworld_sky->getFogColor(),
+					video::EFT_FOG_LINEAR,
+					ctx.fog_range * data.overworld_sky->getFogStart(),
+					ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		}
+
+		// For OVERWORLD mode, ensure clouds are visible even when the player's
+		// current sky has them disabled (e.g. player is in the void).
+		bool clouds_was_visible = false;
+		if (data.clouds_node) {
+			clouds_was_visible = data.clouds_node->isVisible();
+			if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD)
+				data.clouds_node->setVisible(true);
+		}
+
 		driver->setRenderTarget(data.rtex[i],
 			video::ECBF_COLOR | video::ECBF_DEPTH,
-			ctx.clear_color);
+			clear_col);
 		smgr->setActiveCamera(data.vcam[i]);
 		// Temporarily show the local player mesh so it appears in portal views.
 		// In first-person mode updateMeshCulling() hides it via double-face-culling;
@@ -525,6 +591,25 @@ static void renderPortalRTTs(
 		cmap.setBypassFrustumCulling(false);
 		if (lp_cao)
 			lp_cao->setPortalRendering(false);
+
+		// Restore clouds visibility to what the main game loop set.
+		if (data.clouds_node)
+			data.clouds_node->setVisible(clouds_was_visible);
+
+		// Restore fog to the main-world sky's settings.
+		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT && data.sky) {
+			driver->setFog(data.sky->getFogColor(),
+					video::EFT_FOG_LINEAR,
+					ctx.fog_range * data.sky->getFogStart(),
+					ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		}
+
+		// Restore sky scene nodes so the next portal (or main render) sees the original.
+		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT) {
+			if (data.sky) data.sky->setSceneActive(true);
+			if (data.overworld_sky) data.overworld_sky->setSceneActive(false);
+			if (data.void_sky) data.void_sky->setSceneActive(false);
+		}
 
 		GL.Disable(GL.CLIP_DISTANCE0);
 		GL.Disable(GL.CLIP_DISTANCE1);
@@ -597,6 +682,10 @@ void PortalPrepareStep::run(PipelineContext &ctx)
 		return;
 
 	m_data->main_cam = mainCam;
+	m_data->sky = ctx.sky;
+	m_data->overworld_sky = ctx.overworld_sky;
+	m_data->void_sky = ctx.void_sky;
+	m_data->clouds_node = ctx.clouds_node;
 	mainCam->updateAbsolutePosition();
 	renderPortalRTTs(*m_data, ctx, mainCam);
 	// Render target is now at FBO=0/screen. Draw3D's m_target->activate() will
@@ -660,6 +749,10 @@ void PortalRenderStep::run(PipelineContext &ctx)
 	if (!mainCam)
 		return;
 
+	m_data.sky = ctx.sky;
+	m_data.overworld_sky = ctx.overworld_sky;
+	m_data.void_sky = ctx.void_sky;
+	m_data.clouds_node = ctx.clouds_node;
 	// Render RTTs. Leaves render target at FBO=0 (screen) — correct for non-PP.
 	renderPortalRTTs(m_data, ctx, mainCam);
 

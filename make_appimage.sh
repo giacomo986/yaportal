@@ -50,10 +50,11 @@ ln -sf "$SDLINC/x86_64-linux-gnu/SDL2/_real_SDL_config.h" \
        "$SDLINC/SDL2/_real_SDL_config.h" 2>/dev/null || true
 
 # ── ricompila con RUN_IN_PLACE=TRUE ───────────────────────────────────────────
-# Necessario perché senza RUN_IN_PLACE il binario cerca dati in percorso assoluto
-# compilato (STATIC_SHAREDIR). Con RUN_IN_PLACE cerca in ../  rispetto al binario.
-echo ">>> Riconfigura cmake con RUN_IN_PLACE=TRUE..."
-"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=TRUE > /dev/null
+# RUN_IN_PLACE=FALSE: setSystemPaths() legge LUANTI_USER_PATH (scrivibile) e
+# scopre path_share da bindir/../builtin = AppDir/builtin. Con RUN_IN_PLACE=TRUE
+# path_user è hardcoded all'AppImage read-only → crash su debug.txt.
+echo ">>> Riconfigura cmake con RUN_IN_PLACE=FALSE..."
+"$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=FALSE > /dev/null
 echo ">>> Build..."
 "$CMAKE" --build "$BUILD" -j"$(nproc)"
 
@@ -76,9 +77,9 @@ mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
 # Mod mio_portale
-mkdir -p "$APPDIR/mods/mio_portale"
-cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/mods/mio_portale/"
-cp -r "$PROJ/textures" "$APPDIR/mods/mio_portale/"
+mkdir -p "$APPDIR/bundled_mods/mio_portale"
+cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/bundled_mods/mio_portale/"
+cp -r "$PROJ/textures" "$APPDIR/bundled_mods/mio_portale/"
 
 # ── raccoglie .so dipendenti ───────────────────────────────────────────────────
 echo ">>> Raccoglie librerie..."
@@ -113,20 +114,23 @@ cat > "$APPDIR/AppRun" <<'EOF'
 APPDIR="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$APPDIR/lib:${LD_LIBRARY_PATH}"
 
-# Detect user data dir: Arch/CachyOS uses ~/.minetest, others use ~/.luanti
+# Detect user data dir (priority: ~/.minetest > XDG ~/.local/share/luanti > ~/.luanti)
 if [ -d "$HOME/.minetest" ]; then
     LUANTI_USER="$HOME/.minetest"
+elif [ -d "$HOME/.local/share/luanti" ]; then
+    LUANTI_USER="$HOME/.local/share/luanti"
 else
     LUANTI_USER="$HOME/.luanti"
 fi
-export MINETEST_USER_PATH="$LUANTI_USER"
+export LUANTI_USER_PATH="$LUANTI_USER"
+mkdir -p "$LUANTI_USER"
 
 # Sync mod to detected user mods path
 USERMOD="$LUANTI_USER/mods/mio_portale"
-if [ ! -d "$USERMOD" ] || [ "$APPDIR/mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
+if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
     mkdir -p "$LUANTI_USER/mods"
     rm -rf "$USERMOD"
-    cp -r "$APPDIR/mods/mio_portale" "$USERMOD"
+    cp -r "$APPDIR/bundled_mods/mio_portale" "$USERMOD"
 fi
 
 # Fix world.mt entries that stored an absolute/wrong mod path (e.g. share/mio_portale)
@@ -154,6 +158,11 @@ cp "$SRC/misc/luanti-xorg-icon-128.png" "$APPDIR/luanti.png"
 # ── crea AppImage ──────────────────────────────────────────────────────────────
 echo ">>> Crea AppImage..."
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
+
+# ── ripristina configurazione dev (Debug) ────────────────────────────────────
+echo ">>> Ripristina Debug per build dev..."
+"$CMAKE" -S "$SRC" -B "$BUILD" -DCMAKE_BUILD_TYPE=Debug > /dev/null
+"$CMAKE" --build "$BUILD" -j"$(nproc)"
 
 echo ""
 echo "✓ AppImage creata: $OUT"

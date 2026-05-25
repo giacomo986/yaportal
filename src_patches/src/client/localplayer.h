@@ -172,6 +172,13 @@ public:
 	f32  m_snap_yaw   = 0.0f;
 	f32  m_snap_pitch = 0.0f;
 
+	// Set by TOCLIENT_PORTAL_TELEPORT to override sunlight_seen for N frames,
+	// preventing a 1-2 frame sky-type glitch after dimension change.
+	int  sky_sunlit_override_frames = 0;
+	bool sky_sunlit_override_value  = true;
+	// Set alongside sky_sunlit_override to trigger a full sky reset on first frame.
+	bool sky_override_reset_pending = false;
+
 	inline Lighting& getLighting() { return m_lighting; }
 
 	inline PlayerSettings &getPlayerSettings() { return m_player_settings; }

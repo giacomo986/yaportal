@@ -323,6 +323,17 @@ local function sync_portals()
             half_h = (pp.h or 3) / 2,
             link   = link_idx,
         }
+        -- Per-portal RTT sky: void for overworld→pocket, overworld sky for pocket→overworld.
+        local slot = i - 1
+        if pp.link and pp.link:match("^pocket_in_") then
+            -- portal is in the overworld, looks into pocket dim → show void
+            minetest.set_portal_sky(slot, {mode="void", clear_color="#000A14"})
+        elseif pp.link and pp.link:match("^pocket_out_") then
+            -- portal is in the pocket dim, looks into overworld → show overworld sky
+            minetest.set_portal_sky(slot, {mode="overworld"})
+        else
+            minetest.clear_portal_sky(slot)
+        end
     end
     minetest.set_portals(portal_list)
 end
@@ -360,9 +371,11 @@ minetest.register_on_mods_loaded(function()
         end
     end
     if migrated then save_portals() end
-    for name, pp in pairs(portals) do
-        update_anchor(name, pp)
-    end
+    minetest.after(0, function()
+        for name, pp in pairs(portals) do
+            update_anchor(name, pp)
+        end
+    end)
     -- Ricostruisce cache aree pocket da storage
     local names_s = storage:get_string("pocket_players")
     if names_s ~= "" then
@@ -775,22 +788,6 @@ minetest.register_globalstep(function(dtime)
                     s.triggered          = false
                 end
 
-                -- Update RTT camera hint for destination portal
-                if s.entered_from_front and dst then
-                    local src_n, src_r = portal_basis(pp)
-                    local dst_n, dst_r = portal_basis(dst)
-                    local src_c = inner_center(pp)
-                    local dst_c = inner_center(dst)
-                    local rel = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
-                    local off = portal_transform_pos(rel, src_n, src_r, dst_n, dst_r)
-                    local dst_idx = portal_index[dst_name]
-                    if dst_idx then
-                        minetest.set_portal_cam_hint(dst_idx, {
-                            x=dst_c.x+off.x, y=dst_c.y+off.y, z=dst_c.z+off.z
-                        })
-                    end
-                end
-
                 local border_entry = just_entered and portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
                 if s.entered_from_front and not s.triggered and dst
                    and not teleport_src
@@ -804,13 +801,6 @@ minetest.register_globalstep(function(dtime)
                 if s.in_bounds then
                     s.in_bounds  = false
                     s.triggered  = false
-                    -- Clear cam hint for destination
-                    if dst_name then
-                        local dst_idx = portal_index[dst_name]
-                        if dst_idx then
-                            minetest.clear_portal_cam_hint(dst_idx)
-                        end
-                    end
                 end
             end
         end
@@ -845,14 +835,29 @@ minetest.register_globalstep(function(dtime)
 
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
-                minetest.set_portal_cam_hint(dst_idx, new_pos)
+                -- Hint is in destination render space; add eye height so the
+                -- virtual camera matches the actual eye position, not the feet.
+                local props = player:get_properties()
+                local eye_h = (props and props.eye_height) or 1.625
+                minetest.set_portal_cam_hint(dst_idx, {
+                    x=new_pos.x, y=new_pos.y + eye_h, z=new_pos.z
+                })
+            end
+
+            -- sky_sunlit hint forces sunlight_seen on the client so the sky snaps
+            -- instantly to the destination state instead of lerping over ~100 frames.
+            -- Only needed for void→overworld: the natural lerp for overworld→void is fine
+            -- and lets the void's open-sky atmosphere (stars, etc.) render naturally.
+            local sky_sunlit
+            if teleport_src:match("^pocket_in_") then
+                sky_sunlit = true    -- pocket_in is in void; exiting it → arriving in overworld
             end
 
             player:portal_teleport(new_pos, new_yaw, {
                 x=new_vel.x-vel.x,
                 y=new_vel.y-vel.y,
                 z=new_vel.z-vel.z,
-            })
+            }, sky_sunlit ~= nil and {sky_sunlit = sky_sunlit} or nil)
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}

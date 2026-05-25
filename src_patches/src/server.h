@@ -420,7 +420,7 @@ public:
 	void SendMovePlayer(PlayerSAO *sao);
 	void SendMovePlayerRel(session_t peer_id, const v3f &added_pos);
 	void SendPlayerSpeed(session_t peer_id, const v3f &added_vel);
-	void SendPortalTeleport(PlayerSAO *sao, const v3f &pos, f32 pitch, f32 yaw, const v3f &vel_delta);
+	void SendPortalTeleport(PlayerSAO *sao, const v3f &pos, f32 pitch, f32 yaw, const v3f &vel_delta, u8 sky_sunlit = 0);
 	void SendPlayerFov(session_t peer_id);
 	void SendCamera(session_t peer_id, Player *player);
 

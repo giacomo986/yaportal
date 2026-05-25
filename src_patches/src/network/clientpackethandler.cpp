@@ -1702,12 +1702,22 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 
 	*pkt >> pos >> pitch >> yaw >> vel_delta;
 
+	u8 sky_sunlit = 0;
+	if (pkt->getRemainingBytes() >= 1)
+		*pkt >> sky_sunlit;
+
 	LocalPlayer *player = m_env.getLocalPlayer();
 	assert(player != NULL);
 
 	player->setPosition(pos);
 	player->snapView(yaw, pitch);
 	player->addVelocity(vel_delta);
+
+	if (sky_sunlit != 0) {
+		player->sky_sunlit_override_frames = 3;
+		player->sky_sunlit_override_value  = (sky_sunlit == 2);
+		player->sky_override_reset_pending = true;
+	}
 }
 
 void Client::handleCommand_MediaPush(NetworkPacket *pkt)
