@@ -1,8 +1,8 @@
--- mio_portale/init.lua v2
+-- yaportal/init.lua v2
 -- Portali variabili: N portali nominati, dimensioni auto-rilevate (1-8 nodi),
 -- 8 materiali cornice, GUI destra-click per nome e collegamento.
 
-minetest.log("action", "[mio_portale] Caricamento mod v2...")
+minetest.log("action", "[yaportal] Caricamento mod v2...")
 
 -- Intercetta register_abm di tutti i mod che caricano DOPO questo.
 -- Blocca ABM il cui nodo è dentro una pocket dimension → niente spawn naturale.
@@ -49,15 +49,15 @@ local open_portal_config  -- forward declared; assigned below
 -- ── nodo cornice ─────────────────────────────────────────────────────────────
 
 local ALL_FRAME_NODES = {
-    ["mio_portale:frame"]        = true,
-    ["mio_portale:frame_blue"]   = true,
-    ["mio_portale:frame_orange"] = true,
-    ["mio_portale:frame_green"]  = true,
+    ["yaportal:frame"]        = true,
+    ["yaportal:frame_blue"]   = true,
+    ["yaportal:frame_orange"] = true,
+    ["yaportal:frame_green"]  = true,
 }
 
 -- ── entity ancora ─────────────────────────────────────────────────────────────
 
-minetest.register_entity("mio_portale:anchor", {
+minetest.register_entity("yaportal:anchor", {
     initial_properties = {
         visual = "cube", visual_size = {x=0, y=0},
         collisionbox = {0,0,0,0,0,0},
@@ -90,7 +90,7 @@ local function update_anchor(name, pp)
         else
             pos = {x=pp.cx, y=pp.cy+(h-1)/2, z=pp.cz+(w-1)/2}
         end
-        anchors[name] = minetest.add_entity(pos, "mio_portale:anchor")
+        anchors[name] = minetest.add_entity(pos, "yaportal:anchor")
         if anchors[name] then
             local ent = anchors[name]:get_luaentity()
             if ent then ent._portal_name = name end
@@ -349,7 +349,7 @@ minetest.register_on_mods_loaded(function()
         portals = minetest.deserialize(s) or {}
     end
     sync_portals()
-    -- Migrate portals with external frame materials to mio_portale:frame.
+    -- Migrate portals with external frame materials to yaportal:frame.
     -- Avoids injecting on_rightclick globally into common node types.
     local migrated = false
     for name, pp in pairs(portals) do
@@ -357,15 +357,15 @@ minetest.register_on_mods_loaded(function()
             local ok, err = pcall(function()
                 for _, fpos in ipairs(get_frame_positions(pp)) do
                     if minetest.get_node(fpos).name == pp.node_name then
-                        minetest.swap_node(fpos, {name = "mio_portale:frame"})
+                        minetest.swap_node(fpos, {name = "yaportal:frame"})
                     end
                 end
             end)
             if ok then
-                pp.node_name = "mio_portale:frame"
+                pp.node_name = "yaportal:frame"
                 migrated = true
             else
-                minetest.log("warning", "[mio_portale] skip migration for '" ..
+                minetest.log("warning", "[yaportal] skip migration for '" ..
                     name .. "': " .. tostring(err))
             end
         end
@@ -526,7 +526,7 @@ open_portal_config = function(player, portal_name)
 
     local mat_items    = {}
     local mat_selected = 1
-    local current_node = pp.node_name or "mio_portale:frame"
+    local current_node = pp.node_name or "yaportal:frame"
     local preview_node = player_mat_preview[pname] or current_node
     for i, name in ipairs(nodes) do
         local def        = minetest.registered_nodes[name]
@@ -540,7 +540,7 @@ open_portal_config = function(player, portal_name)
         and "Anteprima:"
         or  "Anteprima (non applicato):"
 
-    minetest.show_formspec(pname, "mio_portale:config",
+    minetest.show_formspec(pname, "yaportal:config",
         "formspec_version[4]" ..
         "size[9,11.5]" ..
         "label[0.5,0.5;Configura Portale]" ..
@@ -564,7 +564,7 @@ open_portal_config = function(player, portal_name)
 end
 
 minetest.register_on_player_receive_fields(function(player, formname, fields)
-    if formname ~= "mio_portale:config" then return end
+    if formname ~= "yaportal:config" then return end
 
     local pname = player:get_player_name()
     local portal_name = player_form_context[pname]
@@ -712,14 +712,14 @@ end)
 
 -- ── registrazione nodo cornice ────────────────────────────────────────────────
 
-minetest.register_node("mio_portale:frame", {
+minetest.register_node("yaportal:frame", {
     description = "Cornice Portale" ..
         "\n(cornice rettangolare, interno " .. MIN_W .. "x" .. MIN_H ..
         " a " .. MAX_W .. "x" .. MAX_H .. " nodi di aria)",
-    tiles = {"mio_portale_blue.png"},
+    tiles = {"yaportal_blue.png"},
     groups = {cracky=3, oddly_breakable_by_hand=3},
     after_place_node = function(pos, placer)
-        try_activate_near(pos, "mio_portale:frame", placer)
+        try_activate_near(pos, "yaportal:frame", placer)
     end,
     after_dig_node = function(pos)
         deactivate_if_frame(pos)
@@ -734,7 +734,7 @@ minetest.register_node("mio_portale:frame", {
 })
 
 -- Global callbacks so frames built from any game node activate/deactivate portals.
--- mio_portale:frame already has after_place/after_dig; skip double-call.
+-- yaportal:frame already has after_place/after_dig; skip double-call.
 local function is_known_frame_material(node_name)
     for _, pp in pairs(portals) do
         if pp.node_name == node_name then return true end
@@ -1032,7 +1032,7 @@ local function portal_gun_shoot(player, pointed_thing, color)
         return
     end
 
-    local frame_node  = "mio_portale:frame_" .. color
+    local frame_node  = "yaportal:frame_" .. color
     local portal_name = "gun_" .. color .. "_" .. pname
     portal_gun_remove(pname, color)
     portal_gun_place_frame(cx, cy, cz, axis, GUN_W, GUN_H, frame_node)
@@ -1053,23 +1053,23 @@ local function portal_gun_shoot(player, pointed_thing, color)
     update_anchor(portal_name, portals[portal_name])
 end
 
-minetest.register_node("mio_portale:frame_blue", {
+minetest.register_node("yaportal:frame_blue", {
     description = "Cornice Portale Blu (portal gun, indistruttibile)",
-    tiles = {"mio_portale_blue.png"},
+    tiles = {"yaportal_blue.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
 
-minetest.register_node("mio_portale:frame_orange", {
+minetest.register_node("yaportal:frame_orange", {
     description = "Cornice Portale Arancione (portal gun, indistruttibile)",
-    tiles = {"mio_portale_orange.png"},
+    tiles = {"yaportal_orange.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
 
-minetest.register_tool("mio_portale:portal_gun", {
+minetest.register_tool("yaportal:portal_gun", {
     description = "Portal Gun\nClic sinistro: portale blu\nClic destro: portale arancione",
-    inventory_image = "mio_portale_gun.png",
+    inventory_image = "yaportal_gun.png",
     on_use = function(itemstack, user, pointed_thing)
         portal_gun_shoot(user, pointed_thing, "blue")
         return itemstack
@@ -1095,16 +1095,16 @@ end)
 
 local POCKET_SIZE = 32  -- piattaforma 32×32
 
-minetest.register_node("mio_portale:bedrock", {
+minetest.register_node("yaportal:bedrock", {
     description = "Bedrock (indistruttibile)",
-    tiles = {"mio_portale_bedrock.png"},
+    tiles = {"yaportal_bedrock.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
 
-minetest.register_node("mio_portale:frame_green", {
+minetest.register_node("yaportal:frame_green", {
     description = "Cornice Portale Verde (pocket dimension, indistruttibile)",
-    tiles = {"mio_portale_green.png"},
+    tiles = {"yaportal_green.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
@@ -1162,20 +1162,20 @@ local function pocket_ensure(pname, callback)
         for dx = 0, POCKET_SIZE-1 do
             for dz = 0, POCKET_SIZE-1 do
                 minetest.set_node({x=bx+dx, y=by, z=bz+dz},
-                    {name="mio_portale:bedrock"})
+                    {name="yaportal:bedrock"})
             end
         end
         -- portale fisso centrato sulla piattaforma, asse Z, interno verso +z
         local cx = bx + 15
         local cy = by + 1  -- bottom frame a by (bedrock), interno parte da by+1
         local cz = bz  -- portale al bordo -z, piattaforma tutta in avanti (+z, ns=1)
-        portal_gun_place_frame(cx, cy, cz, 0, GUN_W, GUN_H, "mio_portale:frame_green")
+        portal_gun_place_frame(cx, cy, cz, 0, GUN_W, GUN_H, "yaportal:frame_green")
         local in_name = "pocket_in_" .. pname
         portals[in_name] = {
             cx=cx, cy=cy, cz=cz,
             axis=0, ns=1,
             w=GUN_W, h=GUN_H,
-            node_name="mio_portale:frame_green",
+            node_name="yaportal:frame_green",
         }
         update_anchor(in_name, portals[in_name])
         callback(t)
@@ -1251,14 +1251,14 @@ local function pocket_gun_shoot(player, pointed_thing)
 
     pocket_ensure(pname, function()
         pocket_remove_world(pname)
-        portal_gun_place_frame(cx, cy, cz, axis, GUN_W, GUN_H, "mio_portale:frame_green")
+        portal_gun_place_frame(cx, cy, cz, axis, GUN_W, GUN_H, "yaportal:frame_green")
         local out_name = "pocket_out_" .. pname
         local in_name  = "pocket_in_" .. pname
         portals[out_name] = {
             cx=cx, cy=cy, cz=cz,
             axis=axis, ns=ns,
             w=GUN_W, h=GUN_H,
-            node_name="mio_portale:frame_green",
+            node_name="yaportal:frame_green",
             link=in_name,
         }
         if portals[in_name] then portals[in_name].link = out_name end
@@ -1268,9 +1268,9 @@ local function pocket_gun_shoot(player, pointed_thing)
     end)
 end
 
-minetest.register_tool("mio_portale:pocket_gun", {
+minetest.register_tool("yaportal:pocket_gun", {
     description = "Pocket Dimension Gun\nClic sx: apri portale | Clic dx: chiudi portale",
-    inventory_image = "mio_portale_gun.png^[colorize:#00cc00:120",
+    inventory_image = "yaportal_gun.png^[colorize:#00cc00:120",
     on_use = function(itemstack, user, pointed_thing)
         pocket_gun_shoot(user, pointed_thing)
         return itemstack
@@ -1287,3 +1287,9 @@ minetest.register_tool("mio_portale:pocket_gun", {
     end,
 })
 
+-- Aliases for worlds created with the old mod name (mio_portale).
+for _, name in ipairs({"frame", "frame_blue", "frame_orange", "frame_green", "bedrock"}) do
+    minetest.register_alias("mio_portale:" .. name, "yaportal:" .. name)
+end
+minetest.register_alias("mio_portale:portal_gun",  "yaportal:portal_gun")
+minetest.register_alias("mio_portale:pocket_gun",  "yaportal:pocket_gun")

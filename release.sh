@@ -91,9 +91,9 @@ mkdir -p "$APPDIR/client"
 
 # Mod in bundled_mods/ (non auto-scoperto da Luanti come global mods).
 # AppRun la copia in $LUANTI_USER/mods/ al primo avvio.
-mkdir -p "$APPDIR/bundled_mods/mio_portale"
-cp "$PROJ/init.lua" "$PROJ/mod.conf" "$APPDIR/bundled_mods/mio_portale/"
-cp -r "$PROJ/textures" "$APPDIR/bundled_mods/mio_portale/"
+mkdir -p "$APPDIR/bundled_mods/yaportal"
+cp "$PROJ/yaportal/init.lua" "$PROJ/yaportal/mod.conf" "$APPDIR/bundled_mods/yaportal/"
+cp -r "$PROJ/yaportal/textures" "$APPDIR/bundled_mods/yaportal/"
 
 # ── raccoglie .so ─────────────────────────────────────────────────────────────
 echo ">>> Raccoglie librerie..."
@@ -136,16 +136,22 @@ fi
 export LUANTI_USER_PATH="$LUANTI_USER"
 mkdir -p "$LUANTI_USER"
 
-USERMOD="$LUANTI_USER/mods/mio_portale"
-if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/mio_portale/init.lua" -nt "$USERMOD/init.lua" ]; then
+# Remove old mod dir left over from rename mio_portale → yaportal
+rm -rf "$LUANTI_USER/mods/mio_portale"
+
+USERMOD="$LUANTI_USER/mods/yaportal"
+if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/yaportal/init.lua" -nt "$USERMOD/init.lua" ]; then
     mkdir -p "$LUANTI_USER/mods"
     rm -rf "$USERMOD"
-    cp -r "$APPDIR/bundled_mods/mio_portale" "$USERMOD"
+    cp -r "$APPDIR/bundled_mods/yaportal" "$USERMOD"
 fi
 
+# Migrate world.mt: rename old mod key and force-enable yaportal
 find "$LUANTI_USER/worlds" -name "world.mt" 2>/dev/null | while read -r wmt; do
-    grep -q "^load_mod_mio_portale" "$wmt" && \
-        sed -i 's|^load_mod_mio_portale = .*|load_mod_mio_portale = true|' "$wmt"
+    sed -i \
+        's|^load_mod_mio_portale = .*|load_mod_yaportal = true|' \
+        "$wmt"
+    grep -q "^load_mod_yaportal" "$wmt" || true
 done
 
 exec "$APPDIR/bin/luanti" "$@"
