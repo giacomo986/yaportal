@@ -320,6 +320,7 @@ void Sky::update(float time_of_day, float time_brightness,
 				<<" direct_brightness="<<direct_brightness
 				<<" sunlight_seen="<<sunlight_seen<<std::endl;*/
 		m_first_update = false;
+		m_sunlight_seen = sunlight_seen;
 		for (u32 i = 0; i < 100; i++) {
 			update(time_of_day, time_brightness, direct_brightness,
 					sunlight_seen, cam_mode, yaw, pitch);
@@ -359,13 +360,6 @@ void Sky::update(float time_of_day, float time_brightness,
 			m_brightness = m_brightness * 0.95 + direct_brightness * 0.05;
 		else
 			m_brightness = m_brightness * 0.98 + direct_brightness * 0.02;
-	}
-
-	// Portal teleport override: snap brightness past the slow lerp.
-	// Primed each frame by game.cpp while the sky_sunlit_override is active.
-	if (m_brightness_primed) {
-		m_brightness = m_primed_brightness;
-		m_brightness_primed = false;
 	}
 
 	m_clouds_visible = true;

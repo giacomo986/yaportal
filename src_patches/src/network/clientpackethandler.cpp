@@ -1716,6 +1716,7 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 	if (sky_sunlit != 0) {
 		player->sky_sunlit_override_frames = 3;
 		player->sky_sunlit_override_value  = (sky_sunlit == 2);
+		player->sky_override_reset_pending = true;
 	}
 }
 

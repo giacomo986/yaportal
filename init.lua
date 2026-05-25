@@ -844,13 +844,13 @@ minetest.register_globalstep(function(dtime)
                 })
             end
 
-            -- sky_sunlit hint forces sunlight_seen on the client for 3 frames so the
-            -- sky switches instantly instead of glitching while block data settles.
+            -- sky_sunlit hint forces sunlight_seen on the client so the sky snaps
+            -- instantly to the destination state instead of lerping over ~100 frames.
+            -- Only needed for void→overworld: the natural lerp for overworld→void is fine
+            -- and lets the void's open-sky atmosphere (stars, etc.) render naturally.
             local sky_sunlit
             if teleport_src:match("^pocket_in_") then
-                sky_sunlit = false   -- arriving in void/pocket dim
-            elseif teleport_src:match("^pocket_out_") then
-                sky_sunlit = true    -- arriving in overworld
+                sky_sunlit = true    -- pocket_in is in void; exiting it → arriving in overworld
             end
 
             player:portal_teleport(new_pos, new_yaw, {

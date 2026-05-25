@@ -46,9 +46,10 @@ public:
 
 	float getBrightness() { return m_brightness; }
 
-	// Prime a brightness value to apply AFTER the next update() lerp, bypassing
-	// the slow transition. Must be called each frame while the override is needed.
-	void primeBrightness(float b) { m_primed_brightness = b; m_brightness_primed = true; }
+	// Re-trigger the initial flood (100 rapid update() iterations) on the next
+	// update() call, snapping all sky state (brightness + colors) to the current
+	// parameters instantly.  Call once when teleporting between dimensions.
+	void forceReset() { m_first_update = true; }
 
 	video::SColor getBgColor() const
 	{
@@ -188,8 +189,6 @@ private:
 	float m_time_brightness;
 	bool m_sunlight_seen;
 	float m_brightness = 0.5f;
-	bool  m_brightness_primed  = false;
-	float m_primed_brightness  = 0.0f;
 	float m_cloud_brightness = 0.5f;
 	bool m_clouds_visible; // Whether clouds are disabled due to player underground
 	bool m_clouds_enabled = true; // Initialised to true, reset only by set_sky API
