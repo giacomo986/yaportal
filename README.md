@@ -162,6 +162,13 @@ Produces `Luanti-portal-x86_64.AppImage` in the project root. Requires `patchelf
 
 ---
 
+## Credits
+
+- **Giacomo Perin** — author
+- **Claude** (Anthropic) — co-author
+
+---
+
 ## Keeping src_patches/ in sync
 
 After modifying C++ files in `luanti_src/`, sync `src_patches/` before committing:
