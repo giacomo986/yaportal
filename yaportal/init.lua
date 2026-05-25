@@ -1,13 +1,13 @@
 -- yaportal/init.lua v2
--- Portali variabili: N portali nominati, dimensioni auto-rilevate (1-8 nodi),
--- 8 materiali cornice, GUI destra-click per nome e collegamento.
+-- Named portals: auto-detected frame sizes (1-8 nodes),
+-- 8 frame materials, right-click GUI for name and link.
 
-minetest.log("action", "[yaportal] Caricamento mod v2...")
+minetest.log("action", "[yaportal] Loading mod v2...")
 
--- Intercetta register_abm di tutti i mod che caricano DOPO questo.
--- Blocca ABM il cui nodo è dentro una pocket dimension → niente spawn naturale.
--- Mob introdotti manualmente da player (uova, comandi) non passano per ABM.
-local _pocket_spawn_blocker = nil  -- fn(pos)→bool, settato dopo caricamento
+-- Intercept register_abm for all mods that load AFTER this one.
+-- Block ABMs whose node is inside a pocket dimension — no natural spawns.
+-- Mobs spawned manually by players (eggs, commands) bypass the ABM hook.
+local _pocket_spawn_blocker = nil  -- fn(pos)→bool, set after mod load
 do
     local _orig_abm = minetest.register_abm
     minetest.register_abm = function(def)
@@ -22,21 +22,21 @@ end
 
 local storage = minetest.get_mod_storage()
 
--- ── costanti ──────────────────────────────────────────────────────────────────
+-- ── constants ────────────────────────────────────────────────────────────────
 
-local MIN_W, MAX_W = 1, 8   -- larghezza interna portale (nodi)
-local MIN_H, MAX_H = 2, 8   -- altezza interna portale (nodi)
+local MIN_W, MAX_W = 1, 8   -- portal inner width (nodes)
+local MIN_H, MAX_H = 2, 8   -- portal inner height (nodes)
 local UP = {x=0, y=1, z=0}
 local TRIGGER_DEPTH = 0.05
 
--- ── stato globale ─────────────────────────────────────────────────────────────
+-- ── global state ────────────────────────────────────────────────────────────
 
 -- portals[name] = {cx,cy,cz,axis,ns,w,h,link,node_name}
 local portals = {}
-local _pocket_areas = {}  -- pname → {bx,by,bz}, cache aree pocket per ABM blocker
+local _pocket_areas = {}  -- pname → {bx,by,bz}, pocket area cache for ABM blocker
 
--- C++ indice 0-based per ogni portale (ricostruito da sync_portals, stabile
--- tra chiamate consecutive se i nomi non cambiano grazie all'ordine alfabetico)
+-- 0-based C++ index for each portal (rebuilt by sync_portals, stable
+-- across consecutive calls as long as names don't change, due to alphabetical sort)
 local portal_index = {}  -- name → 0-based int
 
 local anchors = {}              -- name → entity object
@@ -46,7 +46,7 @@ local player_mat_preview  = {}  -- pname → node_name selected in textlist (not
 local player_mat_filter   = {}  -- pname → filter string for material textlist
 local open_portal_config  -- forward declared; assigned below
 
--- ── nodo cornice ─────────────────────────────────────────────────────────────
+-- ── frame node ──────────────────────────────────────────────────────────────
 
 local ALL_FRAME_NODES = {
     ["yaportal:frame"]        = true,
@@ -55,7 +55,7 @@ local ALL_FRAME_NODES = {
     ["yaportal:frame_green"]  = true,
 }
 
--- ── entity ancora ─────────────────────────────────────────────────────────────
+-- ── anchor entity ───────────────────────────────────────────────────────────
 
 minetest.register_entity("yaportal:anchor", {
     initial_properties = {
@@ -111,7 +111,7 @@ local function update_anchor(name, pp)
     end
 end
 
--- ── utilità geometria ────────────────────────────────────────────────────────
+-- ── geometry utils ─────────────────────────────────────────────────────────
 
 local function node_at(x,y,z) return minetest.get_node({x=x,y=y,z=z}).name end
 
@@ -376,7 +376,7 @@ minetest.register_on_mods_loaded(function()
             update_anchor(name, pp)
         end
     end)
-    -- Ricostruisce cache aree pocket da storage
+    -- Rebuild pocket area cache from storage
     local names_s = storage:get_string("pocket_players")
     if names_s ~= "" then
         local names = minetest.deserialize(names_s) or {}
@@ -390,15 +390,15 @@ minetest.register_on_mods_loaded(function()
     end
 end)
 
--- ── generatore nomi portale ───────────────────────────────────────────────────
+-- ── portal name generator ───────────────────────────────────────────────────
 
 local function new_portal_name()
     local n = (tonumber(storage:get_string("portal_counter")) or 0) + 1
     storage:set_string("portal_counter", tostring(n))
-    return "portale_" .. n
+    return "portal_" .. n
 end
 
--- ── rilevamento cornice ───────────────────────────────────────────────────────
+-- ── frame detection ─────────────────────────────────────────────────────────
 
 local function try_activate_near(pos, frame_node, placer)
     local px, py, pz = pos.x, pos.y, pos.z
@@ -434,8 +434,8 @@ local function try_activate_near(pos, frame_node, placer)
                             sync_portals()
                             update_anchor(name, portals[name])
                             minetest.chat_send_all(
-                                "[portale] '" .. name .. "' attivato (" ..
-                                w .. "x" .. h .. " nodi). Clic destro per configurare.")
+                                "[portal] '" .. name .. "' activated (" ..
+                                w .. "x" .. h .. " nodes). Right-click to configure.")
                             return
                         end
                     end
@@ -456,13 +456,13 @@ local function deactivate_if_frame(pos)
             save_portals()
             sync_portals()
             update_anchor(name, nil)
-            minetest.chat_send_all("[portale] '" .. name .. "' disattivato.")
+            minetest.chat_send_all("[portal] '" .. name .. "' deactivated.")
             return
         end
     end
 end
 
--- ── GUI configurazione ────────────────────────────────────────────────────────
+-- ── config GUI ──────────────────────────────────────────────────────────────
 
 local function get_all_nodes()
     local result = {}
@@ -486,8 +486,8 @@ open_portal_config = function(player, portal_name)
     local pname = player:get_player_name()
     player_form_context[pname] = portal_name
 
-    -- Build link dropdown: "(nessuno)" + all other portal names
-    local link_items = {"(nessuno)"}
+    -- Build link dropdown: "(none)" + all other portal names
+    local link_items = {"(none)"}
     local link_keys  = {}
     for _, name in ipairs(sorted_portal_names()) do
         if name ~= portal_name then
@@ -503,8 +503,8 @@ open_portal_config = function(player, portal_name)
         end
     end
 
-    local info = "Dimensioni: " .. (pp.w or "?") .. "x" .. (pp.h or "?") ..
-                 " nodi  |  Asse: " .. (pp.axis==0 and "Z" or "X")
+    local info = "Size: " .. (pp.w or "?") .. "x" .. (pp.h or "?") ..
+                 " nodes  |  Axis: " .. (pp.axis==0 and "Z" or "X")
 
     -- Build filtered material textlist
     local filter      = (player_mat_filter[pname] or ""):lower()
@@ -537,29 +537,29 @@ open_portal_config = function(player, portal_name)
     end
 
     local preview_label = preview_node == current_node
-        and "Anteprima:"
-        or  "Anteprima (non applicato):"
+        and "Preview:"
+        or  "Preview (not applied):"
 
     minetest.show_formspec(pname, "yaportal:config",
         "formspec_version[4]" ..
         "size[9,11.5]" ..
-        "label[0.5,0.5;Configura Portale]" ..
+        "label[0.5,0.5;Configure Portal]" ..
         "label[0.5,1.1;" .. minetest.formspec_escape(info) .. "]" ..
-        "field[0.5,2;8.5,0.8;portal_name;Nome portale;" ..
+        "field[0.5,2;8.5,0.8;portal_name;Portal name;" ..
             minetest.formspec_escape(portal_name) .. "]" ..
-        "label[0.5,3.1;Collega a:]" ..
+        "label[0.5,3.1;Link to:]" ..
         "dropdown[0.5,3.6;8.5,0.8;portal_link;" ..
             table.concat(link_items, ",") .. ";" .. selected .. "]" ..
-        "label[0.5,4.8;Materiale cornice:]" ..
+        "label[0.5,4.8;Frame material:]" ..
         "label[4.5,4.8;" .. minetest.formspec_escape(preview_label) .. "]" ..
         "item_image[7.5,4.4;1.2,1.2;" .. preview_node .. "]" ..
-        "field[0.5,5.3;5.5,0.7;mat_filter;Filtra:;" ..
+        "field[0.5,5.3;5.5,0.7;mat_filter;Filter:;" ..
             minetest.formspec_escape(player_mat_filter[pname] or "") .. "]" ..
-        "button[6.1,5.3;1.3,0.7;cerca_material;Cerca]" ..
+        "button[6.1,5.3;1.3,0.7;cerca_material;Search]" ..
         "textlist[0.5,6.1;8.5,3.5;material_list;" ..
             table.concat(mat_items, ",") .. ";" .. mat_selected .. "]" ..
-        "button[0.5,10.1;4,0.8;apply_material;Applica Materiale]" ..
-        "button[5,10.1;3.5,0.8;save;Salva]"
+        "button[0.5,10.1;4,0.8;apply_material;Apply Material]" ..
+        "button[5,10.1;3.5,0.8;save;Save]"
     )
 end
 
@@ -618,7 +618,7 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
         return
     end
 
-    -- "Applica Materiale" button → swap frame blocks to selected node
+    -- "Apply Material" button → swap frame blocks to selected node
     if fields.apply_material then
         local pp = portals[portal_name]
         if pp then
@@ -633,7 +633,7 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
                 pp.node_name = new_node
                 save_portals()
                 minetest.chat_send_player(pname,
-                    "[portale] Materiale applicato: " .. new_node)
+                    "[portal] Material applied: " .. new_node)
             end
             open_portal_config(player, portal_name)
         end
@@ -642,7 +642,7 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 
     if not fields.save then return end
 
-    -- "Salva" button → rename + link
+    -- "Save" button → rename + link
 
     -- Parse and sanitize new name
     local new_name = ((fields.portal_name or portal_name):match("^%s*(.-)%s*$"))
@@ -650,9 +650,9 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     if new_name == "" then new_name = portal_name end
 
     -- Parse link selection (dropdown returns the item string)
-    local selected_str = fields.portal_link or "(nessuno)"
+    local selected_str = fields.portal_link or "(none)"
     local link_name = nil
-    if selected_str ~= "(nessuno)" then
+    if selected_str ~= "(none)" then
         if portals[selected_str] and selected_str ~= portal_name then
             link_name = selected_str
         end
@@ -701,21 +701,21 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     save_portals()
     sync_portals()
 
-    local msg = "[portale] '" .. portal_name .. "' "
+    local msg = "[portal] '" .. portal_name .. "' "
     if link_name then
-        msg = msg .. "collegato a '" .. link_name .. "'"
+        msg = msg .. "linked to '" .. link_name .. "'"
     else
-        msg = msg .. "scollegato"
+        msg = msg .. "unlinked"
     end
     minetest.chat_send_player(pname, msg)
 end)
 
--- ── registrazione nodo cornice ────────────────────────────────────────────────
+-- ── frame node registration ─────────────────────────────────────────────────
 
 minetest.register_node("yaportal:frame", {
-    description = "Cornice Portale" ..
-        "\n(cornice rettangolare, interno " .. MIN_W .. "x" .. MIN_H ..
-        " a " .. MAX_W .. "x" .. MAX_H .. " nodi di aria)",
+    description = "Portal Frame" ..
+        "\n(rectangular frame, inner " .. MIN_W .. "x" .. MIN_H ..
+        " to " .. MAX_W .. "x" .. MAX_H .. " nodes of air)",
     tiles = {"yaportal_blue.png"},
     groups = {cracky=3, oddly_breakable_by_hand=3},
     after_place_node = function(pos, placer)
@@ -748,7 +748,7 @@ minetest.register_on_dignode(function(pos, oldnode)
     deactivate_if_frame(pos)
 end)
 
--- ── teletrasporto ────────────────────────────────────────────────────────────
+-- ── teleportation ───────────────────────────────────────────────────────────
 
 minetest.register_on_leaveplayer(function(player)
     local name = player:get_player_name()
@@ -985,7 +985,7 @@ local function portal_gun_shoot(player, pointed_thing, color)
         -- Horizontal surface hit.
         if dy < 0 then
             minetest.chat_send_player(pname,
-                "[portale] Impossibile piazzare portali sul soffitto.")
+                "[portal] Cannot place portals on ceilings.")
             return
         end
         -- Floor: create a vertical portal standing on the floor.
@@ -1028,7 +1028,7 @@ local function portal_gun_shoot(player, pointed_thing, color)
 
     if not cx or not cz then
         minetest.chat_send_player(pname,
-            "[portale] Spazio insufficiente per il portale.")
+            "[portal] Not enough space for the portal.")
         return
     end
 
@@ -1054,21 +1054,21 @@ local function portal_gun_shoot(player, pointed_thing, color)
 end
 
 minetest.register_node("yaportal:frame_blue", {
-    description = "Cornice Portale Blu (portal gun, indistruttibile)",
+    description = "Blue Portal Frame (portal gun, unbreakable)",
     tiles = {"yaportal_blue.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
 
 minetest.register_node("yaportal:frame_orange", {
-    description = "Cornice Portale Arancione (portal gun, indistruttibile)",
+    description = "Orange Portal Frame (portal gun, unbreakable)",
     tiles = {"yaportal_orange.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
 
 minetest.register_tool("yaportal:portal_gun", {
-    description = "Portal Gun\nClic sinistro: portale blu\nClic destro: portale arancione",
+    description = "Portal Gun\nLeft click: blue portal\nRight click: orange portal",
     inventory_image = "yaportal_gun.png",
     on_use = function(itemstack, user, pointed_thing)
         portal_gun_shoot(user, pointed_thing, "blue")
@@ -1093,17 +1093,17 @@ end)
 
 -- ── pocket dimension gun ───────────────────────────────────────────────────────
 
-local POCKET_SIZE = 32  -- piattaforma 32×32
+local POCKET_SIZE = 32  -- 32×32 platform
 
 minetest.register_node("yaportal:bedrock", {
-    description = "Bedrock (indistruttibile)",
+    description = "Bedrock (unbreakable)",
     tiles = {"yaportal_bedrock.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
 })
 
 minetest.register_node("yaportal:frame_green", {
-    description = "Cornice Portale Verde (pocket dimension, indistruttibile)",
+    description = "Green Portal Frame (pocket dimension, unbreakable)",
     tiles = {"yaportal_green.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
@@ -1121,8 +1121,8 @@ local function _in_any_pocket(pos)
 end
 _pocket_spawn_blocker = _in_any_pocket
 
--- Restituisce {bx,by,bz} angolo in basso a sinistra della piattaforma del player.
--- Alloca un nuovo slot al primo accesso.
+-- Returns {bx,by,bz} bottom-left corner of the player's platform.
+-- Allocates a new slot on first access.
 local function pocket_get_or_alloc(pname)
     local key = "pocket_pos_" .. pname
     local s = storage:get_string(key)
@@ -1137,7 +1137,7 @@ local function pocket_get_or_alloc(pname)
     storage:set_int("pocket_slot_count", slot + 1)
     local t = {bx = slot * 300, by = -20001, bz = 0}
     storage:set_string(key, minetest.serialize(t))
-    -- mantieni lista player con pocket per ricostruire cache al restart
+    -- keep list of players with pockets to rebuild cache on restart
     local names_s = storage:get_string("pocket_players")
     local names = (names_s ~= "" and minetest.deserialize(names_s)) or {}
     names[#names+1] = pname
@@ -1146,8 +1146,8 @@ local function pocket_get_or_alloc(pname)
     return t
 end
 
--- Genera la piattaforma e il portale fisso nella dimensione (callback async).
--- Se il portale esiste già chiama callback subito.
+-- Generates the platform and fixed portal in the dimension (async callback).
+-- If the portal already exists, calls callback immediately.
 local function pocket_ensure(pname, callback)
     local t = pocket_get_or_alloc(pname)
     if portals["pocket_in_" .. pname] then
@@ -1158,17 +1158,17 @@ local function pocket_ensure(pname, callback)
     local pos2 = {x=bx+POCKET_SIZE, y=by+GUN_H+3, z=bz+POCKET_SIZE}
     minetest.emerge_area(pos1, pos2, function(_, _, remaining)
         if remaining > 0 then return end
-        -- piattaforma bedrock
+        -- bedrock platform
         for dx = 0, POCKET_SIZE-1 do
             for dz = 0, POCKET_SIZE-1 do
                 minetest.set_node({x=bx+dx, y=by, z=bz+dz},
                     {name="yaportal:bedrock"})
             end
         end
-        -- portale fisso centrato sulla piattaforma, asse Z, interno verso +z
+        -- fixed portal centered on platform, Z axis, inner face toward +z
         local cx = bx + 15
-        local cy = by + 1  -- bottom frame a by (bedrock), interno parte da by+1
-        local cz = bz  -- portale al bordo -z, piattaforma tutta in avanti (+z, ns=1)
+        local cy = by + 1  -- bottom frame at by (bedrock), interior starts at by+1
+        local cz = bz  -- portal at -z edge, platform extends forward (+z, ns=1)
         portal_gun_place_frame(cx, cy, cz, 0, GUN_W, GUN_H, "yaportal:frame_green")
         local in_name = "pocket_in_" .. pname
         portals[in_name] = {
@@ -1213,7 +1213,7 @@ local function pocket_gun_shoot(player, pointed_thing)
     if dy ~= 0 then
         if dy < 0 then
             minetest.chat_send_player(pname,
-                "[pocket] Impossibile piazzare portali sul soffitto.")
+                "[pocket] Cannot place portals on ceilings.")
             return
         end
         local look = player:get_look_dir()
@@ -1245,7 +1245,7 @@ local function pocket_gun_shoot(player, pointed_thing)
 
     if not cx or not cz then
         minetest.chat_send_player(pname,
-            "[pocket] Spazio insufficiente per il portale.")
+            "[pocket] Not enough space for the portal.")
         return
     end
 
@@ -1269,7 +1269,7 @@ local function pocket_gun_shoot(player, pointed_thing)
 end
 
 minetest.register_tool("yaportal:pocket_gun", {
-    description = "Pocket Dimension Gun\nClic sx: apri portale | Clic dx: chiudi portale",
+    description = "Pocket Dimension Gun\nLeft click: open portal | Right click: close portal",
     inventory_image = "yaportal_gun.png^[colorize:#00cc00:120",
     on_use = function(itemstack, user, pointed_thing)
         pocket_gun_shoot(user, pointed_thing)

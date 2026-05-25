@@ -1,13 +1,13 @@
 #!/bin/bash
-# Compila Luanti-portal in modalità Release e produce l'AppImage.
-# Al termine ripristina la build dev (Debug + RUN_IN_PLACE=FALSE).
+# Compile Luanti-portal in Release mode and produce the AppImage.
+# Restores the dev build (Debug + RUN_IN_PLACE=FALSE) when done.
 #
 # Dipendenze: patchelf wget fuse/libfuse2
 #   sudo apt install patchelf wget libfuse2
 #
-# Variabili opzionali:
-#   CMAKE=/percorso/cmake   (default: cmake dal PATH)
-#   NINJA=/percorso/ninja   (default: ninja dal PATH)
+# Optional variables:
+#   CMAKE=/path/to/cmake   (default: cmake from PATH)
+#   NINJA=/path/to/ninja   (default: ninja from PATH)
 set -e
 
 PROJ="$(cd "$(dirname "$0")" && pwd)"
@@ -23,14 +23,14 @@ fi
 NINJA="${NINJA:-ninja}"
 OUT="$PROJ/Luanti-portal-x86_64.AppImage"
 
-# ── prerequisiti ──────────────────────────────────────────────────────────────
+# ── prerequisites ──────────────────────────────────────────────────────────────
 for cmd in patchelf wget; do
     command -v "$cmd" >/dev/null 2>&1 || {
-        echo "ERRORE: '$cmd' non trovato. Installare: sudo apt install $cmd"; exit 1
+        echo "ERROR: '$cmd' not found. Install with: sudo apt install $cmd"; exit 1
     }
 done
 
-# ── symlink /tmp (cancellati a ogni riavvio) ──────────────────────────────────
+# ── /tmp symlinks (cleared on reboot) ──────────────────────────────────
 ln -sfn "$PROJ/tmp/deps"            /tmp/deps
 ln -sfn "$PROJ/tmp/leveldb-extract" /tmp/leveldb-extract
 ln -sfn "$PROJ/tmp/luajit-extract"  /tmp/luajit-extract
@@ -39,7 +39,7 @@ SDLINC="$PROJ/tmp/deps/usr/include"
 ln -sf "$SDLINC/x86_64-linux-gnu/SDL2/_real_SDL_config.h" \
        "$SDLINC/SDL2/_real_SDL_config.h" 2>/dev/null || true
 
-# Fissa symlink .so rotti su distro non Debian (es. Arch).
+# Fix broken .so symlinks on non-Debian distros (e.g. Arch).
 DEPS_LIB="$PROJ/tmp/deps/usr/lib/x86_64-linux-gnu"
 for link in "$DEPS_LIB"/*.so*; do
     [ -L "$link" ] || continue
@@ -52,32 +52,32 @@ for link in "$DEPS_LIB"/*.so*; do
     fi
 done
 
-# ── scarica appimagetool ──────────────────────────────────────────────────────
+# ── download appimagetool ──────────────────────────────────────────────────────
 mkdir -p "$TOOLS"
 APPIMAGETOOL="$TOOLS/appimagetool-x86_64.AppImage"
 if [ ! -f "$APPIMAGETOOL" ]; then
-    echo ">>> Download appimagetool..."
+    echo ">>> Downloading appimagetool..."
     wget -q --show-progress -O "$APPIMAGETOOL" \
         "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
     chmod +x "$APPIMAGETOOL"
 fi
 
-# ── configura Release ────────────────────────────────────────────────────────
-# RUN_IN_PLACE=FALSE: setSystemPaths() legge LUANTI_USER_PATH e scopre
-# path_share da bindir/../builtin (= AppDir/builtin). Con TRUE path_user
-# è hardcoded all'AppImage read-only → crash su debug.txt.
+# ── configure Release ────────────────────────────────────────────────────────
+# RUN_IN_PLACE=FALSE: setSystemPaths() reads LUANTI_USER_PATH and finds
+# path_share from bindir/../builtin (= AppDir/builtin). With TRUE path_user
+# is hardcoded to the read-only AppImage → crash on debug.txt.
 echo ">>> cmake Release..."
 "$CMAKE" -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Release \
     -DRUN_IN_PLACE=FALSE \
     > /dev/null
 
-# ── compila ───────────────────────────────────────────────────────────────────
+# ── compile ───────────────────────────────────────────────────────────────────
 echo ">>> Build Release..."
 "$NINJA" -C "$BUILD" -j"$(nproc)"
 
-# ── crea AppDir ───────────────────────────────────────────────────────────────
-echo ">>> Costruisce AppDir..."
+# ── build AppDir ───────────────────────────────────────────────────────────────
+echo ">>> Building AppDir..."
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/bin" "$APPDIR/lib"
 
@@ -89,14 +89,14 @@ done
 mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
-# Mod in bundled_mods/ (non auto-scoperto da Luanti come global mods).
-# AppRun la copia in $LUANTI_USER/mods/ al primo avvio.
+# Mod in bundled_mods/ (not auto-discovered by Luanti as global mods).
+# AppRun copies it to $LUANTI_USER/mods/ on first launch.
 mkdir -p "$APPDIR/bundled_mods/yaportal"
 cp "$PROJ/yaportal/init.lua" "$PROJ/yaportal/mod.conf" "$APPDIR/bundled_mods/yaportal/"
 cp -r "$PROJ/yaportal/textures" "$APPDIR/bundled_mods/yaportal/"
 
-# ── raccoglie .so ─────────────────────────────────────────────────────────────
-echo ">>> Raccoglie librerie..."
+# ── collect .so ─────────────────────────────────────────────────────────────
+echo ">>> Collecting libraries..."
 EXCLUDE="libGL|libGLX|libGLdispatch|libEGL|libOpenGL|libvulkan|libc\.so|libm\.so|libgcc|libstdc|ld-linux"
 
 ldd "$APPDIR/bin/luanti" \
@@ -117,7 +117,7 @@ for lib in "$APPDIR/lib/"*.so*; do
 done
 
 # ── RPATH ─────────────────────────────────────────────────────────────────────
-echo ">>> Patcha RPATH..."
+echo ">>> Patching RPATH..."
 patchelf --set-rpath '$ORIGIN/../lib' "$APPDIR/bin/luanti"
 
 # ── AppRun ────────────────────────────────────────────────────────────────────
@@ -169,12 +169,12 @@ EOF
 
 cp "$SRC/misc/luanti-xorg-icon-128.png" "$APPDIR/luanti.png"
 
-# ── crea AppImage ─────────────────────────────────────────────────────────────
-echo ">>> Crea AppImage..."
+# ── create AppImage ─────────────────────────────────────────────────────────────
+echo ">>> Creating AppImage..."
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
 
-# ── ripristina build dev ──────────────────────────────────────────────────────
-echo ">>> Ripristina Debug per build dev..."
+# ── restore dev build ──────────────────────────────────────────────────────
+echo ">>> Restoring Debug build for dev..."
 "$CMAKE" -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Debug \
     > /dev/null
@@ -182,4 +182,4 @@ echo ">>> Ripristina Debug per build dev..."
 
 echo ""
 echo "AppImage: $OUT"
-echo "Avvia con: ./$OUT"
+echo "Run with: ./$OUT"

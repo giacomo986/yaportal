@@ -1,85 +1,85 @@
 # yaportal
 
-Mod per [Luanti](https://www.luanti.org/) che aggiunge portali 3D in stile Portal: rendering in tempo reale di ciò che c'è dall'altro lato, teletrasporto con correzione di orientamento, e dimensioni tascabili (pocket dimensions).
+A [Luanti](https://www.luanti.org/) mod that adds Portal-style 3D portals: real-time rendering of what's on the other side, teleportation with orientation correction, and per-player pocket dimensions.
 
-Richiede un build personalizzato di Luanti 5.16.1 con le patch C++ incluse in questo repo (`src_patches/`). Il modo più semplice per usarla è l'AppImage precompilata.
-
----
-
-## Installazione rapida (AppImage)
-
-1. Scarica `Luanti-portal-x86_64.AppImage` dalla pagina [Releases](https://gitea.com/giacomo986/yaportal/releases).
-2. Rendila eseguibile e avviala:
-   ```sh
-   chmod +x Luanti-portal-x86_64.AppImage
-   ./Luanti-portal-x86_64.AppImage
-   ```
-3. Al primo avvio, l'AppImage installa automaticamente la mod `yaportal` nella cartella utente di Luanti (`~/.luanti/mods/` o `~/.minetest/mods/`).
-4. Crea o apri un mondo, vai in **Impostazioni → Mod** e abilita `yaportal`.
+Requires a custom build of Luanti 5.16.1 with the C++ patches included in this repo (`src_patches/`). See [Building from source](#building-from-source) below.
 
 ---
 
-## Oggetti della mod
+## Quick start (AppImage)
 
-### Cornice portale (`yaportal:frame`)
+Build the AppImage with `release.sh` (see [Build AppImage](#build-appimage)), then:
 
-Blocco base per costruire portali manuali. Disponibile anche nelle varianti colorata blu (`frame_blue`) e arancione (`frame_orange`).
+```sh
+chmod +x Luanti-portal-x86_64.AppImage
+./Luanti-portal-x86_64.AppImage
+```
 
-**Costruire un portale manuale:**
-1. Costruisci una cornice rettangolare con i blocchi `frame` (larghezza interna 1–8, altezza interna 2–8 nodi).
-2. Il portale si attiva automaticamente quando la cornice è completa.
-3. **Clic destro** su qualsiasi blocco della cornice (o sull'entità ancora al centro) apre la GUI di configurazione:
-   - **Nome** — assegna un nome univoco al portale.
-   - **Collegamento** — scegli a quale portale deve condurre.
-   - **Materiale** — cambia la texture della cornice.
+On first launch, the AppImage automatically installs the `yaportal` mod into your Luanti user directory (`~/.luanti/mods/` or `~/.minetest/mods/`). Create or open a world, go to **Settings → Mods** and enable `yaportal`.
+
+---
+
+## Mod items
+
+### Portal frame (`yaportal:frame`)
+
+The base block for building manual portals. Also available in blue (`frame_blue`) and orange (`frame_orange`) variants.
+
+**Building a manual portal:**
+1. Build a rectangular frame with `frame` blocks (inner width 1–8, inner height 2–8 nodes).
+2. The portal activates automatically when the frame is complete.
+3. **Right-click** any frame block (or the invisible anchor entity at the center) to open the configuration GUI:
+   - **Name** — assign a unique name to the portal.
+   - **Link to** — choose which portal this one leads to.
+   - **Frame material** — change the frame texture.
 
 ### Portal Gun (`yaportal:portal_gun`)
 
-Crea portali al volo senza costruire cornici.
+Places portals on surfaces without building a frame.
 
-| Azione | Effetto |
-|--------|---------|
-| Clic sinistro | Piazza portale blu sulla superficie puntata |
-| Clic destro | Piazza portale arancione sulla superficie puntata |
+| Action | Effect |
+|--------|--------|
+| Left click | Place blue portal on the pointed surface |
+| Right click | Place orange portal on the pointed surface |
 
-I due portali sono automaticamente collegati tra loro. Passarci attraverso teletrasporta il giocatore con orientamento corretto.
+The two portals are automatically linked. Walking through one teleports the player with correct orientation.
 
 ### Pocket Dimension Gun (`yaportal:pocket_gun`)
 
-Crea una dimensione tascabili privata per il giocatore.
+Creates a private pocket dimension for the player.
 
-| Azione | Effetto |
-|--------|---------|
-| Clic sinistro | Apre un portale verso la pocket dimension del giocatore |
-| Clic destro | Chiude e distrugge la pocket dimension |
+| Action | Effect |
+|--------|--------|
+| Left click | Open a portal to the player's pocket dimension |
+| Right click | Close and destroy the pocket dimension |
 
-La pocket dimension è una piattaforma 32×32 in uno spazio isolato. Ogni giocatore ha la propria.
+The pocket dimension is a 32×32 platform in an isolated space. Each player has their own.
 
 ---
 
-## Compilazione da sorgente
+## Building from source
 
-### Prerequisiti
+### Prerequisites
 
-- Ubuntu 24.04 x86\_64 (altre distro non testate)
+- Ubuntu 24.04 x86\_64 (other distros untested)
 - `build-essential`, `cmake`, `ninja-build`, `patchelf`, `wget`
   ```sh
   sudo apt install build-essential cmake ninja-build patchelf wget
   ```
 
-### Setup iniziale (solo la prima volta)
+### First-time setup
 
 ```sh
-PROJ=/path/to/yaportal   # directory di questo repo
+PROJ=/path/to/yaportal   # this repo's directory
 
-# 1. Clona Luanti al commit base corretto
+# 1. Clone Luanti at the correct base commit
 git clone https://github.com/luanti-org/luanti.git $PROJ/luanti_src
 git -C $PROJ/luanti_src checkout e35647861   # tag 5.16.1
 
-# 2. Applica le patch C++ del progetto
+# 2. Apply the C++ patches
 cp -r $PROJ/src_patches/. $PROJ/luanti_src/
 
-# 3. Scarica le dipendenze binarie
+# 3. Download binary dependencies
 mkdir -p $PROJ/tmp
 cd $PROJ/tmp
 apt-get download \
@@ -87,7 +87,7 @@ apt-get download \
   libpng-dev libgl-dev libopenal-dev libcurl4-openssl-dev libbrotli-dev libbz2-dev \
   libzstd-dev libsqlite3-dev libleveldb-dev libvorbis-dev libogg-dev
 
-# Estrai i deb
+# Extract the .deb files
 for deb in $PROJ/tmp/*.deb; do
     case "$deb" in
         *luajit*)   dpkg-deb -x "$deb" $PROJ/tmp/luajit-extract ;;
@@ -96,7 +96,7 @@ for deb in $PROJ/tmp/*.deb; do
     esac
 done
 
-# Symlink librerie di sistema
+# Symlink shared system libraries
 LIBDIR=$PROJ/tmp/deps/usr/lib/x86_64-linux-gnu
 SYSLIB=/usr/lib/x86_64-linux-gnu
 ln -sf $SYSLIB/libSDL2-2.0.so.0     $LIBDIR/libSDL2.so
@@ -105,16 +105,16 @@ ln -sf $SYSLIB/libjpeg.so.8         $LIBDIR/libjpeg.so
 ln -sf $SYSLIB/libopenal.so.1       $LIBDIR/libopenal.so
 ln -sf $SYSLIB/libGL.so.1           $LIBDIR/libGL.so
 ln -sf $SYSLIB/libzstd.so.1         $LIBDIR/libzstd.so
-# Nascondi .a SDL2 per evitare link statico
+# Hide SDL2 static libs to prevent cmake from preferring them over the .so
 mv $LIBDIR/libSDL2.a     $LIBDIR/libSDL2.a.bak     2>/dev/null || true
 mv $LIBDIR/libSDL2main.a $LIBDIR/libSDL2main.a.bak 2>/dev/null || true
 
-# Symlink header
+# Fix header symlinks
 ln -sf $PROJ/tmp/deps/usr/include/x86_64-linux-gnu/curl $PROJ/tmp/deps/usr/include/curl
 mkdir -p $PROJ/tmp/deps/usr/include/luajit-2.1
 cp -r $PROJ/tmp/luajit-extract/usr/include/luajit-2.1/. $PROJ/tmp/deps/usr/include/luajit-2.1/
 
-# 4. Configura CMake (solo prima volta)
+# 4. Configure CMake (first time only)
 SRC=$PROJ/luanti_src
 BUILD=$SRC/build
 mkdir -p $BUILD
@@ -134,37 +134,37 @@ cmake -S $SRC -B $BUILD \
   -GNinja
 ```
 
-### Build normale
+### Regular build
 
-Dopo il setup iniziale, per ricompilare basta:
+After the first-time setup, just run:
 
 ```sh
 ./build.sh
 ```
 
-Lo script ricrea i symlink `/tmp/` (cancellati a ogni riavvio) e lancia `ninja`.
+The script recreates the `/tmp/` symlinks (deleted on reboot) and runs `ninja`.
 
-### Avvio per sviluppo
+### Dev launch
 
 ```sh
 ./luanti_src/bin/luanti
 ```
 
-La mod `yaportal/` va abilitata manualmente nel mondo come qualsiasi altra mod globale.
+Enable the `yaportal/` mod in the world settings as you would any global mod.
 
-### Build AppImage per distribuzione
+### Build AppImage
 
 ```sh
 ./release.sh
 ```
 
-Produce `Luanti-portal-x86_64.AppImage` nella directory del progetto. Richiede `patchelf` e `wget`.
+Produces `Luanti-portal-x86_64.AppImage` in the project root. Requires `patchelf` and `wget`.
 
 ---
 
-## Aggiornare src_patches/ dopo modifiche C++
+## Keeping src_patches/ in sync
 
-Dopo aver modificato file C++ in `luanti_src/`, sincronizza `src_patches/` prima di committare:
+After modifying C++ files in `luanti_src/`, sync `src_patches/` before committing:
 
 ```sh
 PROJ=$(pwd)

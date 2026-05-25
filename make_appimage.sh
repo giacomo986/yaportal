@@ -1,12 +1,12 @@
 #!/bin/bash
-# Crea un AppImage portabile di Luanti con la mod yaportal inclusa.
+# Build a portable AppImage of Luanti with the yaportal mod bundled.
 #
-# Dipendenze sistema: patchelf, wget, fuse (o --appimage-extract-and-run)
+# System dependencies: patchelf, wget, fuse (or --appimage-extract-and-run)
 #   sudo apt install patchelf wget libfuse2
 #
-# Variabili d'ambiente opzionali:
-#   CMAKE=/percorso/cmake    (default: cmake dal PATH)
-#   NINJA=/percorso/ninja    (default: ninja dal PATH)
+# Optional environment variables:
+#   CMAKE=/path/to/cmake    (default: cmake from PATH)
+#   NINJA=/path/to/ninja    (default: ninja from PATH)
 set -e
 
 PROJ="$(cd "$(dirname "$0")" && pwd)"
@@ -18,72 +18,72 @@ CMAKE="${CMAKE:-cmake}"
 NINJA="${NINJA:-ninja}"
 OUT="$PROJ/Luanti-portal-x86_64.AppImage"
 
-# ── verifica prerequisiti ──────────────────────────────────────────────────────
+# ── check prerequisites ──────────────────────────────────────────────────────
 for cmd in patchelf wget; do
-    command -v "$cmd" >/dev/null 2>&1 || { echo "ERRORE: '$cmd' non trovato. Installare con: sudo apt install $cmd"; exit 1; }
+    command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found. Install with: sudo apt install $cmd"; exit 1; }
 done
 
 if [ ! -f "$SRC/bin/luanti" ]; then
-    echo "ERRORE: binario non trovato. Eseguire prima build.sh."
+    echo "ERROR: binary not found. Run build.sh first."
     exit 1
 fi
 
-# ── scarica appimagetool ───────────────────────────────────────────────────────
+# ── download appimagetool ───────────────────────────────────────────────────────
 mkdir -p "$TOOLS"
 APPIMAGETOOL="$TOOLS/appimagetool-x86_64.AppImage"
 if [ ! -f "$APPIMAGETOOL" ]; then
-    echo ">>> Download appimagetool..."
+    echo ">>> Downloading appimagetool..."
     wget -q --show-progress -O "$APPIMAGETOOL" \
         "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
     chmod +x "$APPIMAGETOOL"
 fi
 
-# ── ricrea symlink /tmp (cancellati a ogni riavvio) ───────────────────────────
+# ── recreate /tmp symlinks (cleared on reboot) ───────────────────────────
 ln -sfn "$PROJ/tmp/deps"            /tmp/deps
 ln -sfn "$PROJ/tmp/leveldb-extract" /tmp/leveldb-extract
 ln -sfn "$PROJ/tmp/luajit-extract"  /tmp/luajit-extract
 
-# SDL2/_real_SDL_config.h è in un path arch-specifico; crea symlink nel path generico
-# così #include <SDL2/_real_SDL_config.h> lo trova anche senza -I arch-specifico
+# SDL2/_real_SDL_config.h lives in an arch-specific path; symlink to the generic path
+# so #include <SDL2/_real_SDL_config.h> works without the arch-specific -I flag
 SDLINC="$PROJ/tmp/deps/usr/include"
 ln -sf "$SDLINC/x86_64-linux-gnu/SDL2/_real_SDL_config.h" \
        "$SDLINC/SDL2/_real_SDL_config.h" 2>/dev/null || true
 
-# ── ricompila con RUN_IN_PLACE=TRUE ───────────────────────────────────────────
-# RUN_IN_PLACE=FALSE: setSystemPaths() legge LUANTI_USER_PATH (scrivibile) e
-# scopre path_share da bindir/../builtin = AppDir/builtin. Con RUN_IN_PLACE=TRUE
-# path_user è hardcoded all'AppImage read-only → crash su debug.txt.
-echo ">>> Riconfigura cmake con RUN_IN_PLACE=FALSE..."
+# ── recompile with RUN_IN_PLACE=FALSE ───────────────────────────────────────────
+# RUN_IN_PLACE=FALSE: setSystemPaths() reads LUANTI_USER_PATH (writable) and
+# finds path_share from bindir/../builtin = AppDir/builtin. With RUN_IN_PLACE=TRUE
+# path_user is hardcoded to the read-only AppImage → crash on debug.txt.
+echo ">>> Reconfiguring cmake with RUN_IN_PLACE=FALSE..."
 "$CMAKE" -S "$SRC" -B "$BUILD" -DRUN_IN_PLACE=FALSE > /dev/null
 echo ">>> Build..."
 "$CMAKE" --build "$BUILD" -j"$(nproc)"
 
-# ── crea AppDir ────────────────────────────────────────────────────────────────
+# ── build AppDir ────────────────────────────────────────────────────────────────
 # Layout: AppDir/bin/luanti  →  path_share = AppDir/
 #         AppDir/lib/*.so    →  RPATH $ORIGIN/../lib
-echo ">>> Costruisce AppDir..."
+echo ">>> Building AppDir..."
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/bin" "$APPDIR/lib"
 
-# Binario
+# Binary
 cp "$SRC/bin/luanti" "$APPDIR/bin/luanti"
 
-# Dati di gioco (devtest + builtin + risorse)
+# Game data (devtest + builtin + resources)
 for dir in games builtin fonts textures locale clientmods; do
     [ -d "$SRC/$dir" ] && cp -r "$SRC/$dir" "$APPDIR/$dir"
 done
-# Shaders: Luanti cerca path_share/client/shaders/
+# Shaders: Luanti looks for path_share/client/shaders/
 mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
-# Mod yaportal
+# yaportal mod
 mkdir -p "$APPDIR/bundled_mods/yaportal"
 cp "$PROJ/yaportal/init.lua" "$PROJ/yaportal/mod.conf" "$APPDIR/bundled_mods/yaportal/"
 cp -r "$PROJ/yaportal/textures" "$APPDIR/bundled_mods/yaportal/"
 
-# ── raccoglie .so dipendenti ───────────────────────────────────────────────────
-echo ">>> Raccoglie librerie..."
-# Esclude: GL/GLX/EGL (driver-specifiche, ogni macchina ha le sue), libc/libm/libgcc
+# ── collect .so dependencies ───────────────────────────────────────────────────
+echo ">>> Collecting libraries..."
+# Exclude: GL/GLX/EGL (driver-specific, each machine has its own), libc/libm/libgcc
 EXCLUDE="libGL|libGLX|libGLdispatch|libEGL|libOpenGL|libvulkan|libc\.so|libm\.so|libgcc|libstdc|ld-linux"
 
 ldd "$APPDIR/bin/luanti" \
@@ -93,7 +93,7 @@ ldd "$APPDIR/bin/luanti" \
         [ -f "$lib" ] && cp -n "$lib" "$APPDIR/lib/"
     done
 
-# Copia anche le dipendenze transitive delle .so appena copiate
+# Also copy transitive dependencies of the .so files just collected
 for lib in "$APPDIR/lib/"*.so*; do
     [ -f "$lib" ] || continue
     ldd "$lib" 2>/dev/null \
@@ -104,8 +104,8 @@ for lib in "$APPDIR/lib/"*.so*; do
         done
 done
 
-# ── patcha RPATH ───────────────────────────────────────────────────────────────
-echo ">>> Patcha RPATH..."
+# ── patch RPATH ───────────────────────────────────────────────────────────────
+echo ">>> Patching RPATH..."
 patchelf --set-rpath '$ORIGIN/../lib' "$APPDIR/bin/luanti"
 
 # ── AppRun ────────────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ exec "$APPDIR/bin/luanti" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
 
-# ── .desktop e icona ──────────────────────────────────────────────────────────
+# ── .desktop and icon ──────────────────────────────────────────────────────────
 cat > "$APPDIR/luanti.desktop" <<'EOF'
 [Desktop Entry]
 Name=Luanti (portal)
@@ -160,15 +160,15 @@ EOF
 
 cp "$SRC/misc/luanti-xorg-icon-128.png" "$APPDIR/luanti.png"
 
-# ── crea AppImage ──────────────────────────────────────────────────────────────
-echo ">>> Crea AppImage..."
+# ── create AppImage ──────────────────────────────────────────────────────────────
+echo ">>> Creating AppImage..."
 ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
 
-# ── ripristina configurazione dev (Debug) ────────────────────────────────────
-echo ">>> Ripristina Debug per build dev..."
+# ── restore dev configuration (Debug) ────────────────────────────────────
+echo ">>> Restoring Debug build for dev..."
 "$CMAKE" -S "$SRC" -B "$BUILD" -DCMAKE_BUILD_TYPE=Debug > /dev/null
 "$CMAKE" --build "$BUILD" -j"$(nproc)"
 
 echo ""
-echo "✓ AppImage creata: $OUT"
-echo "  Avvia con: ./$OUT"
+echo "✓ AppImage created: $OUT"
+echo "  Run with: ./$OUT"
