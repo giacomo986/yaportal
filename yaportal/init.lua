@@ -305,6 +305,21 @@ local function sorted_portal_names()
     return names
 end
 
+-- Sky type indices registered once at startup. Indices are stable (deduped by name).
+local SKY_VOID = minetest.register_portal_sky_type("void", {
+    type       = "plain",
+    base_color = "#000A14",
+    clouds     = false,
+    sunlit     = false,
+    brightness = 0.0,
+})
+local SKY_OVERWORLD = minetest.register_portal_sky_type("overworld", {
+    type       = "regular",
+    clouds     = true,
+    sunlit     = true,
+    brightness = 1.0,
+})
+
 local function sync_portals()
     portal_index = {}
     local portal_list = {}
@@ -323,14 +338,12 @@ local function sync_portals()
             half_h = (pp.h or 3) / 2,
             link   = link_idx,
         }
-        -- Per-portal RTT sky: void for overworld→pocket, overworld sky for pocket→overworld.
+        -- Per-portal RTT sky: void for overworld→pocket, overworld for pocket→overworld.
         local slot = i - 1
         if pp.link and pp.link:match("^pocket_in_") then
-            -- portal is in the overworld, looks into pocket dim → show void
-            minetest.set_portal_sky(slot, {mode="void", clear_color="#000A14"})
+            minetest.set_portal_sky(slot, SKY_VOID)
         elseif pp.link and pp.link:match("^pocket_out_") then
-            -- portal is in the pocket dim, looks into overworld → show overworld sky
-            minetest.set_portal_sky(slot, {mode="overworld"})
+            minetest.set_portal_sky(slot, SKY_OVERWORLD)
         else
             minetest.clear_portal_sky(slot)
         end

@@ -659,8 +659,7 @@ void Game::shutdown()
 	gui_chat_console.reset();
 
 	sky.reset();
-	sky_overworld.reset();
-	sky_void.reset();
+	m_portal_sky_pool.clear();
 
 	// only if the shutdown progress bar isn't shown yet
 	if (m_shutdown_progress == 0.0f)
@@ -926,17 +925,8 @@ bool Game::createClient(const GameStartData &start_data)
 	sky = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
 	scsf->setSky(sky.get());
 
-	// Overworld sky: always "regular", updated with time-of-day, normally inactive.
-	// Used by portal RTTs to show overworld sky when player is in another dimension.
-	sky_overworld = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
-	sky_overworld->setVisible(true);
-	sky_overworld->setSceneActive(false);
-
-	// Void sky: simulates underground/cave conditions, normally inactive.
-	// Used by portal RTTs to show void sky when player is in the overworld.
-	sky_void = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
-	sky_void->setVisible(true);
-	sky_void->setSceneActive(false);
+	// Portal sky pool is populated lazily as Lua registers sky types.
+	// Each entry is created in updateFrame() when PortalManager::skyTypeCount() grows.
 
 	if (!initGui())
 		return false;
@@ -3524,15 +3514,26 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	sky->update(time_of_day_smooth, time_brightness, direct_brightness,
 			sunlight_seen, camera->getCameraMode(), player->getYaw(),
 			player->getPitch());
-	// sky_overworld always simulates above-ground overworld conditions regardless
-	// of where the player actually is (no cave-dimming, always sunlit).
-	sky_overworld->update(time_of_day_smooth, time_brightness, time_brightness,
-			true, camera->getCameraMode(), player->getYaw(),
-			player->getPitch());
-	// sky_void always simulates cave/void conditions: no sunlight, no direct brightness.
-	sky_void->update(time_of_day_smooth, time_brightness, 0.0f,
-			false, camera->getCameraMode(), player->getYaw(),
-			player->getPitch());
+	// Resize portal sky pool to match registered sky types.
+	PortalManager &pm_sky = PortalManager::get();
+	while ((int)m_portal_sky_pool.size() < pm_sky.skyTypeCount()) {
+		auto s = make_irr<Sky>(-1, m_rendering_engine, texture_src, shader_src);
+		s->setVisible(true);
+		s->setSceneActive(false);
+		m_portal_sky_pool.push_back(std::move(s));
+	}
+	// Apply dirty params and update each pool sky per frame.
+	for (int pi = 0; pi < pm_sky.skyTypeCount(); pi++) {
+		if (pm_sky.isSkyTypeDirty(pi)) {
+			m_portal_sky_pool[pi]->applySkyParams(pm_sky.getSkyType(pi).sky_params, texture_src);
+			pm_sky.clearSkyTypeDirty(pi);
+		}
+		const PortalSkyType &pst = pm_sky.getSkyType(pi);
+		float db = pst.direct_brightness_scale * time_brightness;
+		m_portal_sky_pool[pi]->update(time_of_day_smooth, time_brightness, db,
+				pst.sunlight_seen, camera->getCameraMode(),
+				player->getYaw(), player->getPitch());
+	}
 
 	/*
 		Update clouds
@@ -3755,9 +3756,13 @@ void Game::drawScene(ProfilerGraph *graph, RunStats *stats)
 	if (isTouchShootlineUsed())
 		draw_crosshair = false;
 
+	std::vector<Sky*> sky_pool_raw;
+	sky_pool_raw.reserve(m_portal_sky_pool.size());
+	for (auto &s : m_portal_sky_pool)
+		sky_pool_raw.push_back(s.get());
 	this->m_rendering_engine->draw_scene(sky_color, this->m_game_ui->m_flags.show_hud,
-			draw_wield_tool, draw_crosshair, sky.get(), sky_overworld.get(),
-			runData.fog_range, fogEnabled(), sky_void.get(), clouds.get());
+			draw_wield_tool, draw_crosshair, sky.get(), sky_pool_raw,
+			runData.fog_range, fogEnabled(), clouds.get());
 
 	/*
 		Profiler graph

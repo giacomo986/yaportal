@@ -900,6 +900,35 @@ void Sky::addTextureToSkybox(const std::string &texture, int material_id,
 	m_materials[material_id+5].MaterialType = video::EMT_SOLID;
 }
 
+void Sky::applySkyParams(const SkyboxParams &params, ITextureSource *tsrc)
+{
+	setVisible(false);
+	setCloudsEnabled(params.clouds);
+	clearSkyboxTextures();
+
+	if (params.type == "regular") {
+		setVisible(true);
+		setSkyColors(params.sky_color);
+		setHorizonTint(params.fog_sun_tint, params.fog_moon_tint, params.fog_tint_type);
+	} else if (params.type == "skybox" && params.textures.size() == 6 && tsrc) {
+		setFallbackBgColor(params.bgcolor);
+		setHorizonTint(params.fog_sun_tint, params.fog_moon_tint, params.fog_tint_type);
+		for (int i = 0; i < 6; i++)
+			addTextureToSkybox(params.textures[i], i, tsrc);
+	} else {
+		// "plain" or unknown: solid colour, no directional tinting
+		setFallbackBgColor(params.bgcolor);
+		setHorizonTint(params.bgcolor, params.bgcolor, "custom");
+	}
+
+	setBodyOrbitTilt(params.body_orbit_tilt);
+	setFogDistance(params.fog_distance);
+	if (params.fog_start >= 0.0f)
+		setFogStart(rangelim(params.fog_start, 0.0f, 0.99f));
+	setFogColor(params.fog_color);
+	setAutoCaveBrightness(params.auto_dim_skybox);
+}
+
 float getWickedTimeOfDay(float time_of_day)
 {
 	float nightlength = 0.415f;

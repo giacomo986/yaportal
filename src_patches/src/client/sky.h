@@ -141,6 +141,11 @@ public:
 		return m_sky_params.auto_dim_skybox;
 	}
 
+	// Apply a full SkyboxParams set (equivalent to what set_sky does for the main sky).
+	// Pass tsrc when params.type == "skybox" to load textures; safe to pass nullptr
+	// for "regular" and "plain" types (textures are skipped).
+	void applySkyParams(const SkyboxParams &params, ITextureSource *tsrc = nullptr);
+
 private:
 	aabb3f m_box{{0.0f, 0.0f, 0.0f}};
 	video::SMaterial m_materials[SKY_MATERIAL_COUNT];

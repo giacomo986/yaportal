@@ -240,6 +240,8 @@ private:
 	static int l_set_portals(lua_State *L);
 	static int l_set_portal_cam_hint(lua_State *L);
 	static int l_clear_portal_cam_hint(lua_State *L);
+	static int l_register_portal_sky_type(lua_State *L);
+	static int l_update_portal_sky_type(lua_State *L);
 	static int l_set_portal_sky(lua_State *L);
 	static int l_clear_portal_sky(lua_State *L);
 

@@ -318,10 +318,11 @@ private:
 	Camera *camera = nullptr;
 	irr_ptr<Clouds> clouds;
 	irr_ptr<Sky> sky;
-	// Secondary sky node kept in sync with time-of-day but always with "regular"
-	// sky params. Used by portal RTTs to show the overworld sky when the player is
-	// in another dimension. Normally inactive (setSceneActive(false)).
-	irr_ptr<Sky> sky_overworld;
+	// Pool of secondary sky nodes, one per registered portal sky type.
+	// Each entry is updated per-frame with the type's sunlit/brightness params
+	// and is normally inactive (setSceneActive(false)).
+	// Portal RTT rendering activates the matching node during the RTT pass.
+	std::vector<irr_ptr<Sky>> m_portal_sky_pool;
 	Hud *hud = nullptr;
 	Minimap *mapper = nullptr;
 	GameFormSpec m_game_formspec;

@@ -27,10 +27,9 @@ struct PortalRTTData {
 	// Non-owning pointer to the scene render target (TextureBuffer in PP mode).
 	// Used to restore the render target after re-rendering RTTs in PortalQuadStep.
 	RenderTarget *scene_rt = nullptr;
-	// Non-owning pointer to the sky node; set each frame from PipelineContext.
+	// Non-owning pointers set each frame from PipelineContext.
 	Sky *sky = nullptr;
-	Sky *overworld_sky = nullptr;
-	Sky *void_sky = nullptr;
+	std::vector<Sky*> sky_pool; // mirrors PipelineContext::sky_pool
 	scene::ISceneNode *clouds_node = nullptr;
 
 	~PortalRTTData();
