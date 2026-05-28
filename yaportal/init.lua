@@ -845,12 +845,17 @@ minetest.register_globalstep(function(dtime)
             end
 
             -- sky_sunlit hint forces sunlight_seen on the client so the sky snaps
-            -- instantly to the destination state instead of lerping over ~100 frames.
-            -- Only needed for void→overworld: the natural lerp for overworld→void is fine
-            -- and lets the void's open-sky atmosphere (stars, etc.) render naturally.
+            -- instantly to the destination state instead of lerping over ~300 frames.
+            -- void→overworld needs true: snap to sunlit sky, releases when bg_sunlit=true.
+            -- overworld→void needs false: snap to dark sky; bg_sunlit in void is always
+            -- false so the override releases immediately once block data arrives.
+            -- Sending true for void would cause the override to never release
+            -- (bg_sunlit=false ≠ override=true) → sunlight_seen stuck true → daylight in void.
             local sky_sunlit
             if teleport_src:match("^pocket_in_") then
-                sky_sunlit = true    -- pocket_in is in void; exiting it → arriving in overworld
+                sky_sunlit = true   -- void→overworld
+            elseif teleport_src:match("^pocket_out_") then
+                sky_sunlit = false  -- overworld→void
             end
 
             player:portal_teleport(new_pos, new_yaw, {
