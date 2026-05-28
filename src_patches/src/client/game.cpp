@@ -3465,6 +3465,19 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 		// 100-iteration flood in sky->update() snaps all state (brightness + colors)
 		// to the target dimension's values immediately, bypassing the slow lerp.
 		if (lplayer->sky_override_reset_pending) {
+			// Apply full sky params from the portal's registered sky type so
+			// colors, type, and fog all snap to the destination sky instantly.
+			if (lplayer->sky_snap_slot >= 0) {
+				PortalManager &pm = PortalManager::get();
+				int sky_idx = pm.getSkyTypeIndex(lplayer->sky_snap_slot);
+				if (sky_idx >= 0 && sky_idx < (int)m_portal_sky_pool.size()) {
+					sky->applySkyParams(pm.getSkyType(sky_idx).sky_params, texture_src);
+					// Correct sunlit override value from the sky type in case Lua
+					// didn't set sky_sunlit in the teleport params.
+					lplayer->sky_sunlit_override_value = pm.getSkyType(sky_idx).sunlight_seen;
+				}
+				lplayer->sky_snap_slot = -1;
+			}
 			sky->forceReset();
 			lplayer->sky_override_reset_pending = false;
 		}

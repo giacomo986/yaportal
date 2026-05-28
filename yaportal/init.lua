@@ -871,11 +871,17 @@ minetest.register_globalstep(function(dtime)
                 sky_sunlit = false  -- overworld→void
             end
 
+            -- sky_slot: source portal's C++ slot so the client can apply the full
+            -- sky params (type, colors, fog) from the portal sky pool instantly.
+            local src_slot = portal_index[teleport_src]
             player:portal_teleport(new_pos, new_yaw, {
                 x=new_vel.x-vel.x,
                 y=new_vel.y-vel.y,
                 z=new_vel.z-vel.z,
-            }, sky_sunlit ~= nil and {sky_sunlit = sky_sunlit} or nil)
+            }, {
+                sky_sunlit = sky_sunlit,
+                sky_slot   = src_slot,
+            })
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}

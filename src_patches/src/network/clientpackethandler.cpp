@@ -1706,6 +1706,10 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 	if (pkt->getRemainingBytes() >= 1)
 		*pkt >> sky_sunlit;
 
+	u8 sky_slot = 0xFF;
+	if (pkt->getRemainingBytes() >= 1)
+		*pkt >> sky_slot;
+
 	LocalPlayer *player = m_env.getLocalPlayer();
 	assert(player != NULL);
 
@@ -1713,10 +1717,11 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 	player->snapView(yaw, pitch);
 	player->addVelocity(vel_delta);
 
-	if (sky_sunlit != 0) {
+	if (sky_sunlit != 0 || sky_slot != 0xFF) {
 		player->sky_sunlit_override_frames = 3;
 		player->sky_sunlit_override_value  = (sky_sunlit == 2);
 		player->sky_override_reset_pending = true;
+		player->sky_snap_slot = (sky_slot != 0xFF) ? (int)sky_slot : -1;
 	}
 }
 

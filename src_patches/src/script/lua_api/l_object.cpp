@@ -204,17 +204,22 @@ int ObjectRef::l_portal_teleport(lua_State *L)
 	v3f vel_delta = checkFloatPos(L, 4);
 
 	u8 sky_sunlit = 0;
+	u8 sky_slot   = 0xFF;
 	if (lua_istable(L, 5)) {
 		lua_getfield(L, 5, "sky_sunlit");
 		if (!lua_isnil(L, -1))
 			sky_sunlit = lua_toboolean(L, -1) ? 2 : 1;
+		lua_pop(L, 1);
+		lua_getfield(L, 5, "sky_slot");
+		if (lua_isnumber(L, -1))
+			sky_slot = (u8)lua_tointeger(L, -1);
 		lua_pop(L, 1);
 	}
 
 	playersao->setPlayerYaw(yaw);
 	playersao->setPosTeleportNoSend(pos);
 	playersao->setMaxSpeedOverride(vel_delta);
-	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, vel_delta, sky_sunlit);
+	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, vel_delta, sky_sunlit, sky_slot);
 	return 0;
 }
 
