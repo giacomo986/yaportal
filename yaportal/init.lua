@@ -879,16 +879,19 @@ minetest.register_globalstep(function(dtime)
             -- false so the override releases immediately once block data arrives.
             -- Sending true for void would cause the override to never release
             -- (bg_sunlit=false ≠ override=true) → sunlight_seen stuck true → daylight in void.
+            -- Only override sky for cross-dimension teleports (pocket portals).
+            -- For same-dimension teleports the sky type doesn't change: sending
+            -- sky_slot with sky_sunlit=nil causes sky_sunlit_override_value=false
+            -- for 3 frames → dome not rendered → black sky flash.
             local sky_sunlit
+            local src_slot
             if teleport_src:match("^pocket_in_") then
                 sky_sunlit = true   -- void→overworld
+                src_slot = portal_index[teleport_src]
             elseif teleport_src:match("^pocket_out_") then
                 sky_sunlit = false  -- overworld→void
+                src_slot = portal_index[teleport_src]
             end
-
-            -- sky_slot: source portal's C++ slot so the client can apply the full
-            -- sky params (type, colors, fog) from the portal sky pool instantly.
-            local src_slot = portal_index[teleport_src]
             player:portal_teleport(new_pos, new_yaw, {
                 x=new_vel.x-vel.x,
                 y=new_vel.y-vel.y,
