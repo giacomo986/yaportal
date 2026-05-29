@@ -3542,10 +3542,16 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 			pm_sky.clearSkyTypeDirty(pi);
 		}
 		const PortalSkyType &pst = pm_sky.getSkyType(pi);
-		float db = pst.direct_brightness_scale * time_brightness;
-		m_portal_sky_pool[pi]->update(time_of_day_smooth, time_brightness, db,
-				pst.sunlight_seen, camera->getCameraMode(),
-				player->getYaw(), player->getPitch());
+		// Non-sunlit sky types (e.g. void): force time_of_day=0 (midnight) so stars are
+		// always at maximum opacity, and time_brightness=0 so the background stays dark.
+		// Always pass sunlight_seen=true so Sky::render() enters the sky dome path
+		// (including star drawing), which is otherwise gated on m_sunlight_seen.
+		float sky_tod = pst.sunlight_seen ? time_of_day_smooth : 0.0f;
+		float sky_tb  = pst.sunlight_seen ? time_brightness    : 0.0f;
+		float db      = pst.direct_brightness_scale * time_brightness;
+		m_portal_sky_pool[pi]->update(sky_tod, sky_tb, db,
+				true,
+				camera->getCameraMode(), player->getYaw(), player->getPitch());
 	}
 
 	/*
