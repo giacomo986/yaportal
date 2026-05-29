@@ -41,8 +41,7 @@ struct PipelineContext
 	bool draw_crosshair {true};
 
 	Sky *sky = nullptr;
-	Sky *overworld_sky = nullptr;
-	Sky *void_sky = nullptr;
+	std::vector<Sky*> sky_pool; // non-owning; one entry per PortalManager sky type
 	float fog_range = 0.0f;
 	bool  fog_enabled = true;
 	scene::ISceneNode *clouds_node = nullptr;

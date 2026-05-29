@@ -178,6 +178,8 @@ public:
 	bool sky_sunlit_override_value  = true;
 	// Set alongside sky_sunlit_override to trigger a full sky reset on first frame.
 	bool sky_override_reset_pending = false;
+	// Portal slot whose sky_type_index is applied to the main sky on reset.
+	int  sky_snap_slot = -1;
 
 	inline Lighting& getLighting() { return m_lighting; }
 

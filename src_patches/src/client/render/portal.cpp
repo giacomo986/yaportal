@@ -529,46 +529,36 @@ static void renderPortalRTTs(
 			GL.Enable(GL.CLIP_DISTANCE3);
 		}
 
-		// Apply per-portal sky mode before clearing the RTT.
-		const PortalSkySlot &sky_cfg = pm.getSkyConfig(i);
+		// Activate the per-portal sky node from the pool (if any).
+		int sky_idx = pm.getSkyTypeIndex(i);
+		Sky *portal_sky = (sky_idx >= 0 && sky_idx < (int)data.sky_pool.size())
+				? data.sky_pool[sky_idx] : nullptr;
+
 		video::SColor clear_col = ctx.clear_color;
-		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
+		if (portal_sky) {
+			const PortalSkyType &st = pm.getSkyType(sky_idx);
 			if (data.sky) data.sky->setSceneActive(false);
-			if (data.void_sky) data.void_sky->setSceneActive(true);
-			// Use the Lua-configured tint as clear colour so dark terrain has
-			// visible contrast against the background (avoid pure-black-on-black).
-			clear_col = video::SColor(sky_cfg.clear_color_argb);
-		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD) {
-			if (data.sky) data.sky->setSceneActive(false);
-			if (data.overworld_sky) {
-				data.overworld_sky->setSceneActive(true);
-				// getSkyColor() = upper sky tint; matches what beginScene() uses
-				// in the main render, preventing a colour shift at the top of the portal.
-				clear_col = data.overworld_sky->getSkyColor();
-			}
+			portal_sky->setSceneActive(true);
+			// Use the sky's fog colour as the clear colour so terrain has visible
+			// contrast against the background (getSkyColor() gives the upper dome).
+			clear_col = st.sunlight_seen
+					? portal_sky->getSkyColor()
+					: portal_sky->getFogColor();
 		}
 
 		// Override driver fog to match the portal's destination sky.
-		if (sky_cfg.mode == PortalSkySlot::SkyMode::VOID) {
-			float void_fog_start = data.void_sky ? data.void_sky->getFogStart()
-					: (data.sky ? data.sky->getFogStart() : 0.0f);
-			driver->setFog(video::SColor(sky_cfg.clear_color_argb),
+		if (portal_sky) {
+			driver->setFog(portal_sky->getFogColor(),
 					video::EFT_FOG_LINEAR,
-					ctx.fog_range * void_fog_start,
-					ctx.fog_range, 0.f, false, ctx.fog_enabled);
-		} else if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD && data.overworld_sky) {
-			driver->setFog(data.overworld_sky->getFogColor(),
-					video::EFT_FOG_LINEAR,
-					ctx.fog_range * data.overworld_sky->getFogStart(),
+					ctx.fog_range * portal_sky->getFogStart(),
 					ctx.fog_range, 0.f, false, ctx.fog_enabled);
 		}
 
-		// For OVERWORLD mode, ensure clouds are visible even when the player's
-		// current sky has them disabled (e.g. player is in the void).
+		// Ensure clouds are visible when the destination sky has them enabled.
 		bool clouds_was_visible = false;
 		if (data.clouds_node) {
 			clouds_was_visible = data.clouds_node->isVisible();
-			if (sky_cfg.mode == PortalSkySlot::SkyMode::OVERWORLD)
+			if (portal_sky && portal_sky->getCloudsVisible())
 				data.clouds_node->setVisible(true);
 		}
 
@@ -596,19 +586,15 @@ static void renderPortalRTTs(
 		if (data.clouds_node)
 			data.clouds_node->setVisible(clouds_was_visible);
 
-		// Restore fog to the main-world sky's settings.
-		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT && data.sky) {
-			driver->setFog(data.sky->getFogColor(),
-					video::EFT_FOG_LINEAR,
-					ctx.fog_range * data.sky->getFogStart(),
-					ctx.fog_range, 0.f, false, ctx.fog_enabled);
-		}
-
-		// Restore sky scene nodes so the next portal (or main render) sees the original.
-		if (sky_cfg.mode != PortalSkySlot::SkyMode::DEFAULT) {
+		// Restore fog and sky node after the RTT pass.
+		if (portal_sky) {
+			if (data.sky)
+				driver->setFog(data.sky->getFogColor(),
+						video::EFT_FOG_LINEAR,
+						ctx.fog_range * data.sky->getFogStart(),
+						ctx.fog_range, 0.f, false, ctx.fog_enabled);
+			portal_sky->setSceneActive(false);
 			if (data.sky) data.sky->setSceneActive(true);
-			if (data.overworld_sky) data.overworld_sky->setSceneActive(false);
-			if (data.void_sky) data.void_sky->setSceneActive(false);
 		}
 
 		GL.Disable(GL.CLIP_DISTANCE0);
@@ -683,8 +669,7 @@ void PortalPrepareStep::run(PipelineContext &ctx)
 
 	m_data->main_cam = mainCam;
 	m_data->sky = ctx.sky;
-	m_data->overworld_sky = ctx.overworld_sky;
-	m_data->void_sky = ctx.void_sky;
+	m_data->sky_pool = ctx.sky_pool;
 	m_data->clouds_node = ctx.clouds_node;
 	mainCam->updateAbsolutePosition();
 	renderPortalRTTs(*m_data, ctx, mainCam);
@@ -750,8 +735,7 @@ void PortalRenderStep::run(PipelineContext &ctx)
 		return;
 
 	m_data.sky = ctx.sky;
-	m_data.overworld_sky = ctx.overworld_sky;
-	m_data.void_sky = ctx.void_sky;
+	m_data.sky_pool = ctx.sky_pool;
 	m_data.clouds_node = ctx.clouds_node;
 	// Render RTTs. Leaves render target at FBO=0 (screen) — correct for non-PP.
 	renderPortalRTTs(m_data, ctx, mainCam);

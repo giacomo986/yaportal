@@ -305,6 +305,32 @@ local function sorted_portal_names()
     return names
 end
 
+-- Sky type indices registered once at startup. Indices are stable (deduped by name).
+local SKY_VOID = minetest.register_portal_sky_type("void", {
+    type       = "regular",
+    sky_color  = {
+        day_sky       = "#000A14",
+        day_horizon   = "#000510",
+        dawn_sky      = "#000A14",
+        dawn_horizon  = "#000510",
+        night_sky     = "#000A14",
+        night_horizon = "#000510",
+        indoors       = "#000000",
+        fog_sun_tint  = "#000A14",
+        fog_moon_tint = "#000A14",
+        fog_tint_type = "custom",
+    },
+    clouds     = false,
+    sunlit     = false,
+    brightness = 0.0,
+})
+local SKY_OVERWORLD = minetest.register_portal_sky_type("overworld", {
+    type       = "regular",
+    clouds     = true,
+    sunlit     = true,
+    brightness = 1.0,
+})
+
 local function sync_portals()
     portal_index = {}
     local portal_list = {}
@@ -323,14 +349,12 @@ local function sync_portals()
             half_h = (pp.h or 3) / 2,
             link   = link_idx,
         }
-        -- Per-portal RTT sky: void for overworld→pocket, overworld sky for pocket→overworld.
+        -- Per-portal RTT sky: void for overworld→pocket, overworld for pocket→overworld.
         local slot = i - 1
         if pp.link and pp.link:match("^pocket_in_") then
-            -- portal is in the overworld, looks into pocket dim → show void
-            minetest.set_portal_sky(slot, {mode="void", clear_color="#000A14"})
+            minetest.set_portal_sky(slot, SKY_VOID)
         elseif pp.link and pp.link:match("^pocket_out_") then
-            -- portal is in the pocket dim, looks into overworld → show overworld sky
-            minetest.set_portal_sky(slot, {mode="overworld"})
+            minetest.set_portal_sky(slot, SKY_OVERWORLD)
         else
             minetest.clear_portal_sky(slot)
         end
@@ -845,19 +869,33 @@ minetest.register_globalstep(function(dtime)
             end
 
             -- sky_sunlit hint forces sunlight_seen on the client so the sky snaps
-            -- instantly to the destination state instead of lerping over ~100 frames.
-            -- Only needed for void→overworld: the natural lerp for overworld→void is fine
-            -- and lets the void's open-sky atmosphere (stars, etc.) render naturally.
+            -- instantly to the destination state instead of lerping over ~300 frames.
+            -- void→overworld needs true: snap to sunlit sky, releases when bg_sunlit=true.
+            -- overworld→void needs false: snap to dark sky; bg_sunlit in void is always
+            -- false so the override releases immediately once block data arrives.
+            -- Sending true for void would cause the override to never release
+            -- (bg_sunlit=false ≠ override=true) → sunlight_seen stuck true → daylight in void.
+            -- Only override sky for cross-dimension teleports (pocket portals).
+            -- For same-dimension teleports the sky type doesn't change: sending
+            -- sky_slot with sky_sunlit=nil causes sky_sunlit_override_value=false
+            -- for 3 frames → dome not rendered → black sky flash.
             local sky_sunlit
+            local src_slot
             if teleport_src:match("^pocket_in_") then
-                sky_sunlit = true    -- pocket_in is in void; exiting it → arriving in overworld
+                sky_sunlit = true   -- void→overworld
+                src_slot = portal_index[teleport_src]
+            elseif teleport_src:match("^pocket_out_") then
+                sky_sunlit = false  -- overworld→void
+                src_slot = portal_index[teleport_src]
             end
-
             player:portal_teleport(new_pos, new_yaw, {
                 x=new_vel.x-vel.x,
                 y=new_vel.y-vel.y,
                 z=new_vel.z-vel.z,
-            }, sky_sunlit ~= nil and {sky_sunlit = sky_sunlit} or nil)
+            }, {
+                sky_sunlit = sky_sunlit,
+                sky_slot   = src_slot,
+            })
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}

@@ -132,9 +132,9 @@ public:
 
 	void draw_scene(video::SColor skycolor, bool show_hud,
 			bool draw_wield_tool, bool draw_crosshair,
-			Sky *sky = nullptr, Sky *overworld_sky = nullptr,
+			Sky *sky = nullptr,
+			const std::vector<Sky*> &sky_pool = {},
 			float fog_range = 0.0f, bool fog_enabled = true,
-			Sky *void_sky = nullptr,
 			scene::ISceneNode *clouds_node = nullptr);
 
 	void initialize(Client *client, Hud *hud);

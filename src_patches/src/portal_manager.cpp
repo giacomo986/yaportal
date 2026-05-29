@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #include "portal_manager.h"
 #include <cassert>
+#include <algorithm>
 
 PortalManager &PortalManager::get()
 {
@@ -58,15 +59,32 @@ void PortalManager::clearCamHint(int id)
 	m_cam_hint[id].valid = false;
 }
 
-void PortalManager::setSkyConfig(int id, PortalSkySlot::SkyMode mode, u32 clear_color_argb)
+int PortalManager::registerSkyType(const std::string &name, const PortalSkyType &type)
 {
-	assert(id >= 0 && id < MAX_PORTALS);
-	m_sky_config[id].mode = mode;
-	m_sky_config[id].clear_color_argb = clear_color_argb;
+	auto it = std::find(m_sky_type_names.begin(), m_sky_type_names.end(), name);
+	if (it != m_sky_type_names.end())
+		return (int)(it - m_sky_type_names.begin());
+	m_sky_type_names.push_back(name);
+	m_sky_types.push_back(type);
+	m_sky_types.back().dirty = true;
+	return (int)m_sky_types.size() - 1;
 }
 
-void PortalManager::clearSkyConfig(int id)
+void PortalManager::updateSkyType(int index, const PortalSkyType &type)
 {
-	assert(id >= 0 && id < MAX_PORTALS);
-	m_sky_config[id] = {};
+	assert(index >= 0 && index < (int)m_sky_types.size());
+	m_sky_types[index] = type;
+	m_sky_types[index].dirty = true;
+}
+
+void PortalManager::setSkySlot(int portal_id, int sky_type_index)
+{
+	assert(portal_id >= 0 && portal_id < MAX_PORTALS);
+	m_sky_slots[portal_id].sky_type_index = sky_type_index;
+}
+
+void PortalManager::clearSkySlot(int portal_id)
+{
+	assert(portal_id >= 0 && portal_id < MAX_PORTALS);
+	m_sky_slots[portal_id].sky_type_index = -1;
 }

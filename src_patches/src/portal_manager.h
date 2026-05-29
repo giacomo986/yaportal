@@ -3,6 +3,9 @@
 #pragma once
 
 #include "irr_v3d.h"
+#include "skyparams.h"
+#include <string>
+#include <vector>
 
 static constexpr int MAX_PORTALS = 8;
 
@@ -25,12 +28,20 @@ struct PortalClipPlanes {
 	float data[16] = {}; // [k*4+0..2]=normal, [k*4+3]=d, for k=0..3
 };
 
-// Sky configuration override for a portal's RTT rendering.
-// VOID: suppress all sky, use clear_color_argb as RTT background.
-// OVERWORLD: swap main sky for the secondary overworld sky node.
+// Full description of a sky type for portal RTT rendering.
+// Multiple portals share one sky type when pointing to the same dimension.
+// The Sky node instance for this type lives in game.cpp's m_portal_sky_pool.
+struct PortalSkyType {
+	SkyboxParams sky_params;              // full set_sky parameters for this dimension
+	bool  sunlight_seen          = false; // passed to Sky::update() sunlight_seen arg
+	float direct_brightness_scale = 0.0f; // 1.0 = time_brightness, 0.0 = always dark
+	bool  dirty                  = true;  // true → game.cpp must call applySkyParams()
+};
+
+// Per-portal sky slot: which sky type index to use for this portal's RTT.
+// sky_type_index == -1 → DEFAULT (main player sky, no swap).
 struct PortalSkySlot {
-	enum class SkyMode { DEFAULT = 0, VOID, OVERWORLD } mode = SkyMode::DEFAULT;
-	u32  clear_color_argb = 0xFF000A14; // used only for VOID
+	int sky_type_index = -1;
 };
 
 // Non-thread-safe singleton. Access only from the main thread.
@@ -46,19 +57,24 @@ public:
 	bool anyActive() const;
 
 	// Camera position override for portal `id` RTT rendering.
-	// Lua sets this every frame while the player is inside the portal frame.
-	// Hint persists (non-consuming) until clearCamHint is called so it
-	// remains valid across multiple render frames between server ticks.
 	void setCamHint(int id, v3f world_pos_bs);
-	// Read the hint without consuming it. Returns false when none is set.
 	bool getCamHint(int id, v3f &out_world_pos_bs) const;
-	// Lua calls this when the player leaves the source portal bounds.
 	void clearCamHint(int id);
 
-	// Per-portal sky configuration for RTT rendering.
-	void setSkyConfig(int id, PortalSkySlot::SkyMode mode, u32 clear_color_argb = 0xFF000A14);
-	void clearSkyConfig(int id);
-	const PortalSkySlot &getSkyConfig(int id) const { return m_sky_config[id]; }
+	// Sky type pool — one entry per distinct dimension sky.
+	// registerSkyType: dedup by name (same name → returns existing index).
+	// updateSkyType: replace params and mark dirty.
+	int  registerSkyType(const std::string &name, const PortalSkyType &type);
+	void updateSkyType(int index, const PortalSkyType &type);
+	int  skyTypeCount() const { return (int)m_sky_types.size(); }
+	const PortalSkyType &getSkyType(int index) const { return m_sky_types[index]; }
+	bool isSkyTypeDirty(int index) const { return m_sky_types[index].dirty; }
+	void clearSkyTypeDirty(int index) { m_sky_types[index].dirty = false; }
+
+	// Per-portal sky slot assignment.
+	void setSkySlot(int portal_id, int sky_type_index);
+	void clearSkySlot(int portal_id);
+	int  getSkyTypeIndex(int portal_id) const { return m_sky_slots[portal_id].sky_type_index; }
 
 	// Active lateral clip planes for the current RTT pass.
 	void setClipPlanes(const PortalClipPlanes &cp) { m_clip_planes = cp; }
@@ -67,7 +83,9 @@ public:
 private:
 	PortalInfo m_portals[MAX_PORTALS];
 	struct CamHintSlot { v3f pos = {}; bool valid = false; };
-	CamHintSlot m_cam_hint[MAX_PORTALS];
-	PortalSkySlot m_sky_config[MAX_PORTALS];
+	CamHintSlot  m_cam_hint[MAX_PORTALS];
+	PortalSkySlot m_sky_slots[MAX_PORTALS];
+	std::vector<PortalSkyType> m_sky_types;
+	std::vector<std::string>   m_sky_type_names;
 	PortalClipPlanes m_clip_planes;
 };

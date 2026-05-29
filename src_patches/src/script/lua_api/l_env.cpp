@@ -24,6 +24,7 @@
 #include "pathfinder.h"
 #include "face_position_cache.h"
 #include "portal_manager.h"
+#include "skyparams.h"
 #include "log.h"
 #include "remoteplayer.h"
 #include "servermap.h"
@@ -1445,45 +1446,132 @@ int ModApiEnv::l_clear_portal_cam_hint(lua_State *L)
 	return 0;
 }
 
-// set_portal_sky(portal_id, {mode="void"|"overworld", clear_color="#rrggbb"})
-// Overrides the sky rendered inside the portal's RTT.
-// mode="void": suppress sky entirely; clear_color becomes the RTT background.
-// mode="overworld": use the secondary overworld sky node (regular sky params).
+// Helper: parse SkyboxParams fields from a Lua table at stack index `tidx`.
+// Starts from sky type defaults (plain black) and applies only the provided fields.
+static SkyboxParams read_portal_sky_params(lua_State *L, int tidx)
+{
+	SkyboxParams p = SkyboxDefaults::getSkyDefaults();
+	// Default to plain black (void-like) rather than regular sky.
+	p.type = "plain";
+	p.bgcolor = video::SColor(255, 0, 10, 20);
+	p.clouds = false;
+
+	if (!lua_istable(L, tidx))
+		return p;
+
+	lua_getfield(L, tidx, "type");
+	if (!lua_isnil(L, -1)) p.type = luaL_checkstring(L, -1);
+	lua_pop(L, 1);
+
+	lua_getfield(L, tidx, "base_color");
+	if (!lua_isnil(L, -1)) read_color(L, -1, &p.bgcolor);
+	lua_pop(L, 1);
+
+	lua_getfield(L, tidx, "body_orbit_tilt");
+	if (!lua_isnil(L, -1))
+		p.body_orbit_tilt = rangelim((float)luaL_checknumber(L, -1), -60.0f, 60.0f);
+	lua_pop(L, 1);
+
+	lua_getfield(L, tidx, "textures");
+	p.textures.clear();
+	if (lua_istable(L, -1) && p.type == "skybox") {
+		lua_pushnil(L);
+		while (lua_next(L, -2) != 0) {
+			p.textures.emplace_back(luaL_checkstring(L, -1));
+			lua_pop(L, 1);
+		}
+		if (p.textures.size() != 6 && !p.textures.empty())
+			throw LuaError("Skybox expects 6 textures!");
+	}
+	lua_pop(L, 1);
+
+	getboolfield(L, tidx, "clouds", p.clouds);
+
+	lua_getfield(L, tidx, "sky_color");
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "day_sky");     read_color(L, -1, &p.sky_color.day_sky);     lua_pop(L, 1);
+		lua_getfield(L, -1, "day_horizon"); read_color(L, -1, &p.sky_color.day_horizon); lua_pop(L, 1);
+		lua_getfield(L, -1, "dawn_sky");    read_color(L, -1, &p.sky_color.dawn_sky);    lua_pop(L, 1);
+		lua_getfield(L, -1, "dawn_horizon");read_color(L, -1, &p.sky_color.dawn_horizon);lua_pop(L, 1);
+		lua_getfield(L, -1, "night_sky");   read_color(L, -1, &p.sky_color.night_sky);   lua_pop(L, 1);
+		lua_getfield(L, -1, "night_horizon");read_color(L, -1, &p.sky_color.night_horizon);lua_pop(L, 1);
+		lua_getfield(L, -1, "indoors");     read_color(L, -1, &p.sky_color.indoors);     lua_pop(L, 1);
+		p.fog_sun_tint = video::SColor(255, 255, 255, 255);
+		lua_getfield(L, -1, "fog_sun_tint"); read_color(L, -1, &p.fog_sun_tint); lua_pop(L, 1);
+		p.fog_moon_tint = video::SColor(255, 255, 255, 255);
+		lua_getfield(L, -1, "fog_moon_tint"); read_color(L, -1, &p.fog_moon_tint); lua_pop(L, 1);
+		lua_getfield(L, -1, "fog_tint_type");
+		if (!lua_isnil(L, -1)) p.fog_tint_type = luaL_checkstring(L, -1);
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+
+	lua_getfield(L, tidx, "fog");
+	if (lua_istable(L, -1)) {
+		p.fog_distance = getintfield_default(L, -1, "fog_distance", p.fog_distance);
+		p.fog_start    = getfloatfield_default(L, -1, "fog_start", p.fog_start);
+		lua_getfield(L, -1, "fog_color"); read_color(L, -1, &p.fog_color); lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+
+	getboolfield(L, tidx, "auto_dim_skybox", p.auto_dim_skybox);
+	return p;
+}
+
+// register_portal_sky_type(name, def) -> integer index
+// Registers a named sky type for use with portals. Returns the index to pass to
+// set_portal_sky(). Subsequent calls with the same name return the existing index.
+int ModApiEnv::l_register_portal_sky_type(lua_State *L)
+{
+	const char *name = luaL_checkstring(L, 1);
+	PortalSkyType pst;
+	pst.sky_params = read_portal_sky_params(L, 2);
+	getboolfield(L, 2, "sunlit", pst.sunlight_seen);
+	pst.direct_brightness_scale = getfloatfield_default(L, 2, "brightness", 0.0f);
+	pst.dirty = true;
+	int idx = PortalManager::get().registerSkyType(name, pst);
+	lua_pushinteger(L, idx);
+	return 1;
+}
+
+// update_portal_sky_type(index, def)
+// Updates the params of an existing sky type on-the-fly. Takes effect next frame.
+int ModApiEnv::l_update_portal_sky_type(lua_State *L)
+{
+	int idx = luaL_checkint(L, 1);
+	if (idx < 0 || idx >= PortalManager::get().skyTypeCount())
+		return 0;
+	PortalSkyType pst = PortalManager::get().getSkyType(idx);
+	if (lua_istable(L, 2)) {
+		pst.sky_params = read_portal_sky_params(L, 2);
+		getboolfield(L, 2, "sunlit", pst.sunlight_seen);
+		pst.direct_brightness_scale = getfloatfield_default(L, 2, "brightness",
+				pst.direct_brightness_scale);
+	}
+	PortalManager::get().updateSkyType(idx, pst);
+	return 0;
+}
+
+// set_portal_sky(portal_id, sky_type_index)
+// Assigns a registered sky type index to a portal slot.
 int ModApiEnv::l_set_portal_sky(lua_State *L)
 {
 	int id = luaL_checkint(L, 1);
 	if (id < 0 || id >= MAX_PORTALS)
 		return 0;
-	PortalSkySlot::SkyMode mode = PortalSkySlot::SkyMode::DEFAULT;
-	u32 argb = 0xFF000A14;
-	if (lua_istable(L, 2)) {
-		lua_getfield(L, 2, "mode");
-		if (lua_isstring(L, -1)) {
-			std::string m = lua_tostring(L, -1);
-			if (m == "void") mode = PortalSkySlot::SkyMode::VOID;
-			else if (m == "overworld") mode = PortalSkySlot::SkyMode::OVERWORLD;
-		}
-		lua_pop(L, 1);
-		lua_getfield(L, 2, "clear_color");
-		if (lua_isstring(L, -1)) {
-			video::SColor c(0xFF000A14);
-			parseColorString(lua_tostring(L, -1), c, false, 0xFF);
-			argb = c.color;
-		}
-		lua_pop(L, 1);
-	}
-	PortalManager::get().setSkyConfig(id, mode, argb);
+	int sky_idx = luaL_checkint(L, 2);
+	PortalManager::get().setSkySlot(id, sky_idx);
 	return 0;
 }
 
 // clear_portal_sky(portal_id)
-// Removes the sky override so the RTT uses the main world's sky again.
+// Removes the sky override so the RTT uses the main world's sky.
 int ModApiEnv::l_clear_portal_sky(lua_State *L)
 {
 	int id = luaL_checkint(L, 1);
 	if (id < 0 || id >= MAX_PORTALS)
 		return 0;
-	PortalManager::get().clearSkyConfig(id);
+	PortalManager::get().clearSkySlot(id);
 	return 0;
 }
 
@@ -1545,6 +1633,8 @@ void ModApiEnv::Initialize(lua_State *L, int top)
 	API_FCT(set_portals);
 	API_FCT(set_portal_cam_hint);
 	API_FCT(clear_portal_cam_hint);
+	API_FCT(register_portal_sky_type);
+	API_FCT(update_portal_sky_type);
 	API_FCT(set_portal_sky);
 	API_FCT(clear_portal_sky);
 }
