@@ -3538,7 +3538,16 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	// Apply dirty params and update each pool sky per frame.
 	for (int pi = 0; pi < pm_sky.skyTypeCount(); pi++) {
 		if (pm_sky.isSkyTypeDirty(pi)) {
-			m_portal_sky_pool[pi]->applySkyParams(pm_sky.getSkyType(pi).sky_params, texture_src);
+			const PortalSkyType &pstd = pm_sky.getSkyType(pi);
+			m_portal_sky_pool[pi]->applySkyParams(pstd.sky_params, texture_src);
+			// For non-sunlit sky types (e.g. void), hide celestial bodies: the pool
+			// node defaults to sun/moon/sunrise visible=true, which looks wrong in
+			// a dark void sky that has no star-blocking light sources.
+			if (!pstd.sunlight_seen) {
+				m_portal_sky_pool[pi]->setSunVisible(false);
+				m_portal_sky_pool[pi]->setSunriseVisible(false);
+				m_portal_sky_pool[pi]->setMoonVisible(false);
+			}
 			pm_sky.clearSkyTypeDirty(pi);
 		}
 		const PortalSkyType &pst = pm_sky.getSkyType(pi);

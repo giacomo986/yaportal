@@ -319,6 +319,10 @@ local SKY_VOID = minetest.register_portal_sky_type("void", {
         night_sky     = "#000A14",
         night_horizon = "#000510",
         indoors       = "#000000",
+        -- Suppress the default orange/blue fog tints so the horizon stays dark.
+        fog_sun_tint  = "#000A14",
+        fog_moon_tint = "#000A14",
+        fog_tint_type = "custom",
     },
     clouds     = false,
     sunlit     = false,
