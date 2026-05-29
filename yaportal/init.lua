@@ -307,23 +307,8 @@ end
 
 -- Sky type indices registered once at startup. Indices are stable (deduped by name).
 local SKY_VOID = minetest.register_portal_sky_type("void", {
-    -- "regular" type keeps the sky dome active (setVisible=true) so stars render.
-    -- All sky colors set to near-black; pool update forces time_of_day=0 (midnight)
-    -- + time_brightness=0 so stars are always at full opacity and background stays dark.
-    type       = "regular",
-    sky_color  = {
-        day_sky       = "#000A14",
-        day_horizon   = "#000510",
-        dawn_sky      = "#000A14",
-        dawn_horizon  = "#000510",
-        night_sky     = "#000A14",
-        night_horizon = "#000510",
-        indoors       = "#000000",
-        -- Suppress the default orange/blue fog tints so the horizon stays dark.
-        fog_sun_tint  = "#000A14",
-        fog_moon_tint = "#000A14",
-        fog_tint_type = "custom",
-    },
+    type       = "plain",
+    bgcolor    = "#000000",
     clouds     = false,
     sunlit     = false,
     brightness = 0.0,

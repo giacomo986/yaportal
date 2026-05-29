@@ -3540,26 +3540,12 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 		if (pm_sky.isSkyTypeDirty(pi)) {
 			const PortalSkyType &pstd = pm_sky.getSkyType(pi);
 			m_portal_sky_pool[pi]->applySkyParams(pstd.sky_params, texture_src);
-			// For non-sunlit sky types (e.g. void), hide celestial bodies: the pool
-			// node defaults to sun/moon/sunrise visible=true, which looks wrong in
-			// a dark void sky that has no star-blocking light sources.
-			if (!pstd.sunlight_seen) {
-				m_portal_sky_pool[pi]->setSunVisible(false);
-				m_portal_sky_pool[pi]->setSunriseVisible(false);
-				m_portal_sky_pool[pi]->setMoonVisible(false);
-			}
 			pm_sky.clearSkyTypeDirty(pi);
 		}
 		const PortalSkyType &pst = pm_sky.getSkyType(pi);
-		// Non-sunlit sky types (e.g. void): force time_of_day=0 (midnight) so stars are
-		// always at maximum opacity, and time_brightness=0 so the background stays dark.
-		// Always pass sunlight_seen=true so Sky::render() enters the sky dome path
-		// (including star drawing), which is otherwise gated on m_sunlight_seen.
-		float sky_tod = pst.sunlight_seen ? time_of_day_smooth : 0.0f;
-		float sky_tb  = pst.sunlight_seen ? time_brightness    : 0.0f;
-		float db      = pst.direct_brightness_scale * time_brightness;
-		m_portal_sky_pool[pi]->update(sky_tod, sky_tb, db,
-				true,
+		float db = pst.direct_brightness_scale * time_brightness;
+		m_portal_sky_pool[pi]->update(time_of_day_smooth, time_brightness, db,
+				pst.sunlight_seen,
 				camera->getCameraMode(), player->getYaw(), player->getPitch());
 	}
 
