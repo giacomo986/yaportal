@@ -307,8 +307,19 @@ end
 
 -- Sky type indices registered once at startup. Indices are stable (deduped by name).
 local SKY_VOID = minetest.register_portal_sky_type("void", {
-    type       = "plain",
-    bgcolor    = "#000000",
+    type       = "regular",
+    sky_color  = {
+        day_sky       = "#000A14",
+        day_horizon   = "#000510",
+        dawn_sky      = "#000A14",
+        dawn_horizon  = "#000510",
+        night_sky     = "#000A14",
+        night_horizon = "#000510",
+        indoors       = "#000000",
+        fog_sun_tint  = "#000A14",
+        fog_moon_tint = "#000A14",
+        fog_tint_type = "custom",
+    },
     clouds     = false,
     sunlit     = false,
     brightness = 0.0,
