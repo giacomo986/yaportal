@@ -87,14 +87,15 @@ local function update_anchor(name, pp)
         local pos
         if pp.axis == 0 then
             pos = {x=pp.cx+(w-1)/2, y=pp.cy+(h-1)/2, z=pp.cz}
-        else
+        elseif pp.axis == 1 then
             pos = {x=pp.cx, y=pp.cy+(h-1)/2, z=pp.cz+(w-1)/2}
+        else -- axis == 2
+            pos = {x=pp.cx+(w-1)/2, y=pp.cy, z=pp.cz+(h-1)/2}
         end
         anchors[name] = minetest.add_entity(pos, "yaportal:anchor")
         if anchors[name] then
             local ent = anchors[name]:get_luaentity()
             if ent then ent._portal_name = name end
-            -- Selectionbox covers the entire portal opening so right-clicking
             -- Selectionbox covers interior + 1-node frame border on all sides.
             -- Depth ±0.6 protrudes slightly past frame block faces (±0.5) so
             -- the entity intercepts clicks before the underlying node.
@@ -103,8 +104,11 @@ local function update_anchor(name, pp)
             local sb
             if pp.axis == 0 then
                 sb = {-hw, -hh, -0.6, hw, hh, 0.6}
-            else
+            elseif pp.axis == 1 then
                 sb = {-0.6, -hh, -hw, 0.6, hh, hw}
+            else -- axis == 2: flat in XZ
+                local hz = h / 2 + 1
+                sb = {-hw, -0.6, -hz, hw, 0.6, hz}
             end
             anchors[name]:set_properties({selectionbox = sb})
         end
@@ -130,7 +134,7 @@ local function check_frame(cx, cy, cz, axis, frame_node, w, h)
             if node_at(cx-1, cy+dy, cz) ~= frame_node then return false end
             if node_at(cx+w, cy+dy, cz) ~= frame_node then return false end
         end
-    else
+    elseif axis == 1 then
         for dz = 0, w-1 do
             for dy = 0, h-1 do
                 if node_at(cx, cy+dy, cz+dz) ~= "air" then return false end
@@ -144,6 +148,20 @@ local function check_frame(cx, cy, cz, axis, frame_node, w, h)
             if node_at(cx, cy+dy, cz-1) ~= frame_node then return false end
             if node_at(cx, cy+dy, cz+w) ~= frame_node then return false end
         end
+    else -- axis == 2: horizontal ring in XZ at y=cy
+        for dx = 0, w-1 do
+            for dz = 0, h-1 do
+                if node_at(cx+dx, cy, cz+dz) ~= "air" then return false end
+            end
+        end
+        for dx = -1, w do
+            if node_at(cx+dx, cy, cz-1) ~= frame_node then return false end
+            if node_at(cx+dx, cy, cz+h) ~= frame_node then return false end
+        end
+        for dz = 0, h-1 do
+            if node_at(cx-1, cy, cz+dz) ~= frame_node then return false end
+            if node_at(cx+w, cy, cz+dz) ~= frame_node then return false end
+        end
     end
     return true
 end
@@ -153,21 +171,27 @@ local function inner_center(pp)
     local h = pp.h or 3
     if pp.axis == 0 then
         return {x=pp.cx+(w-1)/2, y=pp.cy+(h-1)/2, z=pp.cz}
-    else
+    elseif pp.axis == 1 then
         return {x=pp.cx, y=pp.cy+(h-1)/2, z=pp.cz+(w-1)/2}
+    else -- axis == 2: horizontal, opening in XZ plane
+        return {x=pp.cx+(w-1)/2, y=pp.cy, z=pp.cz+(h-1)/2}
     end
 end
 
 local function portal_normal(axis, ns)
     ns = ns or 1
-    return axis==0 and {x=0,y=0,z=ns} or {x=ns,y=0,z=0}
+    if axis == 0 then return {x=0,y=0,z=ns}
+    elseif axis == 1 then return {x=ns,y=0,z=0}
+    else return {x=0,y=ns,z=0} end
 end
 
-local function normal_sign(axis, player_pos, cx, cz)
+local function normal_sign(axis, player_pos, cx, cy, cz)
     if axis == 0 then
         return (player_pos.z >= cz) and 1 or -1
-    else
+    elseif axis == 1 then
         return (player_pos.x >= cx) and 1 or -1
+    else -- axis == 2
+        return (player_pos.y >= cy) and 1 or -1
     end
 end
 
@@ -180,10 +204,14 @@ local function in_portal_bounds(ppos, pp)
         return py   >= pp.cy and py   < pp.cy + h
            and ppos.x >= pp.cx - M and ppos.x < pp.cx + w + M
            and math.abs(ppos.z - pp.cz) <= 1.0
-    else
+    elseif pp.axis == 1 then
         return py   >= pp.cy and py   < pp.cy + h
            and ppos.z >= pp.cz - M and ppos.z < pp.cz + w + M
            and math.abs(ppos.x - pp.cx) <= 1.0
+    else -- axis == 2: depth is Y, lateral extents in XZ
+        return ppos.x >= pp.cx - M and ppos.x < pp.cx + w + M
+           and ppos.z >= pp.cz - M and ppos.z < pp.cz + h + M
+           and math.abs(py - pp.cy) <= 1.0
     end
 end
 
@@ -191,8 +219,10 @@ local function on_ns_side(ppos, pp)
     local ns = pp.ns or 1
     if pp.axis == 0 then
         return (ppos.z - pp.cz) * ns >= -TRIGGER_DEPTH
-    else
+    elseif pp.axis == 1 then
         return (ppos.x - pp.cx) * ns >= -TRIGGER_DEPTH
+    else -- axis == 2
+        return (ppos.y + 0.5 - pp.cy) * ns >= -TRIGGER_DEPTH
     end
 end
 
@@ -200,8 +230,10 @@ local function portal_depth(ppos, pp)
     local ns = pp.ns or 1
     if pp.axis == 0 then
         return (ppos.z - pp.cz) * ns
-    else
+    elseif pp.axis == 1 then
         return (ppos.x - pp.cx) * ns
+    else -- axis == 2
+        return (ppos.y + 0.5 - pp.cy) * ns
     end
 end
 
@@ -212,17 +244,19 @@ end
 local function portal_basis(pp)
     local ns = pp.ns or 1
     if pp.axis == 0 then
-        return {x=0,y=0,z=ns}, {x=-ns,y=0,z=0}
-    else
-        return {x=ns,y=0,z=0}, {x=0,y=0,z=ns}
+        return {x=0,y=0,z=ns}, {x=-ns,y=0,z=0}, {x=0,y=1,z=0}
+    elseif pp.axis == 1 then
+        return {x=ns,y=0,z=0}, {x=0,y=0,z=ns}, {x=0,y=1,z=0}
+    else -- axis == 2: horizontal (floor/ceiling), normal = ±Y
+        return {x=0,y=ns,z=0}, {x=1,y=0,z=0}, {x=0,y=0,z=1}
     end
 end
 
 local function dot(a, b) return a.x*b.x + a.y*b.y + a.z*b.z end
 
-local function portal_transform_pos(v, src_n, src_r, dst_n, dst_r)
+local function portal_transform_pos(v, src_n, src_r, src_u, dst_n, dst_r, dst_u)
     local lr = dot(v, src_r)
-    local lu = v.y
+    local lu = dot(v, src_u)
     local ln = dot(v, src_n)
     local dst_ln = -ln
     if dst_ln >= 0 then
@@ -231,20 +265,20 @@ local function portal_transform_pos(v, src_n, src_r, dst_n, dst_r)
         dst_ln = math.min(dst_ln, -0.02)
     end
     return {
-        x = (-lr)*dst_r.x + dst_ln*dst_n.x,
-        y = lu,
-        z = (-lr)*dst_r.z + dst_ln*dst_n.z,
+        x = (-lr)*dst_r.x + lu*dst_u.x + dst_ln*dst_n.x,
+        y = (-lr)*dst_r.y + lu*dst_u.y + dst_ln*dst_n.y,
+        z = (-lr)*dst_r.z + lu*dst_u.z + dst_ln*dst_n.z,
     }
 end
 
-local function portal_transform_dir(v, src_n, src_r, dst_n, dst_r)
+local function portal_transform_dir(v, src_n, src_r, src_u, dst_n, dst_r, dst_u)
     local lr = dot(v, src_r)
-    local lu = v.y
+    local lu = dot(v, src_u)
     local ln = dot(v, src_n)
     return {
-        x = (-lr)*dst_r.x + (-ln)*dst_n.x,
-        y = lu,
-        z = (-lr)*dst_r.z + (-ln)*dst_n.z,
+        x = (-lr)*dst_r.x + lu*dst_u.x + (-ln)*dst_n.x,
+        y = (-lr)*dst_r.y + lu*dst_u.y + (-ln)*dst_n.y,
+        z = (-lr)*dst_r.z + lu*dst_u.z + (-ln)*dst_n.z,
     }
 end
 
@@ -255,10 +289,14 @@ local function block_in_frame(pos, pp)
         return pos.z == pp.cz
            and pos.x >= pp.cx-1 and pos.x <= pp.cx+w
            and pos.y >= pp.cy-1 and pos.y <= pp.cy+h
-    else
+    elseif pp.axis == 1 then
         return pos.x == pp.cx
            and pos.z >= pp.cz-1 and pos.z <= pp.cz+w
            and pos.y >= pp.cy-1 and pos.y <= pp.cy+h
+    else -- axis == 2
+        return pos.y == pp.cy
+           and pos.x >= pp.cx-1 and pos.x <= pp.cx+w
+           and pos.z >= pp.cz-1 and pos.z <= pp.cz+h
     end
 end
 
@@ -276,7 +314,7 @@ local function get_frame_positions(pp)
             pos_list[#pos_list+1] = {x=cx-1, y=cy+dy, z=cz}
             pos_list[#pos_list+1] = {x=cx+w, y=cy+dy, z=cz}
         end
-    else
+    elseif pp.axis == 1 then
         for dz = -1, w do
             pos_list[#pos_list+1] = {x=cx, y=cy-1, z=cz+dz}
             pos_list[#pos_list+1] = {x=cx, y=cy+h, z=cz+dz}
@@ -284,6 +322,15 @@ local function get_frame_positions(pp)
         for dy = 0, h-1 do
             pos_list[#pos_list+1] = {x=cx, y=cy+dy, z=cz-1}
             pos_list[#pos_list+1] = {x=cx, y=cy+dy, z=cz+w}
+        end
+    else -- axis == 2: horizontal ring in XZ at y=cy
+        for dx = -1, w do
+            pos_list[#pos_list+1] = {x=cx+dx, y=cy, z=cz-1}
+            pos_list[#pos_list+1] = {x=cx+dx, y=cy, z=cz+h}
+        end
+        for dz = 0, h-1 do
+            pos_list[#pos_list+1] = {x=cx-1, y=cy, z=cz+dz}
+            pos_list[#pos_list+1] = {x=cx+w, y=cy, z=cz+dz}
         end
     end
     return pos_list
@@ -341,10 +388,11 @@ local function sync_portals()
     for i, name in ipairs(sorted) do
         local pp = portals[name]
         local link_idx = (pp.link and portal_index[pp.link]) or -1
+        local _, _, portal_up = portal_basis(pp)
         portal_list[i] = {
             pos    = inner_center(pp),
             normal = portal_normal(pp.axis, pp.ns),
-            up     = UP,
+            up     = portal_up,
             half_w = (pp.w or 2) / 2,
             half_h = (pp.h or 3) / 2,
             link   = link_idx,
@@ -439,11 +487,11 @@ local function try_activate_near(pos, frame_node, placer)
                         local cx = (axis==0) and ch or px
                         local cz = (axis==0) and pz or ch
                         if check_frame(cx, cy, cz, axis, frame_node, w, h) then
-                            local ns = normal_sign(axis, ppos, cx, cz)
+                            local ns = normal_sign(axis, ppos, cx, cy, cz)
                             -- Skip if already active
-                            for _, pp in pairs(portals) do
-                                if pp.cx==cx and pp.cy==cy and pp.cz==cz
-                                   and pp.axis==axis and pp.ns==ns then
+                            for _, ep in pairs(portals) do
+                                if ep.cx==cx and ep.cy==cy and ep.cz==cz
+                                   and ep.axis==axis and ep.ns==ns then
                                     return
                                 end
                             end
@@ -462,6 +510,39 @@ local function try_activate_near(pos, frame_node, placer)
                                 w .. "x" .. h .. " nodes). Right-click to configure.")
                             return
                         end
+                    end
+                end
+            end
+        end
+    end
+
+    -- axis == 2: horizontal portals (floor/ceiling ring in XZ at y=py)
+    for w = MAX_W, MIN_W, -1 do
+        for h = MAX_H, MIN_H, -1 do
+            for cx = px-w, px+1 do
+                for cz = pz-h, pz+1 do
+                    if check_frame(cx, py, cz, 2, frame_node, w, h) then
+                        local ns = (ppos.y >= py) and 1 or -1
+                        for _, ep in pairs(portals) do
+                            if ep.cx==cx and ep.cy==py and ep.cz==cz
+                               and ep.axis==2 and ep.ns==ns then
+                                return
+                            end
+                        end
+                        local name = new_portal_name()
+                        portals[name] = {
+                            cx=cx, cy=py, cz=cz,
+                            axis=2, ns=ns,
+                            w=w, h=h,
+                            node_name=frame_node,
+                        }
+                        save_portals()
+                        sync_portals()
+                        update_anchor(name, portals[name])
+                        minetest.chat_send_all(
+                            "[portal] '" .. name .. "' activated (" ..
+                            w .. "x" .. h .. " nodes, horizontal). Right-click to configure.")
+                        return
                     end
                 end
             end
@@ -833,17 +914,18 @@ minetest.register_globalstep(function(dtime)
             local src = portals[teleport_src]
             local dst = portals[teleport_dst]
 
-            local src_n, src_r = portal_basis(src)
-            local dst_n, dst_r = portal_basis(dst)
+            local src_n, src_r, src_u = portal_basis(src)
+            local dst_n, dst_r, dst_u = portal_basis(dst)
             local src_c = inner_center(src)
             local dst_c = inner_center(dst)
 
             local rel     = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
-            local new_off = portal_transform_pos(rel, src_n, src_r, dst_n, dst_r)
+            local new_off = portal_transform_pos(rel, src_n, src_r, src_u, dst_n, dst_r, dst_u)
             -- Exit at same offset past dst outer face as trigger offset past src outer face
-            local cur_n = new_off.x * dst_n.x + new_off.z * dst_n.z
+            local cur_n = dot(new_off, dst_n)
             local adj   = (0.5 + TRIGGER_DEPTH) - cur_n
             new_off.x   = new_off.x + adj * dst_n.x
+            new_off.y   = new_off.y + adj * dst_n.y
             new_off.z   = new_off.z + adj * dst_n.z
             local new_pos = {
                 x=dst_c.x+new_off.x,
@@ -852,10 +934,19 @@ minetest.register_globalstep(function(dtime)
             }
 
             local vel      = player:get_velocity() or {x=0,y=0,z=0}
-            local new_vel  = portal_transform_dir(vel,  src_n, src_r, dst_n, dst_r)
+            local new_vel  = portal_transform_dir(vel,  src_n, src_r, src_u, dst_n, dst_r, dst_u)
             local look     = player:get_look_dir()
-            local new_look = portal_transform_dir(look, src_n, src_r, dst_n, dst_r)
-            local new_yaw  = math.atan2(-new_look.x, new_look.z)
+            local new_look = portal_transform_dir(look, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+            local xz_len   = math.sqrt(new_look.x^2 + new_look.z^2)
+            local new_yaw
+            if xz_len < 0.01 then
+                -- near-vertical look after h↔v rotation: derive yaw from transformed right
+                local rt = portal_transform_dir({x=1,y=0,z=0}, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+                new_yaw = math.atan2(-rt.z, rt.x)
+            else
+                new_yaw = math.atan2(-new_look.x, new_look.z)
+            end
+            local new_pitch = -math.asin(math.max(-1, math.min(1, new_look.y)))
 
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
@@ -895,6 +986,7 @@ minetest.register_globalstep(function(dtime)
             }, {
                 sky_sunlit = sky_sunlit,
                 sky_slot   = src_slot,
+                pitch      = new_pitch,
             })
 
             -- Reset src; mark dst as entered from back to prevent bounce
@@ -910,6 +1002,144 @@ minetest.register_globalstep(function(dtime)
             -- clearing that would have done this via the source portal's leave handler.)
             if dst_idx then
                 minetest.clear_portal_cam_hint(dst_idx)
+            end
+        end
+    end
+end)
+
+-- ── entity teleportation ────────────────────────────────────────────────────
+
+local entity_states  = {}  -- tostring(obj) → {[portal_name] → {in_bounds,entered_from_front,triggered,cooldown}}
+local entity_cleanup_timer = 0
+
+local function should_teleport_entity(obj)
+    local ent = obj:get_luaentity()
+    if not ent then return false end
+    if ent.name == "yaportal:anchor" then return false end
+    local def = minetest.registered_entities[ent.name]
+    if not def then return false end
+    if def._portal_exempt then return false end
+    return true
+end
+
+local function transform_entity_rotation(rot, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+    local sy, cy_ = math.sin(rot.y), math.cos(rot.y)
+    local sp, cp  = math.sin(rot.x), math.cos(rot.x)
+    local fwd = {x = -sy*cp, y = sp, z = -cy_*cp}
+    local new_fwd = portal_transform_dir(fwd, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+    local xz_len = math.sqrt(new_fwd.x^2 + new_fwd.z^2)
+    local new_yaw, new_pitch
+    if xz_len < 0.01 then
+        local rt = portal_transform_dir({x=1,y=0,z=0}, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+        new_yaw = math.atan2(-rt.z, rt.x)
+    else
+        new_yaw = math.atan2(-new_fwd.x, -new_fwd.z)
+    end
+    new_pitch = math.asin(math.max(-1, math.min(1, new_fwd.y)))
+    return {x = new_pitch, y = new_yaw, z = rot.z}
+end
+
+minetest.register_globalstep(function(dtime)
+    -- Periodic stale-entry cleanup (~every 5s)
+    entity_cleanup_timer = entity_cleanup_timer + dtime
+    if entity_cleanup_timer >= 5 then
+        entity_cleanup_timer = 0
+        for eid, edata in pairs(entity_states) do
+            -- entity_states are keyed by tostring(obj); check if obj is still alive
+            -- by looking for any still-valid portal state with in_bounds=true.
+            -- Simpler: let them accumulate (harmless) — entries reset to in_bounds=false
+            -- naturally when an entity leaves bounds or on next portal scan if not nearby.
+            -- Only prune completely empty state tables to keep memory use bounded.
+            local has_entry = false
+            for _ in pairs(edata) do has_entry = true; break end
+            if not has_entry then entity_states[eid] = nil end
+        end
+    end
+
+    for portal_name, pp in pairs(portals) do
+        if not pp.link or not portals[pp.link] then
+            -- skip unlinked portals
+        else
+            local center = inner_center(pp)
+            local radius = math.max((pp.w or 2), (pp.h or 3)) + 2
+            local nearby = minetest.get_objects_inside_radius(center, radius)
+            for _, obj in ipairs(nearby) do
+                if not obj:is_player() and should_teleport_entity(obj) then
+                    local eid = tostring(obj)
+                    if not entity_states[eid] then entity_states[eid] = {} end
+                    local state = entity_states[eid]
+                    for sname in pairs(state) do
+                        if not portals[sname] then state[sname] = nil end
+                    end
+
+                    if not state[portal_name] then state[portal_name] = {} end
+                    local s = state[portal_name]
+
+                    if s.cooldown and s.cooldown > 0 then
+                        s.cooldown = s.cooldown - dtime
+                    else
+                        local epos = obj:get_pos()
+                        if epos then
+                            local dst_name = pp.link
+                            local dst = portals[dst_name]
+
+                            if in_portal_bounds(epos, pp) then
+                                local just_entered = not s.in_bounds
+                                if just_entered then
+                                    s.in_bounds          = true
+                                    s.entered_from_front = on_ns_side(epos, pp)
+                                    s.triggered          = false
+                                end
+                                local border_entry = just_entered and portal_depth(epos, pp) < (0.5 - TRIGGER_DEPTH)
+                                if s.entered_from_front and not s.triggered
+                                   and (past_trigger(epos, pp) or border_entry)
+                                then
+                                    s.triggered = true
+                                    local src_n, src_r, src_u = portal_basis(pp)
+                                    local dst_n, dst_r, dst_u = portal_basis(dst)
+                                    local src_c = inner_center(pp)
+                                    local dst_c = inner_center(dst)
+
+                                    local rel     = {x=epos.x-src_c.x, y=epos.y-src_c.y, z=epos.z-src_c.z}
+                                    local new_off = portal_transform_pos(rel, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+                                    local cur_n = dot(new_off, dst_n)
+                                    local adj   = (0.5 + TRIGGER_DEPTH) - cur_n
+                                    new_off.x = new_off.x + adj * dst_n.x
+                                    new_off.y = new_off.y + adj * dst_n.y
+                                    new_off.z = new_off.z + adj * dst_n.z
+                                    local new_pos = {
+                                        x = dst_c.x + new_off.x,
+                                        y = dst_c.y + new_off.y,
+                                        z = dst_c.z + new_off.z,
+                                    }
+
+                                    local vel = obj:get_velocity() or {x=0,y=0,z=0}
+                                    local new_vel = portal_transform_dir(vel, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+
+                                    local rot = obj:get_rotation() or {x=0,y=0,z=0}
+                                    local new_rot = transform_entity_rotation(rot, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+
+                                    obj:set_pos(new_pos)
+                                    obj:set_velocity(new_vel)
+                                    obj:set_rotation(new_rot)
+
+                                    entity_states[eid][portal_name] = {in_bounds=false}
+                                    entity_states[eid][dst_name] = {
+                                        in_bounds          = in_portal_bounds(new_pos, dst),
+                                        entered_from_front = false,
+                                        triggered          = true,
+                                        cooldown           = 1.0,
+                                    }
+                                end
+                            else
+                                if s.in_bounds then
+                                    s.in_bounds  = false
+                                    s.triggered  = false
+                                end
+                            end
+                        end
+                    end
+                end
             end
         end
     end
