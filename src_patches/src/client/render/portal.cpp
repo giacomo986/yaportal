@@ -347,8 +347,11 @@ static void drawPortalFaces(
 
 	// --- back face ---
 	{
-		// Offset slightly toward camera to avoid z-fighting with frame inner face.
-		v3f bp = c + bk + src.normal * (side_sign * 0.01f * BS);
+		// For vertical portals: 0.01*BS clears the frame back face with a thin margin.
+		// For horizontal portals: normal is vertical, terrain is at c ± epsilon, so
+		// 0.5*BS pushes the quad to portal center — large depth-test margin, no z-fight.
+		float bf_offset = (std::abs(src.normal.Y) > 0.5f) ? 0.5f * BS : 0.01f * BS;
+		v3f bp = c + bk + src.normal * (side_sign * bf_offset);
 		v3f back[4] = {
 			bp - r*src.half_w - u*src.half_h,
 			bp + r*src.half_w - u*src.half_h,

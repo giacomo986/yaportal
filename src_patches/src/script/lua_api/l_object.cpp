@@ -214,6 +214,10 @@ int ObjectRef::l_portal_teleport(lua_State *L)
 		if (lua_isnumber(L, -1))
 			sky_slot = (u8)lua_tointeger(L, -1);
 		lua_pop(L, 1);
+		lua_getfield(L, 5, "pitch");
+		if (lua_isnumber(L, -1))
+			playersao->setLookPitch(readParam<float>(L, -1) * core::RADTODEG);
+		lua_pop(L, 1);
 	}
 
 	playersao->setPlayerYaw(yaw);
