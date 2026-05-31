@@ -241,15 +241,30 @@ local function past_trigger(ppos, pp)
     return portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
 end
 
-local function portal_basis(pp)
-    local ns = pp.ns or 1
-    if pp.axis == 0 then
-        return {x=0,y=0,z=ns}, {x=-ns,y=0,z=0}, {x=0,y=1,z=0}
-    elseif pp.axis == 1 then
-        return {x=ns,y=0,z=0}, {x=0,y=0,z=ns}, {x=0,y=1,z=0}
-    else -- axis == 2: horizontal (floor/ceiling), normal = ±Y
-        return {x=0,y=ns,z=0}, {x=1,y=0,z=0}, {x=0,y=0,z=1}
+-- Rotate right/up vectors by rot×90° around the portal normal axis.
+-- Each step: r' = u, u' = -r  (CW when viewed from outside normal).
+local function apply_rot(r, u, rot)
+    for _ = 1, (rot or 0) % 4 do
+        r, u = u, {x=-r.x, y=-r.y, z=-r.z}
     end
+    return r, u
+end
+
+local function portal_basis(pp)
+    local ns  = pp.ns  or 1
+    local rot = pp.rot or 0
+    local n, r, u
+    if pp.axis == 0 then
+        n = {x=0,y=0,z=ns}
+        r, u = apply_rot({x=-ns,y=0,z=0}, {x=0,y=1,z=0}, rot)
+    elseif pp.axis == 1 then
+        n = {x=ns,y=0,z=0}
+        r, u = apply_rot({x=0,y=0,z=ns}, {x=0,y=1,z=0}, rot)
+    else -- axis == 2: horizontal (floor/ceiling), normal = ±Y
+        n = {x=0,y=ns,z=0}
+        r, u = apply_rot({x=1,y=0,z=0}, {x=0,y=0,z=1}, rot)
+    end
+    return n, r, u
 end
 
 local function dot(a, b) return a.x*b.x + a.y*b.y + a.z*b.z end
@@ -389,12 +404,16 @@ local function sync_portals()
         local pp = portals[name]
         local link_idx = (pp.link and portal_index[pp.link]) or -1
         local _, _, portal_up = portal_basis(pp)
+        local pw, ph = (pp.w or 2), (pp.h or 3)
+        local rot = pp.rot or 0
+        local hw = (pp.axis == 2 and (rot % 2) == 1) and ph / 2 or pw / 2
+        local hh = (pp.axis == 2 and (rot % 2) == 1) and pw / 2 or ph / 2
         portal_list[i] = {
             pos    = inner_center(pp),
             normal = portal_normal(pp.axis, pp.ns),
             up     = portal_up,
-            half_w = (pp.w or 2) / 2,
-            half_h = (pp.h or 3) / 2,
+            half_w = hw,
+            half_h = hh,
             link   = link_idx,
         }
         -- Per-portal RTT sky: void for overworld→pocket, overworld for pocket→overworld.
@@ -608,8 +627,11 @@ open_portal_config = function(player, portal_name)
         end
     end
 
-    local info = "Size: " .. (pp.w or "?") .. "x" .. (pp.h or "?") ..
-                 " nodes  |  Axis: " .. (pp.axis==0 and "Z" or "X")
+    local axis_str = (pp.axis==0 and "Z") or (pp.axis==1 and "X") or "Y"
+    local ns_dir   = (pp.ns or 1) > 0 and ("+" .. axis_str) or ("-" .. axis_str)
+    local rot_deg  = ((pp.rot or 0) % 4) * 90
+    local info = string.format("Size: %dx%d nodes | Axis: %s | Normal: %s | Rot: %d°",
+        pp.w or "?", pp.h or "?", axis_str, ns_dir, rot_deg)
 
     -- Build filtered material textlist
     local filter      = (player_mat_filter[pname] or ""):lower()
@@ -645,9 +667,12 @@ open_portal_config = function(player, portal_name)
         and "Preview:"
         or  "Preview (not applied):"
 
+    local ns_label  = (pp.ns or 1) > 0 and ("Normal: +" .. axis_str) or ("Normal: -" .. axis_str)
+    local rot_label = rot_deg .. "°"
+
     minetest.show_formspec(pname, "yaportal:config",
         "formspec_version[4]" ..
-        "size[9,11.5]" ..
+        "size[9,13]" ..
         "label[0.5,0.5;Configure Portal]" ..
         "label[0.5,1.1;" .. minetest.formspec_escape(info) .. "]" ..
         "field[0.5,2;8.5,0.8;portal_name;Portal name;" ..
@@ -655,16 +680,24 @@ open_portal_config = function(player, portal_name)
         "label[0.5,3.1;Link to:]" ..
         "dropdown[0.5,3.6;8.5,0.8;portal_link;" ..
             table.concat(link_items, ",") .. ";" .. selected .. "]" ..
-        "label[0.5,4.8;Frame material:]" ..
-        "label[4.5,4.8;" .. minetest.formspec_escape(preview_label) .. "]" ..
-        "item_image[7.5,4.4;1.2,1.2;" .. preview_node .. "]" ..
-        "field[0.5,5.3;5.5,0.7;mat_filter;Filter:;" ..
+        -- Orientation row
+        "label[0.5,4.85;Orientation:]" ..
+        "button[0.5,5.1;3,0.7;flip_ns;" .. minetest.formspec_escape(ns_label) .. " ↔]" ..
+        "label[3.8,4.85;Rotation:]" ..
+        "button[3.8,5.1;0.75,0.7;rot_ccw;◄]" ..
+        "label[4.7,5.35;" .. minetest.formspec_escape(rot_label) .. "]" ..
+        "button[5.5,5.1;0.75,0.7;rot_cw;►]" ..
+        -- Material section shifted down by 1.5
+        "label[0.5,6.3;Frame material:]" ..
+        "label[4.5,6.3;" .. minetest.formspec_escape(preview_label) .. "]" ..
+        "item_image[7.5,5.9;1.2,1.2;" .. preview_node .. "]" ..
+        "field[0.5,6.8;5.5,0.7;mat_filter;Filter:;" ..
             minetest.formspec_escape(player_mat_filter[pname] or "") .. "]" ..
-        "button[6.1,5.3;1.3,0.7;cerca_material;Search]" ..
-        "textlist[0.5,6.1;8.5,3.5;material_list;" ..
+        "button[6.1,6.8;1.3,0.7;cerca_material;Search]" ..
+        "textlist[0.5,7.6;8.5,3.5;material_list;" ..
             table.concat(mat_items, ",") .. ";" .. mat_selected .. "]" ..
-        "button[0.5,10.1;4,0.8;apply_material;Apply Material]" ..
-        "button[5,10.1;3.5,0.8;save;Save]"
+        "button[0.5,11.6;4,0.8;apply_material;Apply Material]" ..
+        "button[5,11.6;3.5,0.8;save;Save]"
     )
 end
 
@@ -685,6 +718,31 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     -- Always sync filter from current form state
     if fields.mat_filter ~= nil then
         player_mat_filter[pname] = fields.mat_filter
+    end
+
+    -- Orientation: flip normal direction
+    if fields.flip_ns then
+        local pp = portals[portal_name]
+        if pp then
+            pp.ns = -((pp.ns or 1))
+            save_portals()
+            sync_portals()
+            open_portal_config(player, portal_name)
+        end
+        return
+    end
+
+    -- Orientation: rotate CW / CCW
+    if fields.rot_cw or fields.rot_ccw then
+        local pp = portals[portal_name]
+        if pp then
+            local delta = fields.rot_cw and 1 or -1
+            pp.rot = ((pp.rot or 0) + delta) % 4
+            save_portals()
+            sync_portals()
+            open_portal_config(player, portal_name)
+        end
+        return
     end
 
     -- Filter applied via button or Enter key
@@ -916,11 +974,14 @@ minetest.register_globalstep(function(dtime)
 
             local src_n, src_r, src_u = portal_basis(src)
             local dst_n, dst_r, dst_u = portal_basis(dst)
+            -- Horizontal portals use rotation (no lateral mirror): negate src_r to cancel -lr.
+            local eff_src_r = (src.axis == 2)
+                and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r
             local src_c = inner_center(src)
             local dst_c = inner_center(dst)
 
             local rel     = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
-            local new_off = portal_transform_pos(rel, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+            local new_off = portal_transform_pos(rel, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
             -- Exit at same offset past dst outer face as trigger offset past src outer face
             local cur_n = dot(new_off, dst_n)
             local adj   = (0.5 + TRIGGER_DEPTH) - cur_n
@@ -934,15 +995,24 @@ minetest.register_globalstep(function(dtime)
             }
 
             local vel      = player:get_velocity() or {x=0,y=0,z=0}
-            local new_vel  = portal_transform_dir(vel,  src_n, src_r, src_u, dst_n, dst_r, dst_u)
+            local new_vel  = portal_transform_dir(vel,  src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
             local look     = player:get_look_dir()
-            local new_look = portal_transform_dir(look, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+            local new_look = portal_transform_dir(look, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
             local xz_len   = math.sqrt(new_look.x^2 + new_look.z^2)
             local new_yaw
             if xz_len < 0.01 then
-                -- near-vertical look after h↔v rotation: derive yaw from transformed right
-                local rt = portal_transform_dir({x=1,y=0,z=0}, src_n, src_r, src_u, dst_n, dst_r, dst_u)
-                new_yaw = math.atan2(-rt.z, rt.x)
+                -- near-vertical new_look: derive right from original look's horizontal projection,
+                -- or from get_look_yaw() when pitch is exactly ±90°
+                local olen = math.sqrt(look.x*look.x + look.z*look.z)
+                local pr
+                if olen > 0.001 then
+                    pr = {x=look.z/olen, y=0, z=-look.x/olen}
+                else
+                    local ly = player:get_look_yaw()  -- (m_rotation.Y + 90°)*DEGTORAD
+                    pr = {x=math.sin(ly), y=0, z=-math.cos(ly)}
+                end
+                local rt = portal_transform_dir(pr, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
+                new_yaw = math.atan2(rt.z, rt.x)
             else
                 new_yaw = math.atan2(-new_look.x, new_look.z)
             end
@@ -1030,7 +1100,8 @@ local function transform_entity_rotation(rot, src_n, src_r, src_u, dst_n, dst_r,
     local xz_len = math.sqrt(new_fwd.x^2 + new_fwd.z^2)
     local new_yaw, new_pitch
     if xz_len < 0.01 then
-        local rt = portal_transform_dir({x=1,y=0,z=0}, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+        local er = {x=math.cos(rot.y), y=0, z=-math.sin(rot.y)}
+        local rt = portal_transform_dir(er, src_n, src_r, src_u, dst_n, dst_r, dst_u)
         new_yaw = math.atan2(-rt.z, rt.x)
     else
         new_yaw = math.atan2(-new_fwd.x, -new_fwd.z)
@@ -1097,11 +1168,13 @@ minetest.register_globalstep(function(dtime)
                                     s.triggered = true
                                     local src_n, src_r, src_u = portal_basis(pp)
                                     local dst_n, dst_r, dst_u = portal_basis(dst)
+                                    local eff_src_r = (pp.axis == 2)
+                                        and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r
                                     local src_c = inner_center(pp)
                                     local dst_c = inner_center(dst)
 
                                     local rel     = {x=epos.x-src_c.x, y=epos.y-src_c.y, z=epos.z-src_c.z}
-                                    local new_off = portal_transform_pos(rel, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+                                    local new_off = portal_transform_pos(rel, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
                                     local cur_n = dot(new_off, dst_n)
                                     local adj   = (0.5 + TRIGGER_DEPTH) - cur_n
                                     new_off.x = new_off.x + adj * dst_n.x
@@ -1114,10 +1187,10 @@ minetest.register_globalstep(function(dtime)
                                     }
 
                                     local vel = obj:get_velocity() or {x=0,y=0,z=0}
-                                    local new_vel = portal_transform_dir(vel, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+                                    local new_vel = portal_transform_dir(vel, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
 
                                     local rot = obj:get_rotation() or {x=0,y=0,z=0}
-                                    local new_rot = transform_entity_rotation(rot, src_n, src_r, src_u, dst_n, dst_r, dst_u)
+                                    local new_rot = transform_entity_rotation(rot, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
 
                                     obj:set_pos(new_pos)
                                     obj:set_velocity(new_vel)
