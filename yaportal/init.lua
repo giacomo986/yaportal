@@ -210,9 +210,12 @@ local function in_portal_bounds(ppos, pp)
            and ppos.z >= pp.cz - M and ppos.z < pp.cz + w + M
            and math.abs(ppos.x - pp.cx) <= 1.0
     else -- axis == 2: depth is Y, lateral extents in XZ
+        -- Y tolerance 2.0 (was 1.0): camera is eye_h (~1.625) above feet, so at
+        -- 50% frame penetration ppos is already 1.125 nodes from pp.cy → old check
+        -- exited bounds too early, clearing the cam_hint and making the portal vanish.
         return ppos.x >= pp.cx - M and ppos.x < pp.cx + w + M
            and ppos.z >= pp.cz - M and ppos.z < pp.cz + h + M
-           and math.abs(py - pp.cy) <= 1.0
+           and math.abs(py - pp.cy) <= 2.0
     end
 end
 
