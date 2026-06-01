@@ -41,6 +41,7 @@ local portal_index = {}  -- name → 0-based int
 
 local anchors = {}              -- name → entity object
 local player_states = {}        -- pname → {[portal_name] → {in_bounds,entered_from_front,triggered}}
+local roll_targets  = {}        -- pname → target roll (radians), nil = no animation
 local player_form_context = {}  -- pname → portal_name currently being configured
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
 local player_mat_filter   = {}  -- pname → filter string for material textlist
@@ -1020,6 +1021,38 @@ minetest.register_globalstep(function(dtime)
             end
             local new_pitch = -math.asin(math.max(-1, math.min(1, new_look.y)))
 
+            -- Roll: signed angle from world-Y's camera projection to new world-Y's camera
+            -- projection.  Non-zero only for cross-axis traversals (vert↔horiz).
+            -- Portal-style animation: teleport sets roll=0, globalstep eases to new_roll.
+            local new_roll = 0
+            if src.axis ~= dst.axis then
+                local wup = {x=0, y=1, z=0}
+                local nwu = portal_transform_dir(wup, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
+                -- Project both onto the plane perpendicular to new_look
+                local function vproj(v, n)
+                    local d = v.x*n.x + v.y*n.y + v.z*n.z
+                    return {x=v.x-d*n.x, y=v.y-d*n.y, z=v.z-d*n.z}
+                end
+                local cu0 = vproj(wup, new_look)   -- roll=0 reference "up"
+                local sup  = vproj(nwu, new_look)   -- actual "up" from portal transform
+                local l0 = cu0.x^2+cu0.y^2+cu0.z^2
+                local l1 = sup.x^2+sup.y^2+sup.z^2
+                if l0 > 1e-6 and l1 > 1e-6 then
+                    local s0 = 1/math.sqrt(l0)
+                    local s1 = 1/math.sqrt(l1)
+                    cu0 = {x=cu0.x*s0, y=cu0.y*s0, z=cu0.z*s0}
+                    sup  = {x=sup.x*s1,  y=sup.y*s1,  z=sup.z*s1}
+                    local d = math.max(-1, math.min(1,
+                        cu0.x*sup.x + cu0.y*sup.y + cu0.z*sup.z))
+                    -- Sign: cross(cu0,sup)·new_look
+                    local cx = cu0.y*sup.z - cu0.z*sup.y
+                    local cy = cu0.z*sup.x - cu0.x*sup.z
+                    local cz = cu0.x*sup.y - cu0.y*sup.x
+                    local sgn = cx*new_look.x + cy*new_look.y + cz*new_look.z
+                    new_roll = (sgn >= 0 and 1 or -1) * math.acos(d)
+                end
+            end
+
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
                 -- Hint is in destination render space; add eye height so the
@@ -1059,7 +1092,11 @@ minetest.register_globalstep(function(dtime)
                 sky_sunlit = sky_sunlit,
                 sky_slot   = src_slot,
                 pitch      = new_pitch,
+                roll       = 0,  -- start upright; roll_targets animates to new_roll
             })
+            -- Portal-style smooth camera roll: animate from 0 to new_roll
+            local pname = player:get_player_name()
+            roll_targets[pname] = math.abs(new_roll) > 0.01 and new_roll or nil
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}
@@ -1637,11 +1674,11 @@ end
 minetest.register_alias("mio_portale:portal_gun",  "yaportal:portal_gun")
 minetest.register_alias("mio_portale:pocket_gun",  "yaportal:pocket_gun")
 
--- ── debug: manual camera roll ────────────────────────────────────────────────
+-- ── camera roll animation ─────────────────────────────────────────────────────
+-- roll_targets[pname] = target roll (rad), nil = no animation.
+-- Sources: portal traversal (vert↔horiz) and /upright command.
 
-local uprighting = {}  -- player_name → bool
-
-local UPRIGHT_SPEED = math.pi  -- rad/s (~180°/s → 90° roll corrected in ~0.5s)
+local ROLL_SPEED = math.pi  -- rad/s (~180°/s)
 
 minetest.register_chatcommand("roll", {
     params = "<gradi>",
@@ -1652,7 +1689,7 @@ minetest.register_chatcommand("roll", {
         if not deg then return false, "Uso: /roll <gradi>" end
         local p = minetest.get_player_by_name(name)
         if not p then return false, "Player non trovato" end
-        uprighting[name] = false
+        roll_targets[name] = nil   -- cancel any running animation
         p:set_look_roll(deg * math.pi / 180)
         return true, ("Roll: %g°"):format(deg)
     end,
@@ -1664,27 +1701,28 @@ minetest.register_chatcommand("upright", {
     func = function(name, _)
         local p = minetest.get_player_by_name(name)
         if not p then return false, "Player non trovato" end
-        uprighting[name] = true
+        roll_targets[name] = 0
         return true, "Raddrizzamento in corso..."
     end,
 })
 
 minetest.register_globalstep(function(dtime)
-    for name, active in pairs(uprighting) do
-        if active then
-            local p = minetest.get_player_by_name(name)
-            if not p then
-                uprighting[name] = nil
+    for name, target in pairs(roll_targets) do
+        local p = minetest.get_player_by_name(name)
+        if not p then
+            roll_targets[name] = nil
+        else
+            local r = p:get_look_roll()
+            local diff = target - r
+            -- Shortest path (normalize to [-π, π])
+            if diff > math.pi  then diff = diff - 2*math.pi end
+            if diff < -math.pi then diff = diff + 2*math.pi end
+            if math.abs(diff) < 0.002 then
+                p:set_look_roll(target)
+                roll_targets[name] = nil
             else
-                local r = p:get_look_roll()
-                if math.abs(r) < 0.002 then
-                    p:set_look_roll(0)
-                    uprighting[name] = false
-                else
-                    local step = math.min(UPRIGHT_SPEED * dtime, math.abs(r))
-                    local sign = r > 0 and 1 or -1
-                    p:set_look_roll(r - sign * step)
-                end
+                local step = math.min(ROLL_SPEED * dtime, math.abs(diff))
+                p:set_look_roll(r + (diff > 0 and 1 or -1) * step)
             end
         end
     end
