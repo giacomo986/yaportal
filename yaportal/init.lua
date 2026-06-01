@@ -1092,11 +1092,12 @@ minetest.register_globalstep(function(dtime)
                 sky_sunlit = sky_sunlit,
                 sky_slot   = src_slot,
                 pitch      = new_pitch,
-                roll       = 0,  -- start upright; roll_targets animates to new_roll
+                roll       = new_roll,  -- instant disorientation; roll_targets recovers to 0
             })
-            -- Portal-style smooth camera roll: animate from 0 to new_roll
+            -- Portal-style smooth recovery: animate new_roll → 0 (upright).
+            -- Controls are briefly inverted only while roll is large; recover in ~|new_roll|/π s.
             local pname = player:get_player_name()
-            roll_targets[pname] = math.abs(new_roll) > 0.01 and new_roll or nil
+            roll_targets[pname] = math.abs(new_roll) > 0.01 and 0 or nil
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}
