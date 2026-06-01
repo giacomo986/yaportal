@@ -648,7 +648,11 @@ static void drawPortalQuads(
 
 		float d = (camPos - src.pos).dotProduct(src.normal);
 		float dist = (camPos - src.pos).getLength();
-		if (d <= 0.0f || dist < 0.001f * BS || d / dist < 0.1f)
+		// For horizontal portals (floor/ceiling) src.pos is at the block centre
+		// which is 0.5·BS below the portal surface.  d=0 is 50% into the frame;
+		// allow the camera to reach 90% (d = surface_offset - 0.9 * frame = -0.4·BS).
+		float d_min = (std::abs(src.normal.Y) > 0.5f) ? -0.4f * BS : 0.0f;
+		if (d <= d_min || dist < 0.001f * BS || (d > 0.0f && d / dist < 0.1f))
 			continue;
 
 		drawPortalFaces(driver, src, 1.0f, data.rtex[i], mainCam);
