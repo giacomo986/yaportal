@@ -927,6 +927,13 @@ minetest.register_globalstep(function(dtime)
     for _, player in ipairs(minetest.get_connected_players()) do
         local pname = player:get_player_name()
         local ppos  = player:get_pos()
+        -- Use camera (eye) position for depth-based checks so that the teleport
+        -- triggers and exit position are referenced to what the player actually sees,
+        -- not to their feet.  Bounds checks still use ppos to avoid rejecting
+        -- the camera on tall-but-narrow vertical portals.
+        local props = player:get_properties()
+        local eye_h = (props and props.eye_height) or 1.625
+        local cpos  = {x=ppos.x, y=ppos.y + eye_h, z=ppos.z}
 
         if not player_states[pname] then player_states[pname] = {} end
         local state = player_states[pname]
@@ -948,14 +955,14 @@ minetest.register_globalstep(function(dtime)
                 local just_entered = not s.in_bounds
                 if just_entered then
                     s.in_bounds          = true
-                    s.entered_from_front = on_ns_side(ppos, pp)
+                    s.entered_from_front = on_ns_side(cpos, pp)
                     s.triggered          = false
                 end
 
-                local border_entry = just_entered and portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
+                local border_entry = just_entered and portal_depth(cpos, pp) < (0.5 - TRIGGER_DEPTH)
                 if s.entered_from_front and not s.triggered and dst
                    and not teleport_src
-                   and (past_trigger(ppos, pp) or border_entry)
+                   and (past_trigger(cpos, pp) or border_entry)
                 then
                     s.triggered  = true
                     teleport_src = portal_name
@@ -983,7 +990,8 @@ minetest.register_globalstep(function(dtime)
             local src_c = inner_center(src)
             local dst_c = inner_center(dst)
 
-            local rel     = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
+            -- Transform camera position; convert back to feet for portal_teleport.
+            local rel     = {x=cpos.x-src_c.x, y=cpos.y-src_c.y, z=cpos.z-src_c.z}
             local new_off = portal_transform_pos(rel, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
             -- Exit at same offset past dst outer face as trigger offset past src outer face
             local cur_n = dot(new_off, dst_n)
@@ -991,10 +999,11 @@ minetest.register_globalstep(function(dtime)
             new_off.x   = new_off.x + adj * dst_n.x
             new_off.y   = new_off.y + adj * dst_n.y
             new_off.z   = new_off.z + adj * dst_n.z
+            -- new_off is the camera exit position relative to dst_c; feet = camera - eye_h·Y
             local new_pos = {
-                x=dst_c.x+new_off.x,
-                y=dst_c.y+new_off.y,
-                z=dst_c.z+new_off.z,
+                x = dst_c.x + new_off.x,
+                y = dst_c.y + new_off.y - eye_h,
+                z = dst_c.z + new_off.z,
             }
 
             local vel      = player:get_velocity() or {x=0,y=0,z=0}
@@ -1055,10 +1064,8 @@ minetest.register_globalstep(function(dtime)
 
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
-                -- Hint is in destination render space; add eye height so the
-                -- virtual camera matches the actual eye position, not the feet.
-                local props = player:get_properties()
-                local eye_h = (props and props.eye_height) or 1.625
+                -- new_pos is feet; add eye_h to get camera position for the hint.
+                -- (eye_h already computed above for cpos)
                 minetest.set_portal_cam_hint(dst_idx, {
                     x=new_pos.x, y=new_pos.y + eye_h, z=new_pos.z
                 })
