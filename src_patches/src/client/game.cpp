@@ -573,6 +573,7 @@ void Game::run()
 		if (m_cache_cam_smoothing <= 0.0f) {
 			cam_view.camera_yaw = cam_view_target.camera_yaw;
 			cam_view.camera_pitch = cam_view_target.camera_pitch;
+			cam_view.camera_roll = cam_view_target.camera_roll;
 		} else {
 			f32 cam_damp_lambda = 1.0f / m_cache_cam_smoothing * dtime;
 			cam_view.camera_yaw = damp(
@@ -585,6 +586,16 @@ void Game::run()
 					cam_view_target.camera_pitch,
 					cam_damp_lambda
 			);
+			cam_view.camera_roll = damp(
+					cam_view.camera_roll,
+					cam_view_target.camera_roll,
+					cam_damp_lambda
+			);
+		}
+		{
+			LocalPlayer *lp = client->getEnv().getLocalPlayer();
+			if (lp)
+				lp->m_camera_roll = cam_view.camera_roll;
 		}
 		updatePlayerControl(cam_view);
 
@@ -605,10 +616,13 @@ void Game::run()
 			if (lp && lp->m_snap_view) {
 				cam_view_target.camera_yaw   = lp->m_snap_yaw;
 				cam_view_target.camera_pitch = lp->m_snap_pitch;
+				cam_view_target.camera_roll  = lp->m_snap_roll;
 				cam_view.camera_yaw          = lp->m_snap_yaw;
 				cam_view.camera_pitch        = lp->m_snap_pitch;
+				cam_view.camera_roll         = lp->m_snap_roll;
 				lp->setYaw(lp->m_snap_yaw);
 				lp->setPitch(lp->m_snap_pitch);
+				lp->m_camera_roll            = lp->m_snap_roll;
 				lp->m_snap_view = false;
 			}
 		}

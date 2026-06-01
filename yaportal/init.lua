@@ -1634,3 +1634,53 @@ for _, name in ipairs({"frame", "frame_blue", "frame_orange", "frame_green", "be
 end
 minetest.register_alias("mio_portale:portal_gun",  "yaportal:portal_gun")
 minetest.register_alias("mio_portale:pocket_gun",  "yaportal:pocket_gun")
+
+-- ── debug: manual camera roll ────────────────────────────────────────────────
+
+local uprighting = {}  -- player_name → bool
+
+local UPRIGHT_SPEED = math.pi  -- rad/s (~180°/s → 90° roll corrected in ~0.5s)
+
+minetest.register_chatcommand("roll", {
+    params = "<gradi>",
+    description = "Imposta camera roll in gradi (debug portali)",
+    privs = {interact = true},
+    func = function(name, param)
+        local deg = tonumber(param)
+        if not deg then return false, "Uso: /roll <gradi>" end
+        local p = minetest.get_player_by_name(name)
+        if not p then return false, "Player non trovato" end
+        uprighting[name] = false
+        p:set_look_roll(deg * math.pi / 180)
+        return true, ("Roll: %g°"):format(deg)
+    end,
+})
+
+minetest.register_chatcommand("upright", {
+    description = "Animazione raddrizzamento camera (roll → 0)",
+    privs = {interact = true},
+    func = function(name, _)
+        local p = minetest.get_player_by_name(name)
+        if not p then return false, "Player non trovato" end
+        uprighting[name] = true
+        return true, "Raddrizzamento in corso..."
+    end,
+})
+
+minetest.register_globalstep(function(dtime)
+    for name, active in pairs(uprighting) do
+        if not active then goto continue end
+        local p = minetest.get_player_by_name(name)
+        if not p then uprighting[name] = nil; goto continue end
+        local r = p:get_look_roll()
+        if math.abs(r) < 0.002 then
+            p:set_look_roll(0)
+            uprighting[name] = false
+        else
+            local step = math.min(UPRIGHT_SPEED * dtime, math.abs(r))
+            local sign = r > 0 and 1 or -1
+            p:set_look_roll(r - sign * step)
+        end
+        ::continue::
+    end
+end)

@@ -74,6 +74,17 @@ void CCameraSceneNode::clearRenderProjectionMatrix()
 	HasRenderProj = false;
 }
 
+void CCameraSceneNode::setRenderViewMatrix(const core::matrix4 &view)
+{
+	RenderView = view;
+	HasRenderView = true;
+}
+
+void CCameraSceneNode::clearRenderViewMatrix()
+{
+	HasRenderView = false;
+}
+
 //! Gets the current view matrix of the camera
 //! \return Returns the current view matrix of the camera.
 const core::matrix4 &CCameraSceneNode::getViewMatrix() const
@@ -228,7 +239,10 @@ void CCameraSceneNode::render()
 			? RenderProj
 			: ViewArea.getTransform(video::ETS_PROJECTION);
 		driver->setTransform(video::ETS_PROJECTION, proj);
-		driver->setTransform(video::ETS_VIEW, ViewArea.getTransform(video::ETS_VIEW));
+		const core::matrix4 &view = HasRenderView
+			? RenderView
+			: ViewArea.getTransform(video::ETS_VIEW);
+		driver->setTransform(video::ETS_VIEW, view);
 	}
 }
 

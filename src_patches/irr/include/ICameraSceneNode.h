@@ -54,6 +54,11 @@ public:
 	virtual void setRenderProjectionMatrix(const core::matrix4 &proj) = 0;
 	virtual void clearRenderProjectionMatrix() = 0;
 
+	//! Override the view matrix used for rendering (driver ETS_VIEW) without
+	//! affecting the CPU-side view frustum. Call clearRenderViewMatrix() to revert.
+	virtual void setRenderViewMatrix(const core::matrix4 &view) = 0;
+	virtual void clearRenderViewMatrix() = 0;
+
 	//! Gets the current view matrix of the camera.
 	/** \return The current view matrix of the camera. */
 	virtual const core::matrix4 &getViewMatrix() const = 0;
