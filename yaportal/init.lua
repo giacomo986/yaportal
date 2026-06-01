@@ -1037,7 +1037,9 @@ minetest.register_globalstep(function(dtime)
             -- projection.  Non-zero only for cross-axis traversals (vert↔horiz).
             -- Portal-style animation: teleport sets roll=0, globalstep eases to new_roll.
             local new_roll = 0
-            if src.axis ~= dst.axis then
+            -- Skip when new_look is nearly vertical: cu0≈0 (gimbal lock), computed
+            -- roll would be large and ill-conditioned while perceptually meaningless.
+            if src.axis ~= dst.axis and math.abs(new_look.y) < 0.9 then
                 local wup = {x=0, y=1, z=0}
                 local nwu = portal_transform_dir(wup, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
                 -- Project both onto the plane perpendicular to new_look
