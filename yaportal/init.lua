@@ -974,8 +974,10 @@ minetest.register_globalstep(function(dtime)
 
             local src_n, src_r, src_u = portal_basis(src)
             local dst_n, dst_r, dst_u = portal_basis(dst)
-            -- Horizontal portals use rotation (no lateral mirror): negate src_r to cancel -lr.
-            local eff_src_r = (src.axis == 2)
+            -- Cancel lateral mirror when either portal is horizontal (horizontal portals use
+            -- rotation semantics, not mirror semantics). vert→vert keeps the mirror; all
+            -- cases involving a horizontal portal (horiz→vert, vert→horiz, horiz→horiz) don't.
+            local eff_src_r = (src.axis == 2 or dst.axis == 2)
                 and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r
             local src_c = inner_center(src)
             local dst_c = inner_center(dst)
@@ -1168,7 +1170,7 @@ minetest.register_globalstep(function(dtime)
                                     s.triggered = true
                                     local src_n, src_r, src_u = portal_basis(pp)
                                     local dst_n, dst_r, dst_u = portal_basis(dst)
-                                    local eff_src_r = (pp.axis == 2)
+                                    local eff_src_r = (pp.axis == 2 or dst.axis == 2)
                                         and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r
                                     local src_c = inner_center(pp)
                                     local dst_c = inner_center(dst)
@@ -1669,18 +1671,21 @@ minetest.register_chatcommand("upright", {
 
 minetest.register_globalstep(function(dtime)
     for name, active in pairs(uprighting) do
-        if not active then goto continue end
-        local p = minetest.get_player_by_name(name)
-        if not p then uprighting[name] = nil; goto continue end
-        local r = p:get_look_roll()
-        if math.abs(r) < 0.002 then
-            p:set_look_roll(0)
-            uprighting[name] = false
-        else
-            local step = math.min(UPRIGHT_SPEED * dtime, math.abs(r))
-            local sign = r > 0 and 1 or -1
-            p:set_look_roll(r - sign * step)
+        if active then
+            local p = minetest.get_player_by_name(name)
+            if not p then
+                uprighting[name] = nil
+            else
+                local r = p:get_look_roll()
+                if math.abs(r) < 0.002 then
+                    p:set_look_roll(0)
+                    uprighting[name] = false
+                else
+                    local step = math.min(UPRIGHT_SPEED * dtime, math.abs(r))
+                    local sign = r > 0 and 1 or -1
+                    p:set_look_roll(r - sign * step)
+                end
+            end
         end
-        ::continue::
     end
 end)
