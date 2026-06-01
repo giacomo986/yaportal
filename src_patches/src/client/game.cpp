@@ -2035,10 +2035,20 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 {
 	f32 sens_scale = getSensitivityScaleFactor();
 
+	// Roll compensation: rotate raw input deltas into camera-local space so that
+	// "mouse right" always moves the view right on screen regardless of roll angle.
+	// dy_yaw = dx·cos(r) + dy·sin(r),  dy_pitch = −dx·sin(r) + dy·cos(r)
+	LocalPlayer *lp = client->getEnv().getLocalPlayer();
+	const f32 roll = lp ? lp->m_camera_roll : 0.0f;
+	const f32 cr = std::cos(roll), sr = std::sin(roll);
+	auto roll_yaw   = [&](f32 dx, f32 dy) { return dx * cr + dy * sr; };
+	auto roll_pitch = [&](f32 dx, f32 dy) { return -dx * sr + dy * cr; };
+
 	if (g_touchcontrols) {
-		// User setting is already applied by TouchControls.
-		cam->camera_yaw   += g_touchcontrols->getYawChange()   * sens_scale;
-		cam->camera_pitch += g_touchcontrols->getPitchChange() * sens_scale;
+		f32 dy = g_touchcontrols->getYawChange()   * sens_scale;
+		f32 dp = g_touchcontrols->getPitchChange() * sens_scale;
+		cam->camera_yaw   += roll_yaw(dy, dp);
+		cam->camera_pitch += roll_pitch(dy, dp);
 	} else {
 		v2s32 center(driver->getScreenSize().Width / 2, driver->getScreenSize().Height / 2);
 		v2s32 dist = input->getMousePos() - center;
@@ -2047,8 +2057,10 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 			dist.Y = -dist.Y;
 		}
 
-		cam->camera_yaw   -= dist.X * m_cache_mouse_sensitivity * sens_scale;
-		cam->camera_pitch += dist.Y * m_cache_mouse_sensitivity * sens_scale;
+		f32 dx = dist.X * m_cache_mouse_sensitivity * sens_scale;
+		f32 dy = dist.Y * m_cache_mouse_sensitivity * sens_scale;
+		cam->camera_yaw   -= roll_yaw(dx, dy);
+		cam->camera_pitch += roll_pitch(dx, dy);
 
 		if (dist.X != 0 || dist.Y != 0)
 			input->setMousePos(center.X, center.Y);
@@ -2056,11 +2068,13 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 
 	if (m_cache_enable_joysticks) {
 		f32 c = m_cache_joystick_frustum_sensitivity * dtime * sens_scale;
-		cam->camera_yaw -= input->joystick.getAxisWithoutDead(JA_FRUSTUM_HORIZONTAL) * c;
-		cam->camera_pitch += input->joystick.getAxisWithoutDead(JA_FRUSTUM_VERTICAL) * c;
+		f32 dx = input->joystick.getAxisWithoutDead(JA_FRUSTUM_HORIZONTAL) * c;
+		f32 dy = input->joystick.getAxisWithoutDead(JA_FRUSTUM_VERTICAL) * c;
+		cam->camera_yaw   -= roll_yaw(dx, dy);
+		cam->camera_pitch += roll_pitch(dx, dy);
 	}
 
-	// Keyboard look
+	// Keyboard look — no roll compensation needed (discrete key steps feel fine as-is)
 	const f32 rate = m_cache_keyboard_camera_speed * dtime * sens_scale;
 
 	if (input->isKeyDown(KeyType::CAMERA_YAW_LEFT))
