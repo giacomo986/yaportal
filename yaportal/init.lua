@@ -955,7 +955,7 @@ minetest.register_globalstep(function(dtime)
                 local just_entered = not s.in_bounds
                 if just_entered then
                     s.in_bounds          = true
-                    s.entered_from_front = on_ns_side(cpos, pp)
+                    s.entered_from_front = on_ns_side(ppos, pp)
                     s.triggered          = false
                 end
 
