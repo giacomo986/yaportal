@@ -1034,10 +1034,11 @@ minetest.register_globalstep(function(dtime)
             local new_pitch = -math.asin(math.max(-1, math.min(1, new_look.y)))
 
             -- Roll: signed angle from world-Y's camera projection to new world-Y's camera
-            -- projection.  Non-zero only for cross-axis traversals (vert↔horiz).
-            -- Portal-style animation: teleport sets roll=0, globalstep eases to new_roll.
+            -- projection.  Non-zero for any traversal where the portal bases differ
+            -- (cross-axis vert↔horiz, or same-axis portals with different rot values).
+            -- Portal-style animation: teleport sets roll=new_roll, globalstep recovers to 0.
             local new_roll = 0
-            if src.axis ~= dst.axis then
+            do
                 local wup = {x=0, y=1, z=0}
                 local nwu = portal_transform_dir(wup, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
                 -- Project both onto the plane perpendicular to new_look
@@ -1063,7 +1064,7 @@ minetest.register_globalstep(function(dtime)
                     local sgn = cx*new_look.x + cy*new_look.y + cz*new_look.z
                     new_roll = (sgn >= 0 and 1 or -1) * math.acos(d)
                 end
-            end
+            end  -- do
 
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
