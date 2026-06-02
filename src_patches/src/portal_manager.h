@@ -25,7 +25,7 @@ struct PortalInfo {
 // but GL_CLIP_DISTANCEn is disabled so the values are ignored.
 struct PortalClipPlanes {
 	bool  active = false;
-	float data[16] = {}; // [k*4+0..2]=normal, [k*4+3]=d, for k=0..3
+	float data[20] = {}; // [k*4+0..2]=normal, [k*4+3]=d, for k=0..3 (lateral frustum); k=4: portal surface near clip
 };
 
 // Full description of a sky type for portal RTT rendering.

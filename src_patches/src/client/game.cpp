@@ -110,9 +110,10 @@ class GameGlobalShaderUniformSetter : public IShaderUniformSetter
 	CachedPixelShaderSetting<float> m_moon_brightness_pixel{"moonBrightness"};
 	CachedPixelShaderSetting<float>
 		m_volumetric_light_strength_pixel{"volumetricLightStrength"};
-	// Portal lateral clip planes: 4×vec4(normal, d) for gl_ClipDistance[0..3].
+	// Portal clip planes: 5×vec4(normal, d) for gl_ClipDistance[0..4].
+	// Planes 0..3: lateral frustum (RTT pass). Plane 4: portal surface near clip (RTT pass).
 	// Always sent; GPU ignores gl_ClipDistance when GL_CLIP_DISTANCEn is disabled.
-	CachedVertexShaderSetting<float, 16, false> m_portal_clip_planes{"portalClipPlanes"};
+	CachedVertexShaderSetting<float, 20, false> m_portal_clip_planes{"portalClipPlanes"};
 
 	static constexpr std::array<const char*, 1> SETTING_CALLBACKS = {
 		"exposure_compensation",

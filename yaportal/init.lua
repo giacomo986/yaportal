@@ -41,7 +41,11 @@ local portal_index = {}  -- name → 0-based int
 
 local anchors = {}              -- name → entity object
 local player_states = {}        -- pname → {[portal_name] → {in_bounds,entered_from_front,triggered}}
-local roll_targets  = {}        -- pname → target roll (radians), nil = no animation
+local roll_targets      = {}    -- pname → target roll (radians), nil = no animation
+-- Floor portal passthrough: tracks whether physics_override.floor_portal_cb_shift is active.
+-- Set when player is in a floor-portal's bounds from above and not yet triggered;
+-- cleared on trigger or exit.  Avoids redundant set_physics_override calls.
+local floor_portal_shift_active = {}  -- pname → bool
 local player_form_context = {}  -- pname → portal_name currently being configured
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
 local player_mat_filter   = {}  -- pname → filter string for material textlist
@@ -226,7 +230,11 @@ local function on_ns_side(ppos, pp)
     elseif pp.axis == 1 then
         return (ppos.x - pp.cx) * ns >= -TRIGGER_DEPTH
     else -- axis == 2
-        return (ppos.y + 0.5 - pp.cy) * ns >= -TRIGGER_DEPTH
+        -- Floor portals (ns=1): player may walk in from a connected floor whose top face
+        -- is 0.5 nodes below the portal plane → needs tolerance of at least 0.5.
+        -- Ceiling portals (ns=-1) already trigger fine via cpos; keep tight tolerance.
+        local tol = (ns == 1) and -1.0 or -TRIGGER_DEPTH
+        return (ppos.y - pp.cy) * ns >= tol
     end
 end
 
@@ -237,7 +245,7 @@ local function portal_depth(ppos, pp)
     elseif pp.axis == 1 then
         return (ppos.x - pp.cx) * ns
     else -- axis == 2
-        return (ppos.y + 0.5 - pp.cy) * ns
+        return (ppos.y - pp.cy) * ns
     end
 end
 
@@ -920,6 +928,7 @@ end)
 minetest.register_on_leaveplayer(function(player)
     local name = player:get_player_name()
     player_states[name] = nil
+    floor_portal_shift_active[name] = nil
     player_form_context[name] = nil
     player_mat_preview[name] = nil
     player_mat_filter[name]  = nil
@@ -979,6 +988,35 @@ minetest.register_globalstep(function(dtime)
             end
         end
 
+        -- Floor portal passthrough: while in a floor-portal's bounds from above and not yet
+        -- triggered, raise the collision-box bottom so the player can sink past the blocking
+        -- block below the portal frame, letting cpos reach past_trigger naturally.
+        -- Shift = pp.cy + 0.5 - ppos.y + 0.1 clears the portal frame top (at pp.cy+0.5).
+        local need_shift = false
+        local shift_cy = nil
+        for portal_name, pp in pairs(portals) do
+            local s = state[portal_name]
+            if pp.axis == 2 and (pp.ns or 1) == 1
+               and s and s.in_bounds and s.entered_from_front and not s.triggered then
+                need_shift = true
+                shift_cy = pp.cy
+                break
+            end
+        end
+        if need_shift then
+            -- Recompute every frame: shift must push box bottom above portal frame top
+            -- (pp.cy + 0.5).  Capped at 1.7 (just under player height 1.77) to keep box valid.
+            local shift = math.min(1.7, math.max(0, shift_cy + 0.5 - ppos.y + 0.1))
+            local prev  = floor_portal_shift_active[pname]
+            if prev ~= shift then
+                floor_portal_shift_active[pname] = shift
+                player:set_physics_override({floor_portal_cb_shift = shift})
+            end
+        elseif floor_portal_shift_active[pname] then
+            floor_portal_shift_active[pname] = nil
+            player:set_physics_override({floor_portal_cb_shift = 0})
+        end
+
         if teleport_src and teleport_dst then
             local src = portals[teleport_src]
             local dst = portals[teleport_dst]
@@ -993,7 +1031,14 @@ minetest.register_globalstep(function(dtime)
             local src_c = inner_center(src)
             local dst_c = inner_center(dst)
 
+            -- Clear floor-portal shift before teleport so exit position uses real eye_h.
+            if floor_portal_shift_active[pname] then
+                floor_portal_shift_active[pname] = nil
+                player:set_physics_override({floor_portal_cb_shift = 0})
+            end
+
             -- Transform camera position; convert back to feet for portal_teleport.
+            local eff_eye_h = eye_h
             local rel     = {x=cpos.x-src_c.x, y=cpos.y-src_c.y, z=cpos.z-src_c.z}
             local new_off = portal_transform_pos(rel, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
             -- Exit at same offset past dst outer face as trigger offset past src outer face
@@ -1002,10 +1047,10 @@ minetest.register_globalstep(function(dtime)
             new_off.x   = new_off.x + adj * dst_n.x
             new_off.y   = new_off.y + adj * dst_n.y
             new_off.z   = new_off.z + adj * dst_n.z
-            -- new_off is the camera exit position relative to dst_c; feet = camera - eye_h·Y
+            -- new_off is the camera exit position relative to dst_c; feet = camera - eye_h·Y.
             local new_pos = {
                 x = dst_c.x + new_off.x,
-                y = dst_c.y + new_off.y - eye_h,
+                y = dst_c.y + new_off.y - eff_eye_h,
                 z = dst_c.z + new_off.z,
             }
 
@@ -1071,7 +1116,7 @@ minetest.register_globalstep(function(dtime)
                 -- new_pos is feet; add eye_h to get camera position for the hint.
                 -- (eye_h already computed above for cpos)
                 minetest.set_portal_cam_hint(dst_idx, {
-                    x=new_pos.x, y=new_pos.y + eye_h, z=new_pos.z
+                    x=new_pos.x, y=new_pos.y + eff_eye_h, z=new_pos.z
                 })
             end
 

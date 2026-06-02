@@ -18,3 +18,7 @@ Richiede clipping della mesh dell'entità sul piano del portale.
 ### 4. Rotazione da portale orizzontale a verticale
 Teletrasporto tra portale orizzontale (pavimento) e portale verticale (parete)
 con relativa rotazione della velocità e dell'orientamento del giocatore/entità.
+
+
+
+

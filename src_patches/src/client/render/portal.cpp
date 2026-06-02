@@ -521,6 +521,11 @@ static void renderPortalRTTs(
 				makePlane(vpos, pc - pr * hw, pu, pc + pr * hw, &cp.data[4]);  // left
 				makePlane(vpos, pc + pu * hh, pr, pc - pu * hh, &cp.data[8]);  // top
 				makePlane(vpos, pc - pu * hh, pr, pc + pu * hh, &cp.data[12]); // bottom
+				// 5th plane: portal surface near clip — removes geometry on the source-facing
+				// side of the source portal plane from the RTT view.
+				v3f n4 = -src.normal;
+				float d4 = src.normal.dotProduct(src.pos);
+				cp.data[16] = n4.X; cp.data[17] = n4.Y; cp.data[18] = n4.Z; cp.data[19] = d4;
 				pm.setClipPlanes(cp);
 				use_clip_planes = true;
 			}
@@ -530,6 +535,7 @@ static void renderPortalRTTs(
 			GL.Enable(GL.CLIP_DISTANCE1);
 			GL.Enable(GL.CLIP_DISTANCE2);
 			GL.Enable(GL.CLIP_DISTANCE3);
+			GL.Enable(GL.CLIP_DISTANCE4);
 		}
 
 		// Activate the per-portal sky node from the pool (if any).
@@ -604,6 +610,7 @@ static void renderPortalRTTs(
 		GL.Disable(GL.CLIP_DISTANCE1);
 		GL.Disable(GL.CLIP_DISTANCE2);
 		GL.Disable(GL.CLIP_DISTANCE3);
+		GL.Disable(GL.CLIP_DISTANCE4);
 		{ PortalClipPlanes off; pm.setClipPlanes(off); }
 
 		driver->setRenderTarget(nullptr, 0);
