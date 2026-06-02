@@ -161,16 +161,19 @@ public:
 		m_added_velocity += vel;
 	}
 
-	void snapView(f32 yaw, f32 pitch)
+	void snapView(f32 yaw, f32 pitch, f32 roll = 0.0f)
 	{
 		m_snap_yaw   = yaw;
 		m_snap_pitch = pitch;
+		m_snap_roll  = roll;
 		m_snap_view  = true;
 	}
 
 	bool m_snap_view  = false;
 	f32  m_snap_yaw   = 0.0f;
 	f32  m_snap_pitch = 0.0f;
+	f32  m_snap_roll  = 0.0f;
+	f32  m_camera_roll = 0.0f;  // persistent camera roll (radians), visual only
 
 	// Set by TOCLIENT_PORTAL_TELEPORT to override sunlight_seen for N frames,
 	// preventing a 1-2 frame sky-type glitch after dimension change.

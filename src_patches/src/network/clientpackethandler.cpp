@@ -1710,11 +1710,15 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 	if (pkt->getRemainingBytes() >= 1)
 		*pkt >> sky_slot;
 
+	f32 roll = 0.0f;
+	if (pkt->getRemainingBytes() >= 4)
+		*pkt >> roll;
+
 	LocalPlayer *player = m_env.getLocalPlayer();
 	assert(player != NULL);
 
 	player->setPosition(pos);
-	player->snapView(yaw, pitch);
+	player->snapView(yaw, pitch, roll);
 	player->addVelocity(vel_delta);
 
 	if (sky_sunlit != 0 || sky_slot != 0xFF) {

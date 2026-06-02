@@ -110,9 +110,10 @@ class GameGlobalShaderUniformSetter : public IShaderUniformSetter
 	CachedPixelShaderSetting<float> m_moon_brightness_pixel{"moonBrightness"};
 	CachedPixelShaderSetting<float>
 		m_volumetric_light_strength_pixel{"volumetricLightStrength"};
-	// Portal lateral clip planes: 4×vec4(normal, d) for gl_ClipDistance[0..3].
+	// Portal clip planes: 5×vec4(normal, d) for gl_ClipDistance[0..4].
+	// Planes 0..3: lateral frustum (RTT pass). Plane 4: portal surface near clip (RTT pass).
 	// Always sent; GPU ignores gl_ClipDistance when GL_CLIP_DISTANCEn is disabled.
-	CachedVertexShaderSetting<float, 16, false> m_portal_clip_planes{"portalClipPlanes"};
+	CachedVertexShaderSetting<float, 20, false> m_portal_clip_planes{"portalClipPlanes"};
 
 	static constexpr std::array<const char*, 1> SETTING_CALLBACKS = {
 		"exposure_compensation",
@@ -573,6 +574,7 @@ void Game::run()
 		if (m_cache_cam_smoothing <= 0.0f) {
 			cam_view.camera_yaw = cam_view_target.camera_yaw;
 			cam_view.camera_pitch = cam_view_target.camera_pitch;
+			cam_view.camera_roll = cam_view_target.camera_roll;
 		} else {
 			f32 cam_damp_lambda = 1.0f / m_cache_cam_smoothing * dtime;
 			cam_view.camera_yaw = damp(
@@ -585,6 +587,16 @@ void Game::run()
 					cam_view_target.camera_pitch,
 					cam_damp_lambda
 			);
+			cam_view.camera_roll = damp(
+					cam_view.camera_roll,
+					cam_view_target.camera_roll,
+					cam_damp_lambda
+			);
+		}
+		{
+			LocalPlayer *lp = client->getEnv().getLocalPlayer();
+			if (lp)
+				lp->m_camera_roll = cam_view.camera_roll;
 		}
 		updatePlayerControl(cam_view);
 
@@ -605,10 +617,13 @@ void Game::run()
 			if (lp && lp->m_snap_view) {
 				cam_view_target.camera_yaw   = lp->m_snap_yaw;
 				cam_view_target.camera_pitch = lp->m_snap_pitch;
+				cam_view_target.camera_roll  = lp->m_snap_roll;
 				cam_view.camera_yaw          = lp->m_snap_yaw;
 				cam_view.camera_pitch        = lp->m_snap_pitch;
+				cam_view.camera_roll         = lp->m_snap_roll;
 				lp->setYaw(lp->m_snap_yaw);
 				lp->setPitch(lp->m_snap_pitch);
+				lp->m_camera_roll            = lp->m_snap_roll;
 				lp->m_snap_view = false;
 			}
 		}
@@ -2021,10 +2036,20 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 {
 	f32 sens_scale = getSensitivityScaleFactor();
 
+	// Roll compensation: rotate raw input deltas into camera-local space so that
+	// "mouse right" always moves the view right on screen regardless of roll angle.
+	// dy_yaw = dx·cos(r) + dy·sin(r),  dy_pitch = −dx·sin(r) + dy·cos(r)
+	LocalPlayer *lp = client->getEnv().getLocalPlayer();
+	const f32 roll = lp ? lp->m_camera_roll : 0.0f;
+	const f32 cr = std::cos(roll), sr = std::sin(roll);
+	auto roll_yaw   = [&](f32 dx, f32 dy) { return dx * cr + dy * sr; };
+	auto roll_pitch = [&](f32 dx, f32 dy) { return -dx * sr + dy * cr; };
+
 	if (g_touchcontrols) {
-		// User setting is already applied by TouchControls.
-		cam->camera_yaw   += g_touchcontrols->getYawChange()   * sens_scale;
-		cam->camera_pitch += g_touchcontrols->getPitchChange() * sens_scale;
+		f32 dy = g_touchcontrols->getYawChange()   * sens_scale;
+		f32 dp = g_touchcontrols->getPitchChange() * sens_scale;
+		cam->camera_yaw   += roll_yaw(dy, dp);
+		cam->camera_pitch += roll_pitch(dy, dp);
 	} else {
 		v2s32 center(driver->getScreenSize().Width / 2, driver->getScreenSize().Height / 2);
 		v2s32 dist = input->getMousePos() - center;
@@ -2033,8 +2058,10 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 			dist.Y = -dist.Y;
 		}
 
-		cam->camera_yaw   -= dist.X * m_cache_mouse_sensitivity * sens_scale;
-		cam->camera_pitch += dist.Y * m_cache_mouse_sensitivity * sens_scale;
+		f32 dx = dist.X * m_cache_mouse_sensitivity * sens_scale;
+		f32 dy = dist.Y * m_cache_mouse_sensitivity * sens_scale;
+		cam->camera_yaw   -= roll_yaw(dx, dy);
+		cam->camera_pitch += roll_pitch(dx, dy);
 
 		if (dist.X != 0 || dist.Y != 0)
 			input->setMousePos(center.X, center.Y);
@@ -2042,11 +2069,13 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 
 	if (m_cache_enable_joysticks) {
 		f32 c = m_cache_joystick_frustum_sensitivity * dtime * sens_scale;
-		cam->camera_yaw -= input->joystick.getAxisWithoutDead(JA_FRUSTUM_HORIZONTAL) * c;
-		cam->camera_pitch += input->joystick.getAxisWithoutDead(JA_FRUSTUM_VERTICAL) * c;
+		f32 dx = input->joystick.getAxisWithoutDead(JA_FRUSTUM_HORIZONTAL) * c;
+		f32 dy = input->joystick.getAxisWithoutDead(JA_FRUSTUM_VERTICAL) * c;
+		cam->camera_yaw   -= roll_yaw(dx, dy);
+		cam->camera_pitch += roll_pitch(dx, dy);
 	}
 
-	// Keyboard look
+	// Keyboard look — no roll compensation needed (discrete key steps feel fine as-is)
 	const f32 rate = m_cache_keyboard_camera_speed * dtime * sens_scale;
 
 	if (input->isKeyDown(KeyType::CAMERA_YAW_LEFT))

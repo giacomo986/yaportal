@@ -1603,6 +1603,11 @@ void GenericCAO::processMessage(const std::string &data)
 			phys.speed_walk        = readF32(is);
 		}
 
+		// floor portal collisionbox shift (yaportal extension)
+		if (canRead(is)) {
+			phys.floor_portal_cb_shift = readF32(is);
+		}
+
 		if (m_is_local_player) {
 			m_env->getLocalPlayer()->physics_override = phys;
 		}

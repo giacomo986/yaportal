@@ -1,7 +1,7 @@
 uniform mat4 mWorld;
 // Color of the light emitted by the sun.
 uniform vec3 dayLight;
-uniform vec4 portalClipPlanes[4];
+uniform vec4 portalClipPlanes[5];
 
 // The cameraOffset is the current center of the visible world.
 uniform highp vec3 cameraOffset;
@@ -196,6 +196,7 @@ void main(void)
 	gl_ClipDistance[1] = dot(worldPosition, portalClipPlanes[1].xyz) + portalClipPlanes[1].w;
 	gl_ClipDistance[2] = dot(worldPosition, portalClipPlanes[2].xyz) + portalClipPlanes[2].w;
 	gl_ClipDistance[3] = dot(worldPosition, portalClipPlanes[3].xyz) + portalClipPlanes[3].w;
+	gl_ClipDistance[4] = dot(worldPosition, portalClipPlanes[4].xyz) + portalClipPlanes[4].w;
 
 	eyeVec = -(mWorldView * pos).xyz;
 #ifdef SECONDSTAGE

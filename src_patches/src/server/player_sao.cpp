@@ -332,6 +332,8 @@ std::string PlayerSAO::generateUpdatePhysicsOverrideCommand() const
 	writeF32(os, phys.speed_fast);
 	writeF32(os, phys.acceleration_fast);
 	writeF32(os, phys.speed_walk);
+	// floor portal collisionbox shift (yaportal extension)
+	writeF32(os, phys.floor_portal_cb_shift);
 	return os.str();
 }
 

@@ -41,6 +41,11 @@ local portal_index = {}  -- name → 0-based int
 
 local anchors = {}              -- name → entity object
 local player_states = {}        -- pname → {[portal_name] → {in_bounds,entered_from_front,triggered}}
+local roll_targets      = {}    -- pname → target roll (radians), nil = no animation
+-- Floor portal passthrough: tracks whether physics_override.floor_portal_cb_shift is active.
+-- Set when player is in a floor-portal's bounds from above and not yet triggered;
+-- cleared on trigger or exit.  Avoids redundant set_physics_override calls.
+local floor_portal_shift_active = {}  -- pname → bool
 local player_form_context = {}  -- pname → portal_name currently being configured
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
 local player_mat_filter   = {}  -- pname → filter string for material textlist
@@ -209,9 +214,12 @@ local function in_portal_bounds(ppos, pp)
            and ppos.z >= pp.cz - M and ppos.z < pp.cz + w + M
            and math.abs(ppos.x - pp.cx) <= 1.0
     else -- axis == 2: depth is Y, lateral extents in XZ
+        -- Y tolerance 2.0 (was 1.0): camera is eye_h (~1.625) above feet, so at
+        -- 50% frame penetration ppos is already 1.125 nodes from pp.cy → old check
+        -- exited bounds too early, clearing the cam_hint and making the portal vanish.
         return ppos.x >= pp.cx - M and ppos.x < pp.cx + w + M
            and ppos.z >= pp.cz - M and ppos.z < pp.cz + h + M
-           and math.abs(py - pp.cy) <= 1.0
+           and math.abs(py - pp.cy) <= 2.0
     end
 end
 
@@ -222,7 +230,11 @@ local function on_ns_side(ppos, pp)
     elseif pp.axis == 1 then
         return (ppos.x - pp.cx) * ns >= -TRIGGER_DEPTH
     else -- axis == 2
-        return (ppos.y + 0.5 - pp.cy) * ns >= -TRIGGER_DEPTH
+        -- Floor portals (ns=1): player may walk in from a connected floor whose top face
+        -- is 0.5 nodes below the portal plane → needs tolerance of at least 0.5.
+        -- Ceiling portals (ns=-1) already trigger fine via cpos; keep tight tolerance.
+        local tol = (ns == 1) and -1.0 or -TRIGGER_DEPTH
+        return (ppos.y - pp.cy) * ns >= tol
     end
 end
 
@@ -233,7 +245,7 @@ local function portal_depth(ppos, pp)
     elseif pp.axis == 1 then
         return (ppos.x - pp.cx) * ns
     else -- axis == 2
-        return (ppos.y + 0.5 - pp.cy) * ns
+        return (ppos.y - pp.cy) * ns
     end
 end
 
@@ -406,8 +418,8 @@ local function sync_portals()
         local _, _, portal_up = portal_basis(pp)
         local pw, ph = (pp.w or 2), (pp.h or 3)
         local rot = pp.rot or 0
-        local hw = (pp.axis == 2 and (rot % 2) == 1) and ph / 2 or pw / 2
-        local hh = (pp.axis == 2 and (rot % 2) == 1) and pw / 2 or ph / 2
+        local hw = ((rot % 2) == 1) and ph / 2 or pw / 2
+        local hh = ((rot % 2) == 1) and pw / 2 or ph / 2
         portal_list[i] = {
             pos    = inner_center(pp),
             normal = portal_normal(pp.axis, pp.ns),
@@ -916,6 +928,7 @@ end)
 minetest.register_on_leaveplayer(function(player)
     local name = player:get_player_name()
     player_states[name] = nil
+    floor_portal_shift_active[name] = nil
     player_form_context[name] = nil
     player_mat_preview[name] = nil
     player_mat_filter[name]  = nil
@@ -926,6 +939,13 @@ minetest.register_globalstep(function(dtime)
     for _, player in ipairs(minetest.get_connected_players()) do
         local pname = player:get_player_name()
         local ppos  = player:get_pos()
+        -- Use camera (eye) position for depth-based checks so that the teleport
+        -- triggers and exit position are referenced to what the player actually sees,
+        -- not to their feet.  Bounds checks still use ppos to avoid rejecting
+        -- the camera on tall-but-narrow vertical portals.
+        local props = player:get_properties()
+        local eye_h = (props and props.eye_height) or 1.625
+        local cpos  = {x=ppos.x, y=ppos.y + eye_h, z=ppos.z}
 
         if not player_states[pname] then player_states[pname] = {} end
         local state = player_states[pname]
@@ -951,10 +971,10 @@ minetest.register_globalstep(function(dtime)
                     s.triggered          = false
                 end
 
-                local border_entry = just_entered and portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
+                local border_entry = just_entered and portal_depth(cpos, pp) < (0.5 - TRIGGER_DEPTH)
                 if s.entered_from_front and not s.triggered and dst
                    and not teleport_src
-                   and (past_trigger(ppos, pp) or border_entry)
+                   and (past_trigger(cpos, pp) or border_entry)
                 then
                     s.triggered  = true
                     teleport_src = portal_name
@@ -968,19 +988,58 @@ minetest.register_globalstep(function(dtime)
             end
         end
 
+        -- Floor portal passthrough: while in a floor-portal's bounds from above and not yet
+        -- triggered, raise the collision-box bottom so the player can sink past the blocking
+        -- block below the portal frame, letting cpos reach past_trigger naturally.
+        -- Shift = pp.cy + 0.5 - ppos.y + 0.1 clears the portal frame top (at pp.cy+0.5).
+        local need_shift = false
+        local shift_cy = nil
+        for portal_name, pp in pairs(portals) do
+            local s = state[portal_name]
+            if pp.axis == 2 and (pp.ns or 1) == 1
+               and s and s.in_bounds and s.entered_from_front and not s.triggered then
+                need_shift = true
+                shift_cy = pp.cy
+                break
+            end
+        end
+        if need_shift then
+            -- Recompute every frame: shift must push box bottom above portal frame top
+            -- (pp.cy + 0.5).  Capped at 1.7 (just under player height 1.77) to keep box valid.
+            local shift = math.min(1.7, math.max(0, shift_cy + 0.5 - ppos.y + 0.1))
+            local prev  = floor_portal_shift_active[pname]
+            if prev ~= shift then
+                floor_portal_shift_active[pname] = shift
+                player:set_physics_override({floor_portal_cb_shift = shift})
+            end
+        elseif floor_portal_shift_active[pname] then
+            floor_portal_shift_active[pname] = nil
+            player:set_physics_override({floor_portal_cb_shift = 0})
+        end
+
         if teleport_src and teleport_dst then
             local src = portals[teleport_src]
             local dst = portals[teleport_dst]
 
             local src_n, src_r, src_u = portal_basis(src)
             local dst_n, dst_r, dst_u = portal_basis(dst)
-            -- Horizontal portals use rotation (no lateral mirror): negate src_r to cancel -lr.
-            local eff_src_r = (src.axis == 2)
+            -- Cancel lateral mirror when either portal is horizontal (horizontal portals use
+            -- rotation semantics, not mirror semantics). vert→vert keeps the mirror; all
+            -- cases involving a horizontal portal (horiz→vert, vert→horiz, horiz→horiz) don't.
+            local eff_src_r = (src.axis == 2 or dst.axis == 2)
                 and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r
             local src_c = inner_center(src)
             local dst_c = inner_center(dst)
 
-            local rel     = {x=ppos.x-src_c.x, y=ppos.y-src_c.y, z=ppos.z-src_c.z}
+            -- Clear floor-portal shift before teleport so exit position uses real eye_h.
+            if floor_portal_shift_active[pname] then
+                floor_portal_shift_active[pname] = nil
+                player:set_physics_override({floor_portal_cb_shift = 0})
+            end
+
+            -- Transform camera position; convert back to feet for portal_teleport.
+            local eff_eye_h = eye_h
+            local rel     = {x=cpos.x-src_c.x, y=cpos.y-src_c.y, z=cpos.z-src_c.z}
             local new_off = portal_transform_pos(rel, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
             -- Exit at same offset past dst outer face as trigger offset past src outer face
             local cur_n = dot(new_off, dst_n)
@@ -988,10 +1047,11 @@ minetest.register_globalstep(function(dtime)
             new_off.x   = new_off.x + adj * dst_n.x
             new_off.y   = new_off.y + adj * dst_n.y
             new_off.z   = new_off.z + adj * dst_n.z
+            -- new_off is the camera exit position relative to dst_c; feet = camera - eye_h·Y.
             local new_pos = {
-                x=dst_c.x+new_off.x,
-                y=dst_c.y+new_off.y,
-                z=dst_c.z+new_off.z,
+                x = dst_c.x + new_off.x,
+                y = dst_c.y + new_off.y - eff_eye_h,
+                z = dst_c.z + new_off.z,
             }
 
             local vel      = player:get_velocity() or {x=0,y=0,z=0}
@@ -1018,14 +1078,45 @@ minetest.register_globalstep(function(dtime)
             end
             local new_pitch = -math.asin(math.max(-1, math.min(1, new_look.y)))
 
+            -- Roll: signed angle from world-Y's camera projection to new world-Y's camera
+            -- projection.  Non-zero for any traversal where the portal bases differ
+            -- (cross-axis vert↔horiz, or same-axis portals with different rot values).
+            -- Portal-style animation: teleport sets roll=new_roll, globalstep recovers to 0.
+            local new_roll = 0
+            do
+                local wup = {x=0, y=1, z=0}
+                local nwu = portal_transform_dir(wup, src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
+                -- Project both onto the plane perpendicular to new_look
+                local function vproj(v, n)
+                    local d = v.x*n.x + v.y*n.y + v.z*n.z
+                    return {x=v.x-d*n.x, y=v.y-d*n.y, z=v.z-d*n.z}
+                end
+                local cu0 = vproj(wup, new_look)   -- roll=0 reference "up"
+                local sup  = vproj(nwu, new_look)   -- actual "up" from portal transform
+                local l0 = cu0.x^2+cu0.y^2+cu0.z^2
+                local l1 = sup.x^2+sup.y^2+sup.z^2
+                if l0 > 1e-6 and l1 > 1e-6 then
+                    local s0 = 1/math.sqrt(l0)
+                    local s1 = 1/math.sqrt(l1)
+                    cu0 = {x=cu0.x*s0, y=cu0.y*s0, z=cu0.z*s0}
+                    sup  = {x=sup.x*s1,  y=sup.y*s1,  z=sup.z*s1}
+                    local d = math.max(-1, math.min(1,
+                        cu0.x*sup.x + cu0.y*sup.y + cu0.z*sup.z))
+                    -- Sign: cross(cu0,sup)·new_look
+                    local cx = cu0.y*sup.z - cu0.z*sup.y
+                    local cy = cu0.z*sup.x - cu0.x*sup.z
+                    local cz = cu0.x*sup.y - cu0.y*sup.x
+                    local sgn = cx*new_look.x + cy*new_look.y + cz*new_look.z
+                    new_roll = (sgn >= 0 and 1 or -1) * math.acos(d)
+                end
+            end  -- do
+
             local dst_idx = portal_index[teleport_dst]
             if dst_idx then
-                -- Hint is in destination render space; add eye height so the
-                -- virtual camera matches the actual eye position, not the feet.
-                local props = player:get_properties()
-                local eye_h = (props and props.eye_height) or 1.625
+                -- new_pos is feet; add eye_h to get camera position for the hint.
+                -- (eye_h already computed above for cpos)
                 minetest.set_portal_cam_hint(dst_idx, {
-                    x=new_pos.x, y=new_pos.y + eye_h, z=new_pos.z
+                    x=new_pos.x, y=new_pos.y + eff_eye_h, z=new_pos.z
                 })
             end
 
@@ -1057,7 +1148,12 @@ minetest.register_globalstep(function(dtime)
                 sky_sunlit = sky_sunlit,
                 sky_slot   = src_slot,
                 pitch      = new_pitch,
+                roll       = new_roll,  -- instant disorientation; roll_targets recovers to 0
             })
+            -- Portal-style smooth recovery: animate new_roll → 0 (upright).
+            -- Controls are briefly inverted only while roll is large; recover in ~|new_roll|/π s.
+            local pname = player:get_player_name()
+            roll_targets[pname] = math.abs(new_roll) > 0.01 and 0 or nil
 
             -- Reset src; mark dst as entered from back to prevent bounce
             state[teleport_src] = {in_bounds=false}
@@ -1168,7 +1264,7 @@ minetest.register_globalstep(function(dtime)
                                     s.triggered = true
                                     local src_n, src_r, src_u = portal_basis(pp)
                                     local dst_n, dst_r, dst_u = portal_basis(dst)
-                                    local eff_src_r = (pp.axis == 2)
+                                    local eff_src_r = (pp.axis == 2 or dst.axis == 2)
                                         and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r
                                     local src_c = inner_center(pp)
                                     local dst_c = inner_center(dst)
@@ -1634,3 +1730,57 @@ for _, name in ipairs({"frame", "frame_blue", "frame_orange", "frame_green", "be
 end
 minetest.register_alias("mio_portale:portal_gun",  "yaportal:portal_gun")
 minetest.register_alias("mio_portale:pocket_gun",  "yaportal:pocket_gun")
+
+-- ── camera roll animation ─────────────────────────────────────────────────────
+-- roll_targets[pname] = target roll (rad), nil = no animation.
+-- Sources: portal traversal (vert↔horiz) and /upright command.
+
+local ROLL_SPEED = math.pi  -- rad/s (~180°/s)
+
+minetest.register_chatcommand("roll", {
+    params = "<gradi>",
+    description = "Imposta camera roll in gradi (debug portali)",
+    privs = {interact = true},
+    func = function(name, param)
+        local deg = tonumber(param)
+        if not deg then return false, "Uso: /roll <gradi>" end
+        local p = minetest.get_player_by_name(name)
+        if not p then return false, "Player non trovato" end
+        roll_targets[name] = nil   -- cancel any running animation
+        p:set_look_roll(deg * math.pi / 180)
+        return true, ("Roll: %g°"):format(deg)
+    end,
+})
+
+minetest.register_chatcommand("upright", {
+    description = "Animazione raddrizzamento camera (roll → 0)",
+    privs = {interact = true},
+    func = function(name, _)
+        local p = minetest.get_player_by_name(name)
+        if not p then return false, "Player non trovato" end
+        roll_targets[name] = 0
+        return true, "Raddrizzamento in corso..."
+    end,
+})
+
+minetest.register_globalstep(function(dtime)
+    for name, target in pairs(roll_targets) do
+        local p = minetest.get_player_by_name(name)
+        if not p then
+            roll_targets[name] = nil
+        else
+            local r = p:get_look_roll()
+            local diff = target - r
+            -- Shortest path (normalize to [-π, π])
+            if diff > math.pi  then diff = diff - 2*math.pi end
+            if diff < -math.pi then diff = diff + 2*math.pi end
+            if math.abs(diff) < 0.002 then
+                p:set_look_roll(target)
+                roll_targets[name] = nil
+            else
+                local step = math.min(ROLL_SPEED * dtime, math.abs(diff))
+                p:set_look_roll(r + (diff > 0 and 1 or -1) * step)
+            end
+        end
+    end
+end)

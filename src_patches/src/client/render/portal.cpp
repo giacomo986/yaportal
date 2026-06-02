@@ -521,6 +521,11 @@ static void renderPortalRTTs(
 				makePlane(vpos, pc - pr * hw, pu, pc + pr * hw, &cp.data[4]);  // left
 				makePlane(vpos, pc + pu * hh, pr, pc - pu * hh, &cp.data[8]);  // top
 				makePlane(vpos, pc - pu * hh, pr, pc + pu * hh, &cp.data[12]); // bottom
+				// 5th plane: portal surface near clip — removes geometry on the source-facing
+				// side of the source portal plane from the RTT view.
+				v3f n4 = -src.normal;
+				float d4 = src.normal.dotProduct(src.pos);
+				cp.data[16] = n4.X; cp.data[17] = n4.Y; cp.data[18] = n4.Z; cp.data[19] = d4;
 				pm.setClipPlanes(cp);
 				use_clip_planes = true;
 			}
@@ -530,6 +535,7 @@ static void renderPortalRTTs(
 			GL.Enable(GL.CLIP_DISTANCE1);
 			GL.Enable(GL.CLIP_DISTANCE2);
 			GL.Enable(GL.CLIP_DISTANCE3);
+			GL.Enable(GL.CLIP_DISTANCE4);
 		}
 
 		// Activate the per-portal sky node from the pool (if any).
@@ -604,6 +610,7 @@ static void renderPortalRTTs(
 		GL.Disable(GL.CLIP_DISTANCE1);
 		GL.Disable(GL.CLIP_DISTANCE2);
 		GL.Disable(GL.CLIP_DISTANCE3);
+		GL.Disable(GL.CLIP_DISTANCE4);
 		{ PortalClipPlanes off; pm.setClipPlanes(off); }
 
 		driver->setRenderTarget(nullptr, 0);
@@ -648,7 +655,11 @@ static void drawPortalQuads(
 
 		float d = (camPos - src.pos).dotProduct(src.normal);
 		float dist = (camPos - src.pos).getLength();
-		if (d <= 0.0f || dist < 0.001f * BS || d / dist < 0.1f)
+		// For horizontal portals (floor/ceiling) src.pos is at the block centre
+		// which is 0.5·BS below the portal surface.  d=0 is 50% into the frame;
+		// allow the camera to reach 90% (d = surface_offset - 0.9 * frame = -0.4·BS).
+		float d_min = (std::abs(src.normal.Y) > 0.5f) ? -0.4f * BS : 0.0f;
+		if (d <= d_min || dist < 0.001f * BS || (d > 0.0f && d / dist < 0.1f))
 			continue;
 
 		drawPortalFaces(driver, src, 1.0f, data.rtex[i], mainCam);

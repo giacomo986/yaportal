@@ -4,6 +4,7 @@
 
 #include "lua_api/l_object.h"
 #include <cmath>
+#include <unordered_map>
 #include <lua.h>
 #include "lua_api/l_internal.h"
 #include "lua_api/l_inventory.h"
@@ -26,6 +27,9 @@
 #include "server/serverinventorymgr.h"
 
 using object_t = ServerActiveObject::object_t;
+
+// Server-side camera roll storage (peer_id → roll in radians, visual-only).
+static std::unordered_map<session_t, float> s_player_roll;
 
 /*
 	ObjectRef
@@ -220,10 +224,19 @@ int ObjectRef::l_portal_teleport(lua_State *L)
 		lua_pop(L, 1);
 	}
 
+	float roll = 0.0f;
+	if (lua_istable(L, 5)) {
+		lua_getfield(L, 5, "roll");
+		if (lua_isnumber(L, -1))
+			roll = readParam<float>(L, -1);
+		lua_pop(L, 1);
+	}
+	s_player_roll[playersao->getPeerID()] = roll;
+
 	playersao->setPlayerYaw(yaw);
 	playersao->setPosTeleportNoSend(pos);
 	playersao->setMaxSpeedOverride(vel_delta);
-	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, vel_delta, sky_sunlit, sky_slot);
+	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, roll, vel_delta, sky_sunlit, sky_slot);
 	return 0;
 }
 
@@ -1488,6 +1501,40 @@ int ObjectRef::l_set_look_horizontal(lua_State *L)
 	return 0;
 }
 
+// get_look_roll(self)
+int ObjectRef::l_get_look_roll(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	ObjectRef *ref = checkObject<ObjectRef>(L, 1);
+	PlayerSAO *playersao = getplayersao(ref);
+	if (playersao == nullptr)
+		return 0;
+
+	auto it = s_player_roll.find(playersao->getPeerID());
+	float roll = (it != s_player_roll.end()) ? it->second : 0.0f;
+	lua_pushnumber(L, roll);
+	return 1;
+}
+
+// set_look_roll(self, radians)
+int ObjectRef::l_set_look_roll(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	ObjectRef *ref = checkObject<ObjectRef>(L, 1);
+	PlayerSAO *playersao = getplayersao(ref);
+	if (playersao == nullptr)
+		return 0;
+
+	float roll = readParam<float>(L, 2);
+	s_player_roll[playersao->getPeerID()] = roll;
+
+	v3f pos = playersao->getBasePosition();
+	float pitch = playersao->getLookPitch();
+	float yaw   = playersao->getRadRotation().Y * core::RADTODEG;
+	getServer(L)->SendPortalTeleport(playersao, pos, pitch, yaw, roll, v3f(0, 0, 0));
+	return 0;
+}
+
 // DEPRECATED
 // set_look_pitch(self, radians)
 int ObjectRef::l_set_look_pitch(lua_State *L)
@@ -1828,6 +1875,7 @@ int ObjectRef::l_set_physics_override(lua_State *L)
 	getfloatfield(L, 2, "speed_fast", phys.speed_fast);
 	getfloatfield(L, 2, "acceleration_fast", phys.acceleration_fast);
 	getfloatfield(L, 2, "speed_walk", phys.speed_walk);
+	getfloatfield(L, 2, "floor_portal_cb_shift", phys.floor_portal_cb_shift);
 
 	if (phys != old)
 		playersao->m_physics_override_sent = false;
@@ -1877,6 +1925,8 @@ int ObjectRef::l_get_physics_override(lua_State *L)
 	lua_setfield(L, -2, "acceleration_fast");
 	lua_pushnumber(L, phys.speed_walk);
 	lua_setfield(L, -2, "speed_walk");
+	lua_pushnumber(L, phys.floor_portal_cb_shift);
+	lua_setfield(L, -2, "floor_portal_cb_shift");
 	return 1;
 }
 
@@ -3010,6 +3060,8 @@ luaL_Reg ObjectRef::methods[] = {
 	luamethod(ObjectRef, set_look_vertical),
 	luamethod(ObjectRef, set_look_yaw),
 	luamethod(ObjectRef, set_look_pitch),
+	luamethod(ObjectRef, get_look_roll),
+	luamethod(ObjectRef, set_look_roll),
 	luamethod(ObjectRef, get_fov),
 	luamethod(ObjectRef, set_fov),
 	luamethod(ObjectRef, get_breath),

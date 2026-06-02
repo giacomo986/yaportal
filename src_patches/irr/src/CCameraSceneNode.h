@@ -34,6 +34,8 @@ public:
 
 	void setRenderProjectionMatrix(const core::matrix4 &proj) override;
 	void clearRenderProjectionMatrix() override;
+	void setRenderViewMatrix(const core::matrix4 &view) override;
+	void clearRenderViewMatrix() override;
 
 	//! Gets the current view matrix of the camera
 	//! \return Returns the current view matrix of the camera.
@@ -163,6 +165,8 @@ protected:
 
 	core::matrix4 RenderProj;
 	bool HasRenderProj = false;
+	core::matrix4 RenderView;
+	bool HasRenderView = false;
 };
 
 } // end namespace
