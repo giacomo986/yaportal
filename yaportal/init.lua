@@ -410,8 +410,8 @@ local function sync_portals()
         local _, _, portal_up = portal_basis(pp)
         local pw, ph = (pp.w or 2), (pp.h or 3)
         local rot = pp.rot or 0
-        local hw = (pp.axis == 2 and (rot % 2) == 1) and ph / 2 or pw / 2
-        local hh = (pp.axis == 2 and (rot % 2) == 1) and pw / 2 or ph / 2
+        local hw = ((rot % 2) == 1) and ph / 2 or pw / 2
+        local hh = ((rot % 2) == 1) and pw / 2 or ph / 2
         portal_list[i] = {
             pos    = inner_center(pp),
             normal = portal_normal(pp.axis, pp.ns),
