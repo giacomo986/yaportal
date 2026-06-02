@@ -9,7 +9,7 @@ Requires a custom build of Luanti 5.16.1 with the C++ patches included in this r
 ## Download
 
 Pre-built AppImage for Linux x86\_64:
-**[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.1.1-alpha/Luanti-portal-x86_64.AppImage)**
+**[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.2.1-alpha/Luanti-portal-x86_64.AppImage)**
 (or browse all releases on [GitHub](https://github.com/giacomo986/yaportal/releases))
 
 ---
