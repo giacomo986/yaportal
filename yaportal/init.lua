@@ -380,24 +380,29 @@ local function sorted_portal_names()
 end
 
 -- Sky type indices registered once at startup. Indices are stable (deduped by name).
-local SKY_VOID = minetest.register_portal_sky_type("void", {
-    type       = "regular",
-    sky_color  = {
-        day_sky       = "#000A14",
-        day_horizon   = "#000510",
-        dawn_sky      = "#000A14",
-        dawn_horizon  = "#000510",
-        night_sky     = "#000A14",
-        night_horizon = "#000510",
-        indoors       = "#000000",
-        fog_sun_tint  = "#000A14",
-        fog_moon_tint = "#000A14",
-        fog_tint_type = "custom",
-    },
-    clouds     = false,
-    sunlit     = false,
-    brightness = 0.0,
-})
+-- Original void look: VoxeLibre's End "noise" skybox (pockets sit in the End
+-- Y-range, so that's the sky VoxeLibre itself applies inside them). Plain dark
+-- fallback for games without the texture.
+local SKY_VOID
+if minetest.get_modpath("mcl_playerplus") then
+    local t = "mcl_playerplus_end_sky.png"
+    SKY_VOID = minetest.register_portal_sky_type("void", {
+        type       = "skybox",
+        base_color = "#000000",
+        textures   = {t, t, t, t, t, t},
+        clouds     = false,
+        sunlit     = false,
+        brightness = 0.0,
+    })
+else
+    SKY_VOID = minetest.register_portal_sky_type("void", {
+        type       = "plain",
+        base_color = "#000A14",
+        clouds     = false,
+        sunlit     = false,
+        brightness = 0.0,
+    })
+end
 local SKY_OVERWORLD = minetest.register_portal_sky_type("overworld", {
     type       = "regular",
     clouds     = true,
@@ -1122,11 +1127,11 @@ minetest.register_globalstep(function(dtime)
 
             -- sky_sunlit hint forces sunlight_seen on the client so the sky snaps
             -- instantly to the destination state instead of lerping over ~300 frames.
-            -- void→overworld needs true: snap to sunlit sky, releases when bg_sunlit=true.
-            -- overworld→void needs false: snap to dark sky; bg_sunlit in void is always
-            -- false so the override releases immediately once block data arrives.
-            -- Sending true for void would cause the override to never release
-            -- (bg_sunlit=false ≠ override=true) → sunlight_seen stuck true → daylight in void.
+            -- void→overworld: true, releases when bg_sunlit=true.
+            -- overworld→void: true as well — the void sky is a skybox (End noise)
+            -- and Sky::render() draws skyboxes only when sunlight_seen. bg_sunlit
+            -- stays false in the void, so the override intentionally never
+            -- releases and the skybox stays visible for the whole stay.
             -- Only override sky for cross-dimension teleports (pocket portals).
             -- For same-dimension teleports the sky type doesn't change: sending
             -- sky_slot with sky_sunlit=nil causes sky_sunlit_override_value=false
@@ -1137,7 +1142,10 @@ minetest.register_globalstep(function(dtime)
                 sky_sunlit = true   -- void→overworld
                 src_slot = portal_index[teleport_src]
             elseif teleport_src:match("^pocket_out_") then
-                sky_sunlit = false  -- overworld→void
+                -- true: Sky::render() draws the skybox (End noise) only when
+                -- sunlight_seen. bg_sunlit stays false in the void so the
+                -- override never releases → skybox stays visible while inside.
+                sky_sunlit = true   -- overworld→void
                 src_slot = portal_index[teleport_src]
             end
             player:portal_teleport(new_pos, new_yaw, {
@@ -1557,6 +1565,41 @@ local function _in_any_pocket(pos)
     return false
 end
 _pocket_spawn_blocker = _in_any_pocket
+
+-- ── overworld sky sync ─────────────────────────────────────────────────────────
+-- SKY_OVERWORLD is registered with engine-default colors, but games like
+-- VoxeLibre drive the real sky per-player via set_sky (custom sunset tint,
+-- black night sky, weather changes). Mirror the current sky of an overworld
+-- player into the sky type so pocket→overworld portals show the actual sky.
+local sky_sync_timer = 0
+local sky_sync_last = nil
+minetest.register_globalstep(function(dtime)
+    sky_sync_timer = sky_sync_timer + dtime
+    if sky_sync_timer < 2 then return end
+    sky_sync_timer = 0
+    for _, player in ipairs(minetest.get_connected_players()) do
+        if not _in_any_pocket(player:get_pos()) then
+            local s = player:get_sky(true)
+            -- Only mirror "regular" skies: skybox/plain types (e.g. VoxeLibre
+            -- End) don't represent the overworld view through the portal.
+            if s and s.type == "regular" then
+                local def = {
+                    type       = "regular",
+                    sky_color  = s.sky_color,
+                    clouds     = s.clouds,
+                    sunlit     = true,
+                    brightness = 1.0,
+                }
+                local key = minetest.serialize(def)
+                if key ~= sky_sync_last then
+                    sky_sync_last = key
+                    minetest.update_portal_sky_type(SKY_OVERWORLD, def)
+                end
+            end
+            break
+        end
+    end
+end)
 
 -- Returns {bx,by,bz} bottom-left corner of the player's platform.
 -- Allocates a new slot on first access.

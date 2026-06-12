@@ -471,11 +471,16 @@ static void renderPortalRTTs(
 					&& std::abs(lx) < hw
 					&& std::abs(ly) < hh;
 			if (!player_inside_frame) {
-				// Mirror across portal plane: flip only the bn component, preserve lateral.
-				// (apex_side <= 0 means no mirror needed, but apply standoff clamp.)
+				// Always anchor the frustum apex to just outside the exit portal face
+				// (-0.05*BS standoff on the approach side).  When the virtual camera is
+				// deep inside the destination (large negative side), leaving the apex
+				// at the camera position produces a frustum with a tiny half-angle
+				// (≈ atan(hw/depth)) that clips most destination geometry.  Anchoring
+				// to the portal face gives a near-90° frustum that still correctly clips
+				// portal-frame blocks (the planes still pass through the edge points)
+				// without clipping the destination interior.
 				float side = apex_side;
-				if (side > -0.05f * BS)
-					vpos -= dst_r.normal * (side + 0.05f * BS);
+				vpos -= dst_r.normal * (side + 0.05f * BS);
 
 				// Helper: plane through 'from' and a portal edge (edge_center, edge_dir),
 				// normal pointing toward interior_pt.
@@ -521,10 +526,12 @@ static void renderPortalRTTs(
 				makePlane(vpos, pc - pr * hw, pu, pc + pr * hw, &cp.data[4]);  // left
 				makePlane(vpos, pc + pu * hh, pr, pc - pu * hh, &cp.data[8]);  // top
 				makePlane(vpos, pc - pu * hh, pr, pc + pu * hh, &cp.data[12]); // bottom
-				// 5th plane: portal surface near clip — removes geometry on the source-facing
-				// side of the source portal plane from the RTT view.
-				v3f n4 = -src.normal;
-				float d4 = src.normal.dotProduct(src.pos);
+				// 5th plane: clips geometry behind the exit portal face (into the frame
+				// wall).  Using the exit (dst_r) portal keeps the approach side visible
+				// while clipping the interior of the frame.  Using the entrance portal
+				// instead clips the room between entrance and exit for same-world portals.
+				v3f n4 = dst_r.normal;
+				float d4 = -dst_r.normal.dotProduct(dst_r.pos); // dst_r.pos already render-space
 				cp.data[16] = n4.X; cp.data[17] = n4.Y; cp.data[18] = n4.Z; cp.data[19] = d4;
 				pm.setClipPlanes(cp);
 				use_clip_planes = true;
@@ -543,6 +550,26 @@ static void renderPortalRTTs(
 		Sky *portal_sky = (sky_idx >= 0 && sky_idx < (int)data.sky_pool.size())
 				? data.sky_pool[sky_idx] : nullptr;
 
+		// Sky node drawn in this RTT pass: destination sky type if set, otherwise
+		// the main sky (same-dimension portals).
+		Sky *active_sky = portal_sky ? portal_sky : data.sky;
+
+		// Retint the directional sunset/sunrise colors for the virtual camera's
+		// view direction: Sky::update() baked them with the player camera's
+		// yaw/pitch, which differs from the portal view (rotated by the portal
+		// transform).  Must happen before clear_col/fog are read below.
+		if (active_sky) {
+			v3f vdir = data.vcam[i]->getTarget()
+					- data.vcam[i]->getAbsolutePosition();
+			vdir.normalize();
+			// Luanti yaw convention: dir = (-sin(yaw), 0, cos(yaw)).
+			// Pitch sign is irrelevant (only fabs(pitch) is used in the tint).
+			float vyaw = core::radToDeg(std::atan2(-vdir.X, vdir.Z));
+			float vpitch = core::radToDeg(
+					-std::asin(core::clamp(vdir.Y, -1.0f, 1.0f)));
+			active_sky->retintForDirection(vyaw, vpitch);
+		}
+
 		video::SColor clear_col = ctx.clear_color;
 		if (portal_sky) {
 			const PortalSkyType &st = pm.getSkyType(sky_idx);
@@ -553,13 +580,15 @@ static void renderPortalRTTs(
 			clear_col = st.sunlight_seen
 					? portal_sky->getSkyColor()
 					: portal_sky->getFogColor();
+		} else if (data.sky) {
+			clear_col = data.sky->getSkyColor();
 		}
 
-		// Override driver fog to match the portal's destination sky.
-		if (portal_sky) {
-			driver->setFog(portal_sky->getFogColor(),
+		// Override driver fog to match the portal view's sky (retinted above).
+		if (active_sky) {
+			driver->setFog(active_sky->getFogColor(),
 					video::EFT_FOG_LINEAR,
-					ctx.fog_range * portal_sky->getFogStart(),
+					ctx.fog_range * active_sky->getFogStart(),
 					ctx.fog_range, 0.f, false, ctx.fog_enabled);
 		}
 
@@ -595,13 +624,17 @@ static void renderPortalRTTs(
 		if (data.clouds_node)
 			data.clouds_node->setVisible(clouds_was_visible);
 
-		// Restore fog and sky node after the RTT pass.
-		if (portal_sky) {
+		// Restore tint, fog and sky node after the RTT pass.  The main sky must
+		// go back to the player-camera tint before Draw3D renders the main view.
+		if (active_sky) {
+			active_sky->restoreMainTint();
 			if (data.sky)
 				driver->setFog(data.sky->getFogColor(),
 						video::EFT_FOG_LINEAR,
 						ctx.fog_range * data.sky->getFogStart(),
 						ctx.fog_range, 0.f, false, ctx.fog_enabled);
+		}
+		if (portal_sky) {
 			portal_sky->setSceneActive(false);
 			if (data.sky) data.sky->setSceneActive(true);
 		}

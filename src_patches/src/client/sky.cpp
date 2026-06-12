@@ -414,83 +414,15 @@ void Sky::update(float time_of_day, float time_brightness,
 		skycolor_bright.getBlue() * m_brightness
 	);
 
-	// Horizon coloring based on sun and moon direction during sunset and sunrise
-	video::SColor pointcolor = video::SColor(m_bgcolor.getAlpha(), 255, 255, 255);
-	if (m_directional_colored_fog) {
-		if (m_horizon_blend() != 0) {
-			// Calculate hemisphere value from yaw, (inverted in third person front view)
-			s8 dir_factor = 1;
-			if (cam_mode > CAMERA_MODE_THIRD)
-				dir_factor = -1;
-			f32 pointcolor_blend = wrapDegrees_0_360(yaw * dir_factor + 90);
-			if (pointcolor_blend > 180)
-				pointcolor_blend = 360 - pointcolor_blend;
-			pointcolor_blend /= 180;
-			// Bound view angle to determine where transition starts and ends
-			pointcolor_blend = rangelim(1 - pointcolor_blend * 1.375, 0, 1 / 1.375) *
-				1.375;
-			// Combine the colors when looking up or down, otherwise turning looks weird
-			pointcolor_blend += (0.5 - pointcolor_blend) *
-				(1 - MYMIN((90 - std::fabs(pitch)) / 90 * 1.5, 1));
-			// Invert direction to match where the sun and moon are rising
-			if (m_time_of_day > 0.5)
-				pointcolor_blend = 1 - pointcolor_blend;
-			// Horizon colors of sun and moon
-			f32 pointcolor_light = rangelim(m_time_brightness * 3, 0.2, 1);
+	// Save pre-tint colors and view parameters so the directional tint can be
+	// recomputed later for a different view direction (portal RTT pass).
+	m_bgcolor_pre = m_bgcolor;
+	m_skycolor_pre = m_skycolor;
+	m_last_cam_mode = cam_mode;
+	m_last_yaw = yaw;
+	m_last_pitch = pitch;
 
-			video::SColorf pointcolor_sun_f(1, 1, 1, 1);
-			// Use tonemap only if default sun/moon tinting is used
-			// which keeps previous behavior.
-			if (m_sun_tonemap && m_default_tint) {
-				pointcolor_sun_f.r = pointcolor_light *
-					(float)m_materials[3].ColorParam.getRed() / 255;
-				pointcolor_sun_f.b = pointcolor_light *
-					(float)m_materials[3].ColorParam.getBlue() / 255;
-				pointcolor_sun_f.g = pointcolor_light *
-					(float)m_materials[3].ColorParam.getGreen() / 255;
-			} else if (!m_default_tint) {
-				pointcolor_sun_f = m_sky_params.fog_sun_tint;
-			} else {
-				pointcolor_sun_f.r = pointcolor_light * 1;
-				pointcolor_sun_f.b = pointcolor_light *
-					(0.25 + (rangelim(m_time_brightness, 0.25, 0.75) - 0.25) * 2 * 0.75);
-				pointcolor_sun_f.g = pointcolor_light * (pointcolor_sun_f.b * 0.375 +
-					(rangelim(m_time_brightness, 0.05, 0.15) - 0.05) * 10 * 0.625);
-			}
-
-			video::SColorf pointcolor_moon_f;
-			if (m_default_tint) {
-				pointcolor_moon_f = video::SColorf(
-					0.5 * pointcolor_light,
-					0.6 * pointcolor_light,
-					0.8 * pointcolor_light,
-					1
-				);
-			} else {
-				pointcolor_moon_f = video::SColorf(
-					(m_sky_params.fog_moon_tint.getRed() / 255.0f) * pointcolor_light,
-					(m_sky_params.fog_moon_tint.getGreen() / 255.0f) * pointcolor_light,
-					(m_sky_params.fog_moon_tint.getBlue() / 255.0f) * pointcolor_light,
-					1
-				);
-			}
-			if (m_moon_tonemap && m_default_tint) {
-				pointcolor_moon_f.r = pointcolor_light *
-					(float)m_materials[4].ColorParam.getRed() / 255;
-				pointcolor_moon_f.b = pointcolor_light *
-					(float)m_materials[4].ColorParam.getBlue() / 255;
-				pointcolor_moon_f.g = pointcolor_light *
-					(float)m_materials[4].ColorParam.getGreen() / 255;
-			}
-
-			video::SColor pointcolor_sun = pointcolor_sun_f.toSColor();
-			video::SColor pointcolor_moon = pointcolor_moon_f.toSColor();
-			// Calculate the blend color
-			pointcolor = m_mix_scolor(pointcolor_moon, pointcolor_sun, pointcolor_blend);
-		}
-		m_bgcolor = m_mix_scolor(m_bgcolor, pointcolor, m_horizon_blend() * 0.5);
-		m_skycolor = m_mix_scolor(m_skycolor, pointcolor, m_horizon_blend() * 0.25);
-	}
+	video::SColor pointcolor = applyDirectionalTint(cam_mode, yaw, pitch);
 
 	float cloud_direct_brightness = 0.0f;
 	if (sunlight_seen) {
@@ -523,6 +455,106 @@ void Sky::update(float time_of_day, float time_brightness,
 		m_cloudcolor_f = m_mix_scolorf(m_cloudcolor_f,
 			video::SColorf(pointcolor), m_horizon_blend() * 0.25);
 	}
+}
+
+// Horizon coloring based on sun and moon direction during sunset and sunrise.
+// Starts from the pre-tint colors saved by update(), so it can be called any
+// number of times with different view directions without compounding the mix
+// or touching the color lerp state.  Returns the computed pointcolor (used by
+// update() for the cloud color mix).
+video::SColor Sky::applyDirectionalTint(CameraMode cam_mode, float yaw, float pitch)
+{
+	video::SColor pointcolor = video::SColor(m_bgcolor_pre.getAlpha(), 255, 255, 255);
+	if (!m_directional_colored_fog)
+		return pointcolor;
+
+	m_bgcolor = m_bgcolor_pre;
+	m_skycolor = m_skycolor_pre;
+
+	if (m_horizon_blend() != 0) {
+		// Calculate hemisphere value from yaw, (inverted in third person front view)
+		s8 dir_factor = 1;
+		if (cam_mode > CAMERA_MODE_THIRD)
+			dir_factor = -1;
+		f32 pointcolor_blend = wrapDegrees_0_360(yaw * dir_factor + 90);
+		if (pointcolor_blend > 180)
+			pointcolor_blend = 360 - pointcolor_blend;
+		pointcolor_blend /= 180;
+		// Bound view angle to determine where transition starts and ends
+		pointcolor_blend = rangelim(1 - pointcolor_blend * 1.375, 0, 1 / 1.375) *
+			1.375;
+		// Combine the colors when looking up or down, otherwise turning looks weird
+		pointcolor_blend += (0.5 - pointcolor_blend) *
+			(1 - MYMIN((90 - std::fabs(pitch)) / 90 * 1.5, 1));
+		// Invert direction to match where the sun and moon are rising
+		if (m_time_of_day > 0.5)
+			pointcolor_blend = 1 - pointcolor_blend;
+		// Horizon colors of sun and moon
+		f32 pointcolor_light = rangelim(m_time_brightness * 3, 0.2, 1);
+
+		video::SColorf pointcolor_sun_f(1, 1, 1, 1);
+		// Use tonemap only if default sun/moon tinting is used
+		// which keeps previous behavior.
+		if (m_sun_tonemap && m_default_tint) {
+			pointcolor_sun_f.r = pointcolor_light *
+				(float)m_materials[3].ColorParam.getRed() / 255;
+			pointcolor_sun_f.b = pointcolor_light *
+				(float)m_materials[3].ColorParam.getBlue() / 255;
+			pointcolor_sun_f.g = pointcolor_light *
+				(float)m_materials[3].ColorParam.getGreen() / 255;
+		} else if (!m_default_tint) {
+			pointcolor_sun_f = m_sky_params.fog_sun_tint;
+		} else {
+			pointcolor_sun_f.r = pointcolor_light * 1;
+			pointcolor_sun_f.b = pointcolor_light *
+				(0.25 + (rangelim(m_time_brightness, 0.25, 0.75) - 0.25) * 2 * 0.75);
+			pointcolor_sun_f.g = pointcolor_light * (pointcolor_sun_f.b * 0.375 +
+				(rangelim(m_time_brightness, 0.05, 0.15) - 0.05) * 10 * 0.625);
+		}
+
+		video::SColorf pointcolor_moon_f;
+		if (m_default_tint) {
+			pointcolor_moon_f = video::SColorf(
+				0.5 * pointcolor_light,
+				0.6 * pointcolor_light,
+				0.8 * pointcolor_light,
+				1
+			);
+		} else {
+			pointcolor_moon_f = video::SColorf(
+				(m_sky_params.fog_moon_tint.getRed() / 255.0f) * pointcolor_light,
+				(m_sky_params.fog_moon_tint.getGreen() / 255.0f) * pointcolor_light,
+				(m_sky_params.fog_moon_tint.getBlue() / 255.0f) * pointcolor_light,
+				1
+			);
+		}
+		if (m_moon_tonemap && m_default_tint) {
+			pointcolor_moon_f.r = pointcolor_light *
+				(float)m_materials[4].ColorParam.getRed() / 255;
+			pointcolor_moon_f.b = pointcolor_light *
+				(float)m_materials[4].ColorParam.getBlue() / 255;
+			pointcolor_moon_f.g = pointcolor_light *
+				(float)m_materials[4].ColorParam.getGreen() / 255;
+		}
+
+		video::SColor pointcolor_sun = pointcolor_sun_f.toSColor();
+		video::SColor pointcolor_moon = pointcolor_moon_f.toSColor();
+		// Calculate the blend color
+		pointcolor = m_mix_scolor(pointcolor_moon, pointcolor_sun, pointcolor_blend);
+	}
+	m_bgcolor = m_mix_scolor(m_bgcolor, pointcolor, m_horizon_blend() * 0.5);
+	m_skycolor = m_mix_scolor(m_skycolor, pointcolor, m_horizon_blend() * 0.25);
+	return pointcolor;
+}
+
+void Sky::retintForDirection(float yaw, float pitch)
+{
+	applyDirectionalTint(m_last_cam_mode, yaw, pitch);
+}
+
+void Sky::restoreMainTint()
+{
+	applyDirectionalTint(m_last_cam_mode, m_last_yaw, m_last_pitch);
 }
 
 static v3f getSkyBodyPosition(float horizon_position, float day_position, float orbit_tilt)

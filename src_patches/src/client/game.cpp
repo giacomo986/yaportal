@@ -3576,6 +3576,7 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 				m_portal_sky_pool[pi]->setSunVisible(false);
 				m_portal_sky_pool[pi]->setSunriseVisible(false);
 				m_portal_sky_pool[pi]->setMoonVisible(false);
+				m_portal_sky_pool[pi]->setStarsVisible(false);
 			}
 			pm_sky.clearSkyTypeDirty(pi);
 		}

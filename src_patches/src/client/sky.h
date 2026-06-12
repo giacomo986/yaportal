@@ -44,6 +44,14 @@ public:
 	void update(float m_time_of_day, float time_brightness, float direct_brightness,
 			bool sunlight_seen, CameraMode cam_mode, float yaw, float pitch);
 
+	// Recompute the directional sunset/sunrise tint (m_bgcolor/m_skycolor) for an
+	// arbitrary view direction without touching any lerp state.  Used by the portal
+	// RTT pass: update() bakes the tint for the player camera's yaw/pitch, but the
+	// virtual portal camera looks in a different direction.
+	void retintForDirection(float yaw, float pitch);
+	// Re-apply the tint for the yaw/pitch last passed to update() (main camera).
+	void restoreMainTint();
+
 	float getBrightness() { return m_brightness; }
 
 	// Re-trigger the initial flood (100 rapid update() iterations) on the next
@@ -206,6 +214,18 @@ private:
 	video::SColor m_bgcolor;
 	video::SColor m_skycolor;
 	video::SColorf m_cloudcolor_f;
+
+	// Pre-directional-tint colors and last update() view parameters, so the
+	// directional tint can be recomputed for other view directions (portal RTT).
+	video::SColor m_bgcolor_pre;
+	video::SColor m_skycolor_pre;
+	CameraMode m_last_cam_mode = static_cast<CameraMode>(0); // CAMERA_MODE_FIRST
+	float m_last_yaw = 0.0f;
+	float m_last_pitch = 0.0f;
+
+	// Recompute m_bgcolor/m_skycolor from the *_pre colors with the directional
+	// pointcolor mix for the given view direction. Returns the pointcolor.
+	video::SColor applyDirectionalTint(CameraMode cam_mode, float yaw, float pitch);
 
 	// pure white: becomes "diffuse light component" for clouds
 	video::SColorf m_cloudcolor_day_f = video::SColorf(1, 1, 1, 1);
