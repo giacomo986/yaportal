@@ -1531,7 +1531,26 @@ int ObjectRef::l_set_look_roll(lua_State *L)
 	v3f pos = playersao->getBasePosition();
 	float pitch = playersao->getLookPitch();
 	float yaw   = playersao->getRadRotation().Y * core::RADTODEG;
-	getServer(L)->SendPortalTeleport(playersao, pos, pitch, yaw, roll, v3f(0, 0, 0));
+	getServer(L)->SendPortalTeleport(playersao, pos, pitch, yaw, roll, v3f(0, 0, 0),
+		0, 0xFF, /*roll_only=*/true);
+	return 0;
+}
+
+// set_look_pitch_animate(self, radians) — pitch-only portal teleport for pitch animation
+int ObjectRef::l_set_look_pitch_animate(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	ObjectRef *ref = checkObject<ObjectRef>(L, 1);
+	PlayerSAO *playersao = getplayersao(ref);
+	if (playersao == nullptr)
+		return 0;
+
+	float pitch = readParam<float>(L, 2) * core::RADTODEG;
+
+	v3f pos = playersao->getBasePosition();
+	float yaw = playersao->getRadRotation().Y * core::RADTODEG;
+	getServer(L)->SendPortalTeleport(playersao, pos, pitch, yaw, 0.0f, v3f(0, 0, 0),
+		0, 0xFF, /*roll_only=*/false, /*pitch_only=*/true);
 	return 0;
 }
 
@@ -3062,6 +3081,7 @@ luaL_Reg ObjectRef::methods[] = {
 	luamethod(ObjectRef, set_look_pitch),
 	luamethod(ObjectRef, get_look_roll),
 	luamethod(ObjectRef, set_look_roll),
+	luamethod(ObjectRef, set_look_pitch_animate),
 	luamethod(ObjectRef, get_fov),
 	luamethod(ObjectRef, set_fov),
 	luamethod(ObjectRef, get_breath),

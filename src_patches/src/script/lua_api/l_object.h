@@ -260,6 +260,9 @@ private:
 	// set_look_roll(self, radians)
 	static int l_set_look_roll(lua_State *L);
 
+	// set_look_pitch_animate(self, radians)
+	static int l_set_look_pitch_animate(lua_State *L);
+
 	// DEPRECATED
 	// set_look_pitch(self, radians)
 	static int l_set_look_pitch(lua_State *L);

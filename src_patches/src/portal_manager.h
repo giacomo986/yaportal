@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-static constexpr int MAX_PORTALS = 8;
+static constexpr int MAX_PORTALS = 16;
 
 struct PortalInfo {
 	v3f pos;      // world-space center (BS scale)

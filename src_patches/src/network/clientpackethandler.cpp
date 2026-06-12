@@ -1714,18 +1714,37 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 	if (pkt->getRemainingBytes() >= 4)
 		*pkt >> roll;
 
+	bool roll_only  = false;
+	bool pitch_only = false;
+	if (pkt->getRemainingBytes() >= 1) {
+		u8 flags = 0;
+		*pkt >> flags;
+		roll_only  = (flags & 0x01) != 0;
+		pitch_only = (flags & 0x02) != 0;
+	}
+
 	LocalPlayer *player = m_env.getLocalPlayer();
 	assert(player != NULL);
 
-	player->setPosition(pos);
-	player->snapView(yaw, pitch, roll);
-	player->addVelocity(vel_delta);
+	if (roll_only) {
+		// Only update roll; don't snap position, yaw, or pitch.
+		// Used by server-side roll animation to avoid fighting mouse input.
+		player->snapRoll(roll);
+	} else if (pitch_only) {
+		// Only update pitch; don't snap position, yaw, or roll.
+		// Used by server-side pitch animation (vert→horiz portal).
+		player->snapPitch(pitch);
+	} else {
+		player->setPosition(pos);
+		player->snapView(yaw, pitch, roll);
+		player->addVelocity(vel_delta);
 
-	if (sky_sunlit != 0 || sky_slot != 0xFF) {
-		player->sky_sunlit_override_frames = 3;
-		player->sky_sunlit_override_value  = (sky_sunlit == 2);
-		player->sky_override_reset_pending = true;
-		player->sky_snap_slot = (sky_slot != 0xFF) ? (int)sky_slot : -1;
+		if (sky_sunlit != 0 || sky_slot != 0xFF) {
+			player->sky_sunlit_override_frames = 3;
+			player->sky_sunlit_override_value  = (sky_sunlit == 2);
+			player->sky_override_reset_pending = true;
+			player->sky_snap_slot = (sky_slot != 0xFF) ? (int)sky_slot : -1;
+		}
 	}
 }
 

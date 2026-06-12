@@ -613,18 +613,31 @@ void Game::run()
 			// already ran (inside step() above) and overwrote m_yaw/m_pitch with the
 			// pre-teleport control values. Camera::update() reads m_yaw directly, so
 			// without this override it renders with the old orientation this frame.
+			// m_snap_roll_only:  roll-animation frames — update roll only.
+			// m_snap_pitch_only: pitch-animation frames — update pitch only, skip yaw/roll.
+			// Both override mouse input because this block runs after input processing.
 			LocalPlayer *lp = client->getEnv().getLocalPlayer();
 			if (lp && lp->m_snap_view) {
-				cam_view_target.camera_yaw   = lp->m_snap_yaw;
-				cam_view_target.camera_pitch = lp->m_snap_pitch;
-				cam_view_target.camera_roll  = lp->m_snap_roll;
-				cam_view.camera_yaw          = lp->m_snap_yaw;
-				cam_view.camera_pitch        = lp->m_snap_pitch;
-				cam_view.camera_roll         = lp->m_snap_roll;
-				lp->setYaw(lp->m_snap_yaw);
-				lp->setPitch(lp->m_snap_pitch);
-				lp->m_camera_roll            = lp->m_snap_roll;
-				lp->m_snap_view = false;
+				if (!lp->m_snap_roll_only && !lp->m_snap_pitch_only) {
+					cam_view_target.camera_yaw   = lp->m_snap_yaw;
+					cam_view_target.camera_pitch = lp->m_snap_pitch;
+					cam_view.camera_yaw          = lp->m_snap_yaw;
+					cam_view.camera_pitch        = lp->m_snap_pitch;
+					lp->setYaw(lp->m_snap_yaw);
+					lp->setPitch(lp->m_snap_pitch);
+				} else if (lp->m_snap_pitch_only) {
+					cam_view_target.camera_pitch = lp->m_snap_pitch;
+					cam_view.camera_pitch        = lp->m_snap_pitch;
+					lp->setPitch(lp->m_snap_pitch);
+				}
+				if (!lp->m_snap_pitch_only) {
+					cam_view_target.camera_roll  = lp->m_snap_roll;
+					cam_view.camera_roll         = lp->m_snap_roll;
+					lp->m_camera_roll            = lp->m_snap_roll;
+				}
+				lp->m_snap_view        = false;
+				lp->m_snap_roll_only   = false;
+				lp->m_snap_pitch_only  = false;
 			}
 		}
 		updateDebugState();
@@ -2086,6 +2099,10 @@ void Game::updateCameraOrientation(CameraOrientation *cam, float dtime)
 		cam->camera_pitch -= rate;
 	if (input->isKeyDown(KeyType::CAMERA_PITCH_DOWN))
 		cam->camera_pitch += rate;
+	if (input->isKeyDown(KeyType::CAMERA_ROLL_LEFT))
+		cam->camera_roll -= rate * core::DEGTORAD;
+	if (input->isKeyDown(KeyType::CAMERA_ROLL_RIGHT))
+		cam->camera_roll += rate * core::DEGTORAD;
 
 	cam->camera_pitch = rangelim(cam->camera_pitch, -90, 90);
 }

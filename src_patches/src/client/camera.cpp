@@ -373,9 +373,21 @@ void Camera::update(LocalPlayer* player, f32 frametime, f32 tool_reload_ratio)
 		// Set head node transformation
 		eye_offset.Y += cameratilt * -player->hurt_tilt_strength;
 		m_headnode->setPosition(eye_offset);
-		m_headnode->setRotation(v3f(pitch, 0,
-			cameratilt * player->hurt_tilt_strength
-			+ player->m_camera_roll * core::RADTODEG));
+		// Compose pitch∘roll with roll innermost so camera_roll rotates around
+		// the actual (pitched) view axis. Irrlicht Euler (pitch, 0, roll) applies
+		// roll AFTER pitch in the yaw frame: the rendered forward becomes
+		// (sinP·sinR, -sinP·cosR, cosP) — look direction bends with roll when
+		// pitch≠0 and the roll axis stays horizontal instead of following the view.
+		{
+			core::matrix4 rot_pitch, rot_roll;
+			rot_pitch.setRotationDegrees(v3f(pitch, 0, 0));
+			rot_roll.setRotationDegrees(v3f(0, 0,
+				cameratilt * player->hurt_tilt_strength
+				+ player->m_camera_roll * core::RADTODEG));
+			// Irrlicht A*B applies B first (scene-graph child semantics)
+			core::matrix4 rot = rot_pitch * rot_roll;
+			m_headnode->setRotation(rot.getRotationDegrees());
+		}
 		m_headnode->updateAbsolutePosition();
 	}
 

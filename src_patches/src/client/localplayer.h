@@ -169,7 +169,30 @@ public:
 		m_snap_view  = true;
 	}
 
-	bool m_snap_view  = false;
+	void snapRoll(f32 roll)
+	{
+		// Don't let a roll-only update overwrite a full teleport snap that
+		// hasn't been consumed yet; that would suppress the yaw/pitch update.
+		if (m_snap_view && !m_snap_roll_only && !m_snap_pitch_only)
+			return;
+		m_snap_roll      = roll;
+		m_snap_roll_only = true;
+		m_snap_view      = true;
+	}
+
+	void snapPitch(f32 pitch)
+	{
+		// Don't let a pitch-only update overwrite a full teleport snap.
+		if (m_snap_view && !m_snap_pitch_only && !m_snap_roll_only)
+			return;
+		m_snap_pitch      = pitch;
+		m_snap_pitch_only = true;
+		m_snap_view       = true;
+	}
+
+	bool m_snap_view       = false;
+	bool m_snap_roll_only  = false;
+	bool m_snap_pitch_only = false;
 	f32  m_snap_yaw   = 0.0f;
 	f32  m_snap_pitch = 0.0f;
 	f32  m_snap_roll  = 0.0f;
