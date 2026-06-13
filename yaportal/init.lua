@@ -237,6 +237,32 @@ end
 
 local function in_portal_bounds(ppos, pp)
     local py = ppos.y + 0.5
+    -- Type-2 block portals are free-standing (no surrounding frame to block a
+    -- sideways approach), so the loose type-1 bounds below would let the player
+    -- trigger the portal while merely standing beside it. Use tight bounds
+    -- centred on the opening: laterally within the opening (+ small tol) and
+    -- within depth tolerance on the normal axis. Alignment is what gates the
+    -- trigger, so a side-walker stays out of bounds.
+    if pp.kind == "block" then
+        local c  = inner_center(pp)
+        local w  = pp.w or 1
+        local h  = pp.h or 1
+        local hw = w / 2 + 0.1   -- in-plane horizontal half-extent
+        local hv = h / 2 + 0.6   -- vertical half-extent (+ body tolerance)
+        if pp.axis == 0 then       -- normal Z; in-plane X (w), Y (h)
+            return math.abs(ppos.x - c.x) <= hw
+               and math.abs(py - c.y)     <= hv
+               and math.abs(ppos.z - c.z) <= 1.0
+        elseif pp.axis == 1 then   -- normal X; in-plane Z (w), Y (h)
+            return math.abs(ppos.z - c.z) <= hw
+               and math.abs(py - c.y)     <= hv
+               and math.abs(ppos.x - c.x) <= 1.0
+        else                       -- normal Y; in-plane X (w), Z (h)
+            return math.abs(ppos.x - c.x) <= hw
+               and math.abs(ppos.z - c.z) <= (h / 2 + 0.1)
+               and math.abs(py - c.y)     <= 2.0
+        end
+    end
     local M = 0.3
     local w = pp.w or 2
     local h = pp.h or 3
@@ -1699,6 +1725,169 @@ minetest.register_on_leaveplayer(function(player)
     local had = portals["gun2_blue_"..name] or portals["gun2_orange_"..name]
     portal_gun2_remove(name, "blue")
     portal_gun2_remove(name, "orange")
+    if had then
+        save_portals()
+        sync_portals()
+    end
+end)
+
+-- ── embedded portal gun 3 (type-2 hollow block portal) ───────────────────────
+-- Shoots a surface; spawns a W×H arrangement of solid "portal_block" nodes whose
+-- front (open) face points at the player. The blocks are a new engine node type
+-- (group portal_block): solid on the outward faces, open on the front (the portal
+-- surface) and on faces shared with an adjacent same-orientation portal_block, so
+-- a 2×1 portal has 4 solid faces per block (the cavity is continuous). Auto-paired
+-- blue/orange per player, like the other guns.
+
+local PGUN3_W, PGUN3_H = 1, 2   -- portal opening: W in-plane horizontal, H vertical
+
+-- wallmounted param2 whose getWallMountedDir() equals the portal normal (axis,ns).
+local function pgun3_param2(axis, ns)
+    if axis == 0 then return ns > 0 and 4 or 5      -- +Z / -Z
+    elseif axis == 1 then return ns > 0 and 2 or 3  -- +X / -X
+    else return ns > 0 and 0 or 1 end               -- +Y / -Y
+end
+
+local function pgun3_register_block(color, tex)
+    minetest.register_node("yaportal:portal_block_" .. color, {
+        description = color:gsub("^%l", string.upper) ..
+            " Portal Block (type 2, unbreakable)",
+        drawtype = "nodebox",
+        paramtype = "light",
+        paramtype2 = "wallmounted",
+        sunlight_propagates = false,
+        tiles = {tex},
+        node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
+        groups = {portal_block = 1, not_in_creative_inventory = 1},
+        diggable = false,
+    })
+end
+pgun3_register_block("blue",   "yaportal_blue.png")
+pgun3_register_block("orange", "yaportal_orange.png")
+
+-- Reconstruct the integer block positions from a stored block portal. cx/cy/cz
+-- hold the block-center plane on the normal axis and the min block coord on the
+-- other two axes (all integers).
+local function pgun3_block_positions(pp)
+    local list = {}
+    local w, h = pp.w or 1, pp.h or 1
+    if pp.axis == 0 then
+        for dx = 0, w-1 do for dy = 0, h-1 do
+            list[#list+1] = {x = pp.cx + dx, y = pp.cy + dy, z = pp.cz}
+        end end
+    elseif pp.axis == 1 then
+        for dz = 0, w-1 do for dy = 0, h-1 do
+            list[#list+1] = {x = pp.cx, y = pp.cy + dy, z = pp.cz + dz}
+        end end
+    else -- axis 2
+        for dx = 0, w-1 do for dz = 0, h-1 do
+            list[#list+1] = {x = pp.cx + dx, y = pp.cy, z = pp.cz + dz}
+        end end
+    end
+    return list
+end
+
+local function portal_gun3_remove(pname, color)
+    local portal_name = "gun3_" .. color .. "_" .. pname
+    local pp = portals[portal_name]
+    if not pp then return end
+    local bnode = "yaportal:portal_block_" .. color
+    for _, bpos in ipairs(pgun3_block_positions(pp)) do
+        if minetest.get_node(bpos).name == bnode then
+            minetest.remove_node(bpos)
+        end
+    end
+    if pp.link and portals[pp.link] then
+        portals[pp.link].link = nil
+    end
+    portals[portal_name] = nil
+    update_anchor(portal_name, nil)
+end
+
+local function portal_gun3_shoot(player, pointed_thing, color)
+    if pointed_thing.type ~= "node" then return end
+    local pname = player:get_player_name()
+    local under = pointed_thing.under
+    local above = pointed_thing.above
+    local dx = above.x - under.x
+    local dy = above.y - under.y
+    local dz = above.z - under.z
+
+    -- Portal normal = hit-face direction (from the surface toward the player side).
+    local axis, ns
+    if dz ~= 0 then axis, ns = 0, dz
+    elseif dx ~= 0 then axis, ns = 1, dx
+    else axis, ns = 2, dy end
+
+    local portal_name = "gun3_" .. color .. "_" .. pname
+    portal_gun3_remove(pname, color)
+
+    local param2 = pgun3_param2(axis, ns)
+    local bnode  = "yaportal:portal_block_" .. color
+    local bx0, by0, bz0 = above.x, above.y, above.z  -- air cell next to the surface
+    local W, H = PGUN3_W, PGUN3_H
+
+    -- Place W×H blocks in the portal plane (width = in-plane horizontal; height
+    -- = Y for walls, or Z for floor/ceiling portals).
+    if axis == 0 then
+        for ddx = 0, W-1 do for ddy = 0, H-1 do
+            minetest.set_node({x=bx0+ddx, y=by0+ddy, z=bz0}, {name=bnode, param2=param2})
+        end end
+    elseif axis == 1 then
+        for ddz = 0, W-1 do for ddy = 0, H-1 do
+            minetest.set_node({x=bx0, y=by0+ddy, z=bz0+ddz}, {name=bnode, param2=param2})
+        end end
+    else -- axis 2
+        for ddx = 0, W-1 do for ddz = 0, H-1 do
+            minetest.set_node({x=bx0+ddx, y=by0, z=bz0+ddz}, {name=bnode, param2=param2})
+        end end
+    end
+
+    -- Store with the portal plane at the block CENTER (like type-1 portals at the
+    -- air-node center): the render draws the tunnel mouth at pos + 0.5·normal, so a
+    -- centered plane puts the mouth flush with the block's front face.
+    local cx, cy, cz = bx0, by0, bz0
+
+    portals[portal_name] = {
+        cx=cx, cy=cy, cz=cz,
+        axis=axis, ns=ns,
+        w=W, h=H,
+        kind="block",
+        node_name=bnode,
+    }
+
+    local other_color = color == "blue" and "orange" or "blue"
+    local other_name  = "gun3_" .. other_color .. "_" .. pname
+    if portals[other_name] then
+        portals[portal_name].link = other_name
+        portals[other_name].link  = portal_name
+    end
+
+    save_portals()
+    sync_portals()
+    update_anchor(portal_name, portals[portal_name])
+end
+
+minetest.register_tool("yaportal:portal_gun3", {
+    description = "Portal Gun (Block, type 2)" ..
+        "\nLeft click: blue portal\nRight click: orange portal" ..
+        "\n" .. PGUN3_W .. "×" .. PGUN3_H .. " hollow block portal",
+    inventory_image = "yaportal_gun.png^[colorize:#33bbff:100",
+    on_use = function(itemstack, user, pointed_thing)
+        portal_gun3_shoot(user, pointed_thing, "blue")
+        return itemstack
+    end,
+    on_place = function(itemstack, placer, pointed_thing)
+        portal_gun3_shoot(placer, pointed_thing, "orange")
+        return itemstack
+    end,
+})
+
+minetest.register_on_leaveplayer(function(player)
+    local name = player:get_player_name()
+    local had = portals["gun3_blue_"..name] or portals["gun3_orange_"..name]
+    portal_gun3_remove(name, "blue")
+    portal_gun3_remove(name, "orange")
     if had then
         save_portals()
         sync_portals()
