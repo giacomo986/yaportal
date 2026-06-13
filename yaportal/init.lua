@@ -65,11 +65,20 @@ local ALL_FRAME_NODES = {
 
 minetest.register_entity("yaportal:anchor", {
     initial_properties = {
-        visual = "cube", visual_size = {x=0, y=0},
+        -- is_visible MUST be true: the engine returns no selection box for
+        -- invisible entities (getSelectionBox/addToScene bail on !is_visible),
+        -- so an invisible anchor can never be right-clicked. We keep it
+        -- unseen via zero size + a fully transparent texture instead.
+        visual = "cube", visual_size = {x=0, y=0, z=0},
+        textures = {
+            "[fill:1x1:#00000000", "[fill:1x1:#00000000",
+            "[fill:1x1:#00000000", "[fill:1x1:#00000000",
+            "[fill:1x1:#00000000", "[fill:1x1:#00000000",
+        },
         collisionbox = {0,0,0,0,0,0},
         selectionbox = {-0.5,-0.5,-0.5, 0.5,0.5,0.5},
         collide_with_objects = false, physical = false,
-        is_visible = false, static_save = false,
+        is_visible = true, static_save = false,
         pointable = true,
     },
     on_activate = function(self) self.object:set_armor_groups({immortal=1}) end,
@@ -102,21 +111,27 @@ local function update_anchor(name, pp)
         if anchors[name] then
             local ent = anchors[name]:get_luaentity()
             if ent then ent._portal_name = name end
-            -- Selectionbox covers interior + 1-node frame border on all sides.
-            -- Depth ±0.6 protrudes slightly past frame block faces (±0.5) so
-            -- the entity intercepts clicks before the underlying node.
-            local hw = w / 2 + 1
-            local hh = h / 2 + 1
+            -- Selectionbox covers interior + 1-node frame border (+0.1 margin so
+            -- edge/angled clicks on border blocks still land) and protrudes ±0.65
+            -- past frame block faces (±0.5) so the entity wins the raycast over
+            -- the node behind it — needed once the frame is a foreign material
+            -- whose node has no on_rightclick to open the config.
+            local hw = w / 2 + 1.1
+            local hh = h / 2 + 1.1
+            local d  = 0.65
             local sb
             if pp.axis == 0 then
-                sb = {-hw, -hh, -0.6, hw, hh, 0.6}
+                sb = {-hw, -hh, -d, hw, hh, d}
             elseif pp.axis == 1 then
-                sb = {-0.6, -hh, -hw, 0.6, hh, hw}
+                sb = {-d, -hh, -hw, d, hh, hw}
             else -- axis == 2: flat in XZ
-                local hz = h / 2 + 1
-                sb = {-hw, -0.6, -hz, hw, 0.6, hz}
+                local hz = h / 2 + 1.1
+                sb = {-hw, -d, -hz, hw, d, hz}
             end
-            anchors[name]:set_properties({selectionbox = sb})
+            -- Only configurable portals open a menu; gun/pocket anchors would
+            -- otherwise be invisible inert click-blockers, so make them un-pointable.
+            local pointable = not (name:match("^gun") or name:match("^pocket_"))
+            anchors[name]:set_properties({selectionbox = sb, pointable = pointable})
         end
     end
 end
@@ -183,6 +198,25 @@ local function inner_center(pp)
         return {x=pp.cx+(w-1)/2, y=pp.cy, z=pp.cz+(h-1)/2}
     end
 end
+
+-- Anchor entities are static_save=false and vanish when their mapblock unloads.
+-- Recreate any that went missing so the config menu stays reachable (esp. after
+-- the frame is converted to a foreign material with no node on_rightclick).
+-- Skip gun/pocket portals: they don't open a menu and churn every shot.
+local _anchor_reensure_t = 0
+minetest.register_globalstep(function(dtime)
+    _anchor_reensure_t = _anchor_reensure_t + dtime
+    if _anchor_reensure_t < 2 then return end
+    _anchor_reensure_t = 0
+    for name, pp in pairs(portals) do
+        if not name:match("^gun") and not name:match("^pocket_") then
+            local ent = anchors[name] and anchors[name]:get_luaentity()
+            if not ent and minetest.get_node(inner_center(pp)).name ~= "ignore" then
+                update_anchor(name, pp)
+            end
+        end
+    end
+end)
 
 local function portal_normal(axis, ns)
     ns = ns or 1
@@ -458,28 +492,9 @@ minetest.register_on_mods_loaded(function()
         portals = minetest.deserialize(s) or {}
     end
     sync_portals()
-    -- Migrate portals with external frame materials to yaportal:frame.
-    -- Avoids injecting on_rightclick globally into common node types.
-    local migrated = false
-    for name, pp in pairs(portals) do
-        if pp.node_name and not ALL_FRAME_NODES[pp.node_name] then
-            local ok, err = pcall(function()
-                for _, fpos in ipairs(get_frame_positions(pp)) do
-                    if minetest.get_node(fpos).name == pp.node_name then
-                        minetest.swap_node(fpos, {name = "yaportal:frame"})
-                    end
-                end
-            end)
-            if ok then
-                pp.node_name = "yaportal:frame"
-                migrated = true
-            else
-                minetest.log("warning", "[yaportal] skip migration for '" ..
-                    name .. "': " .. tostring(err))
-            end
-        end
-    end
-    if migrated then save_portals() end
+    -- Converted (foreign-material) frames persist: the swapped blocks are already
+    -- saved in the map, register_on_dignode handles their deactivation, and the
+    -- anchor entity opens the config for any material. No revert to yaportal:frame.
     minetest.after(0, function()
         for name, pp in pairs(portals) do
             update_anchor(name, pp)
