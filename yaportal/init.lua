@@ -517,6 +517,13 @@ minetest.register_on_mods_loaded(function()
     if s and s ~= "" then
         portals = minetest.deserialize(s) or {}
     end
+    -- Drop deprecated portal_gun2 (Surface) portals; their shells are cleaned by
+    -- the LBM in the deprecated-gun2 section.
+    local dropped = false
+    for name in pairs(portals) do
+        if name:match("^gun2_") then portals[name] = nil; dropped = true end
+    end
+    if dropped then save_portals() end
     sync_portals()
     -- Converted (foreign-material) frames persist: the swapped blocks are already
     -- saved in the map, register_on_dignode handles their deactivation, and the
@@ -1578,158 +1585,31 @@ minetest.register_on_leaveplayer(function(player)
     end
 end)
 
--- ── embedded portal gun (Portal-style, 1×2 on surface) ───────────────────────
--- Shoots at any surface. Opens a 1×2 portal flush with that surface.
--- A white shell border is always placed around the opening (no blocks removed
--- except the 2 interior air cells). The shell uses a dedicated white node so
--- it stands out against any wall material.
-
-local PGUN2_W, PGUN2_H = 1, 2  -- interior dimensions
-local PGUN2_SHELL = "yaportal:portal_shell"
+-- ---- deprecated: portal_gun2 (Surface) removed ----------------------------
+-- The old "Portal Gun (Surface)" placed a white shell border around a carved
+-- opening; it has been removed in favour of the type-2 hollow block portal
+-- (portal_gun3, below). portal_shell stays registered only so existing worlds
+-- can self-clean: the LBM turns leftover shells into air on mapblock load, and
+-- saved gun2_* portals are dropped on load.
 
 minetest.register_node("yaportal:portal_shell", {
-    description = "Portal Shell (unbreakable)",
+    description = "Portal Shell (deprecated)",
     tiles = {"yaportal_shell.png"},
-    groups = {not_in_creative_inventory=1},
+    groups = {not_in_creative_inventory = 1},
     diggable = false,
 })
 
-local function portal_gun2_remove(pname, color)
-    local portal_name = "gun2_" .. color .. "_" .. pname
-    local pp = portals[portal_name]
-    if not pp then return end
-    for _, fpos in ipairs(get_frame_positions(pp)) do
-        if minetest.get_node(fpos).name == pp.node_name then
-            minetest.remove_node(fpos)
-        end
-    end
-    if pp.link and portals[pp.link] then
-        portals[pp.link].link = nil
-    end
-    portals[portal_name] = nil
-    update_anchor(portal_name, nil)
-end
-
-local function portal_gun2_shoot(player, pointed_thing, color)
-    if pointed_thing.type ~= "node" then return end
-    local pname  = player:get_player_name()
-    local under  = pointed_thing.under
-    local above  = pointed_thing.above
-    local dz     = above.z - under.z
-    local dx     = above.x - under.x
-    local dy     = above.y - under.y
-    local ip     = pointed_thing.intersection_point
-                   or {x=above.x, y=above.y, z=above.z}
-
-    local axis, ns, cx, cy, cz
-
-    if dy ~= 0 then
-        if dy < 0 then
-            minetest.chat_send_player(pname, "[portal] Cannot place portals on ceilings.")
-            return
-        end
-        local look = player:get_look_dir()
-        cy = above.y + 1
-        if math.abs(look.z) >= math.abs(look.x) then
-            axis = 0; ns = (look.z < 0) and 1 or -1
-            cz   = above.z
-            cx   = math.floor(ip.x)
-        else
-            axis = 1; ns = (look.x < 0) and 1 or -1
-            cx   = above.x
-            cz   = math.floor(ip.z)
-        end
-    elseif dz ~= 0 then
-        axis = 0; ns = dz
-        cz   = above.z
-        cy   = math.floor(ip.y - 0.5)
-        cx   = math.floor(ip.x)
-    else
-        axis = 1; ns = dx
-        cx   = above.x
-        cy   = math.floor(ip.y - 0.5)
-        cz   = math.floor(ip.z)
-    end
-
-    cy = math.max(cy, 0)
-
-    local portal_name = "gun2_" .. color .. "_" .. pname
-    portal_gun2_remove(pname, color)
-
-    -- Open the 2 interior cells (portal face must be air).
-    if axis == 0 then
-        for ddy = 0, PGUN2_H-1 do
-            minetest.set_node({x=cx, y=cy+ddy, z=cz}, {name="air"})
-        end
-    else
-        for ddy = 0, PGUN2_H-1 do
-            minetest.set_node({x=cx, y=cy+ddy, z=cz}, {name="air"})
-        end
-    end
-
-    -- Place white shell border unconditionally around the opening.
-    if axis == 0 then
-        for ddx = -1, PGUN2_W do
-            minetest.set_node({x=cx+ddx, y=cy-1,       z=cz}, {name=PGUN2_SHELL})
-            minetest.set_node({x=cx+ddx, y=cy+PGUN2_H, z=cz}, {name=PGUN2_SHELL})
-        end
-        for ddy = 0, PGUN2_H-1 do
-            minetest.set_node({x=cx-1,       y=cy+ddy, z=cz}, {name=PGUN2_SHELL})
-            minetest.set_node({x=cx+PGUN2_W, y=cy+ddy, z=cz}, {name=PGUN2_SHELL})
-        end
-    else
-        for ddz = -1, PGUN2_W do
-            minetest.set_node({x=cx, y=cy-1,       z=cz+ddz}, {name=PGUN2_SHELL})
-            minetest.set_node({x=cx, y=cy+PGUN2_H, z=cz+ddz}, {name=PGUN2_SHELL})
-        end
-        for ddy = 0, PGUN2_H-1 do
-            minetest.set_node({x=cx, y=cy+ddy, z=cz-1},       {name=PGUN2_SHELL})
-            minetest.set_node({x=cx, y=cy+ddy, z=cz+PGUN2_W}, {name=PGUN2_SHELL})
-        end
-    end
-
-    portals[portal_name] = {
-        cx=cx, cy=cy, cz=cz,
-        axis=axis, ns=ns,
-        w=PGUN2_W, h=PGUN2_H,
-        node_name=PGUN2_SHELL,
-    }
-
-    local other_color = color == "blue" and "orange" or "blue"
-    local other_name  = "gun2_" .. other_color .. "_" .. pname
-    if portals[other_name] then
-        portals[portal_name].link = other_name
-        portals[other_name].link  = portal_name
-    end
-
-    save_portals()
-    sync_portals()
-    update_anchor(portal_name, portals[portal_name])
-end
-
-minetest.register_tool("yaportal:portal_gun2", {
-    description = "Portal Gun (Surface)\nLeft click: blue portal\nRight click: orange portal\n1×2, white shell, no carving",
-    inventory_image = "yaportal_gun.png^[colorize:#aa88ff:100",
-    on_use = function(itemstack, user, pointed_thing)
-        portal_gun2_shoot(user, pointed_thing, "blue")
-        return itemstack
-    end,
-    on_place = function(itemstack, placer, pointed_thing)
-        portal_gun2_shoot(placer, pointed_thing, "orange")
-        return itemstack
+minetest.register_lbm({
+    label = "Remove deprecated portal_gun2 shells",
+    name = "yaportal:cleanup_portal_shell",
+    nodenames = {"yaportal:portal_shell"},
+    run_at_every_load = true,
+    action = function(pos)
+        minetest.remove_node(pos)
     end,
 })
 
-minetest.register_on_leaveplayer(function(player)
-    local name = player:get_player_name()
-    local had = portals["gun2_blue_"..name] or portals["gun2_orange_"..name]
-    portal_gun2_remove(name, "blue")
-    portal_gun2_remove(name, "orange")
-    if had then
-        save_portals()
-        sync_portals()
-    end
-end)
+minetest.register_alias("yaportal:portal_gun2", "air")
 
 -- ── embedded portal gun 3 (type-2 hollow block portal) ───────────────────────
 -- Shoots a surface; spawns a W×H arrangement of solid "portal_block" nodes whose
