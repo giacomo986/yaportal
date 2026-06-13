@@ -1825,20 +1825,36 @@ local function portal_gun3_shoot(player, pointed_thing, color)
     local param2 = pgun3_param2(axis, ns)
     local bnode  = "yaportal:portal_block_" .. color
     local bx0, by0, bz0 = above.x, above.y, above.z  -- air cell next to the surface
-    local W, H = PGUN3_W, PGUN3_H
 
-    -- Place W×H blocks in the portal plane (width = in-plane horizontal; height
-    -- = Y for walls, or Z for floor/ceiling portals).
+    -- Opening dimensions and rotation. pw = in-plane width, ph = the other in-plane
+    -- dimension. Walls keep the fixed 1×2 (width × height) with no rotation. Floor
+    -- and ceiling portals instead orient the 1×2 opening along the shooter's facing
+    -- (long axis aligned with the look direction) and set rot so the portal "up"
+    -- points the same way — otherwise every floor portal would face a fixed way.
+    local pw, ph, rot = PGUN3_W, PGUN3_H, 0
+    if axis == 2 then
+        local look = player:get_look_dir()
+        if math.abs(look.z) >= math.abs(look.x) then
+            pw, ph = 1, 2                    -- long axis (2) along Z
+            rot = (look.z >= 0) and 0 or 2   -- portal up = +Z / -Z
+        else
+            pw, ph = 2, 1                    -- long axis (2) along X
+            rot = (look.x >= 0) and 3 or 1   -- portal up = +X / -X
+        end
+    end
+
+    -- Place pw×ph blocks in the portal plane. For walls ph runs along Y (height);
+    -- for floor/ceiling portals pw runs along X and ph along Z.
     if axis == 0 then
-        for ddx = 0, W-1 do for ddy = 0, H-1 do
+        for ddx = 0, pw-1 do for ddy = 0, ph-1 do
             minetest.set_node({x=bx0+ddx, y=by0+ddy, z=bz0}, {name=bnode, param2=param2})
         end end
     elseif axis == 1 then
-        for ddz = 0, W-1 do for ddy = 0, H-1 do
+        for ddz = 0, pw-1 do for ddy = 0, ph-1 do
             minetest.set_node({x=bx0, y=by0+ddy, z=bz0+ddz}, {name=bnode, param2=param2})
         end end
     else -- axis 2
-        for ddx = 0, W-1 do for ddz = 0, H-1 do
+        for ddx = 0, pw-1 do for ddz = 0, ph-1 do
             minetest.set_node({x=bx0+ddx, y=by0, z=bz0+ddz}, {name=bnode, param2=param2})
         end end
     end
@@ -1851,7 +1867,7 @@ local function portal_gun3_shoot(player, pointed_thing, color)
     portals[portal_name] = {
         cx=cx, cy=cy, cz=cz,
         axis=axis, ns=ns,
-        w=W, h=H,
+        w=pw, h=ph, rot=rot,
         kind="block",
         node_name=bnode,
     }
