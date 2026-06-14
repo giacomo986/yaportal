@@ -1790,6 +1790,191 @@ minetest.register_on_leaveplayer(function(player)
     end
 end)
 
+-- ── portal gun 4 (in-wall portal on a craftable white block) ─────────────────
+-- A craftable white wall block (yaportal:portal_wall). Firing portal_gun4 at a
+-- portal_wall node carves a 1×2 hollow block portal *inside the wall*: the white
+-- blocks at the portal footprint are replaced by type-2 portal_block nodes (open
+-- face toward the shooter, reusing the gun3 blocks). When the portal is removed
+-- (re-fire of the same colour, or the player leaving) the white blocks are
+-- restored, so the wall returns to its previous state.
+
+local PGUN4_W, PGUN4_H = 1, 2
+local PGUN4_WALL = "yaportal:portal_wall"
+
+minetest.register_node(PGUN4_WALL, {
+    description = "Portal Wall Block",
+    tiles = {"[fill:16x16:#ffffff"},
+    paramtype = "light",
+    sunlight_propagates = false,
+    is_ground_content = false,
+    groups = {portal_wall = 1, cracky = 2, pickaxey = 1},
+    _mcl_hardness = 1.5,
+    _mcl_blast_resistance = 6,
+})
+
+-- X of diamonds with iron ingots in the empty holes. Item names differ between
+-- VoxeLibre (mcl_core) and Minetest Game (default); pick whichever is present.
+do
+    local diamond = (minetest.get_modpath("mcl_core") and "mcl_core:diamond")
+                 or (minetest.get_modpath("default")  and "default:diamond")
+    local iron    = (minetest.get_modpath("mcl_core") and "mcl_core:iron_ingot")
+                 or (minetest.get_modpath("default")  and "default:steel_ingot")
+    if diamond and iron then
+        minetest.register_craft({
+            output = PGUN4_WALL .. " 4",
+            recipe = {
+                {diamond, iron,    diamond},
+                {iron,    diamond, iron   },
+                {diamond, iron,    diamond},
+            },
+        })
+    end
+end
+
+-- Dedicated type-2 portal blocks for the wall gun: white outer shell (so the
+-- carved cells blend with the surrounding Portal Wall Block) plus a thin 1/32
+-- frame around the opening (engine group portal_frame, drawn with special_tiles
+-- [1] = the portal colour). Separate node ids keep gun3's blocks untouched.
+local function pgun4_register_block(color, frametex)
+    minetest.register_node("yaportal:portal_wallblock_" .. color, {
+        description = color:gsub("^%l", string.upper) ..
+            " Wall Portal Block (type 2, unbreakable)",
+        drawtype = "nodebox",
+        paramtype = "light",
+        paramtype2 = "wallmounted",
+        sunlight_propagates = false,
+        tiles = {"[fill:16x16:#ffffff"},   -- white shell
+        special_tiles = {frametex},        -- 1/32 frame around the opening
+        node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
+        groups = {portal_block = 1, portal_frame = 1, not_in_creative_inventory = 1},
+        diggable = false,
+    })
+end
+pgun4_register_block("blue",   "yaportal_blue.png")
+pgun4_register_block("orange", "yaportal_orange.png")
+
+local function portal_gun4_remove(pname, color)
+    local portal_name = "gun4_" .. color .. "_" .. pname
+    local pp = portals[portal_name]
+    if not pp then return end
+    local bnode = "yaportal:portal_wallblock_" .. color
+    for _, bpos in ipairs(pgun3_block_positions(pp)) do
+        if minetest.get_node(bpos).name == bnode then
+            minetest.set_node(bpos, {name = PGUN4_WALL})
+        end
+    end
+    if pp.link and portals[pp.link] then
+        portals[pp.link].link = nil
+    end
+    portals[portal_name] = nil
+    update_anchor(portal_name, nil)
+end
+
+local function portal_gun4_shoot(player, pointed_thing, color)
+    if pointed_thing.type ~= "node" then return end
+    local pname = player:get_player_name()
+    local under = pointed_thing.under
+    local above = pointed_thing.above
+    -- Only fires when aimed at a Portal Wall Block.
+    if minetest.get_node(under).name ~= PGUN4_WALL then return end
+
+    local dx = above.x - under.x
+    local dy = above.y - under.y
+    local dz = above.z - under.z
+
+    -- Portal normal = hit-face direction (from the wall toward the player side).
+    local axis, ns
+    if dz ~= 0 then axis, ns = 0, dz
+    elseif dx ~= 0 then axis, ns = 1, dx
+    else axis, ns = 2, dy end
+
+    portal_gun4_remove(pname, color)
+
+    local param2 = pgun3_param2(axis, ns)
+    local bnode  = "yaportal:portal_wallblock_" .. color
+    -- Plane lives IN the wall: carve into the hit block itself (not the air cell
+    -- in front, unlike gun3). cx/cy/cz hold the min footprint coords.
+    local bx0, by0, bz0 = under.x, under.y, under.z
+
+    -- Opening dimensions / rotation, same scheme as gun3: walls keep a fixed 1×2
+    -- (the hit block is the bottom, footprint runs up along Y). Floor/ceiling
+    -- portals orient the 1×2 opening along the shooter's facing.
+    local pw, ph, rot = PGUN4_W, PGUN4_H, 0
+    if axis == 2 then
+        local look = player:get_look_dir()
+        if math.abs(look.z) >= math.abs(look.x) then
+            pw, ph = 1, 2
+            rot = (look.z >= 0) and 0 or 2
+        else
+            pw, ph = 2, 1
+            rot = (look.x >= 0) and 3 or 1
+        end
+    end
+
+    -- The whole footprint must be Portal Wall Block (we only carve into the wall,
+    -- and only restore what we carved).
+    local probe = {cx = bx0, cy = by0, cz = bz0, axis = axis, w = pw, h = ph}
+    local cells = pgun3_block_positions(probe)
+    for _, c in ipairs(cells) do
+        if minetest.get_node(c).name ~= PGUN4_WALL then
+            minetest.chat_send_player(pname,
+                "[yaportal] Need a " .. pw .. "×" .. ph ..
+                " Portal Wall Block surface here.")
+            return
+        end
+    end
+    for _, c in ipairs(cells) do
+        minetest.set_node(c, {name = bnode, param2 = param2})
+    end
+
+    local portal_name = "gun4_" .. color .. "_" .. pname
+    portals[portal_name] = {
+        cx = bx0, cy = by0, cz = bz0,
+        axis = axis, ns = ns,
+        w = pw, h = ph, rot = rot,
+        kind = "block",
+        node_name = bnode,
+    }
+
+    local other_color = color == "blue" and "orange" or "blue"
+    local other_name  = "gun4_" .. other_color .. "_" .. pname
+    if portals[other_name] then
+        portals[portal_name].link = other_name
+        portals[other_name].link  = portal_name
+    end
+
+    save_portals()
+    sync_portals()
+    update_anchor(portal_name, portals[portal_name])
+end
+
+minetest.register_tool("yaportal:portal_gun4", {
+    description = "Portal Gun (Wall)" ..
+        "\nLeft click: blue portal\nRight click: orange portal" ..
+        "\nCarves a " .. PGUN4_W .. "×" .. PGUN4_H ..
+        " portal into a Portal Wall Block",
+    inventory_image = "yaportal_gun.png^[colorize:#ffffff:80",
+    on_use = function(itemstack, user, pointed_thing)
+        portal_gun4_shoot(user, pointed_thing, "blue")
+        return itemstack
+    end,
+    on_place = function(itemstack, placer, pointed_thing)
+        portal_gun4_shoot(placer, pointed_thing, "orange")
+        return itemstack
+    end,
+})
+
+minetest.register_on_leaveplayer(function(player)
+    local name = player:get_player_name()
+    local had = portals["gun4_blue_"..name] or portals["gun4_orange_"..name]
+    portal_gun4_remove(name, "blue")
+    portal_gun4_remove(name, "orange")
+    if had then
+        save_portals()
+        sync_portals()
+    end
+end)
+
 -- ── pocket dimension gun ───────────────────────────────────────────────────────
 
 local POCKET_SIZE = 32  -- 32×32 platform
