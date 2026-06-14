@@ -25,6 +25,14 @@ chmod +x Luanti-portal-x86_64.AppImage
 
 On first launch, the AppImage automatically installs the `yaportal` mod into your Luanti user directory (`~/.luanti/mods/` or `~/.minetest/mods/`). Create or open a world, go to **Settings → Mods** and enable `yaportal`.
 
+> **Compatibility note.** The AppImage runs on any modern Linux kernel; the kernel version is not the limiting factor. Two host requirements matter:
+>
+> - **FUSE** — AppImages self-mount through FUSE. Most distributions ship FUSE in the kernel, but the userspace library `libfuse2` is often missing on recent releases (they default to FUSE 3). Install it (`sudo apt install libfuse2`), or run without FUSE entirely:
+>   ```sh
+>   ./Luanti-portal-x86_64.AppImage --appimage-extract-and-run
+>   ```
+> - **glibc** — `libc`/`libstdc++` are not bundled, so the AppImage uses the host's C library. It runs on systems whose glibc is **at least as new** as the machine it was built on. An error like `version 'GLIBC_2.x' not found` means the host glibc is too old; use a host with a newer glibc or rebuild on an older one (see [Build AppImage](#build-appimage)).
+
 ---
 
 ## Mod items
@@ -166,7 +174,9 @@ Enable the `yaportal/` mod in the world settings as you would any global mod.
 ./release.sh
 ```
 
-Produces `Luanti-portal-x86_64.AppImage` in the project root. Requires `patchelf` and `wget`.
+Produces `Luanti-portal-x86_64.AppImage` in the project root. Requires `patchelf`, `wget`, and `libfuse2`.
+
+**For maximum portability, build on the oldest glibc you want to support.** `libc`/`libstdc++` are not bundled, so the resulting AppImage only runs on systems with a glibc equal to or newer than the build host's. Building inside a container based on an old LTS (e.g. an older Ubuntu/Debian) yields the widest compatibility.
 
 ---
 
