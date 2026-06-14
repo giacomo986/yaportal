@@ -1746,6 +1746,55 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 	f32 txc[24];
 	generateCuboidTextureCoords(box, txc);
 	drawAutoLightedCuboid(box, tiles, 6, txc, mask);
+
+	// yaportal: optional 1/32-block frame around the portal opening (group
+	// portal_frame). A thin lip protruding from the front face on the portal
+	// side, drawn with special_tiles[0], only along the outer edges (edges shared
+	// with a merged neighbor get no border, so a stacked portal frames the whole
+	// opening, not each block). Purely cosmetic — collision/passability unchanged.
+	if (itemgroup_get(cur_node.f->groups, "portal_frame")) {
+		auto faceAxis = [](int f) -> int { return (f < 2) ? 1 : (f < 4 ? 0 : 2); };
+		auto faceSign = [](int f) -> float { return (f % 2 == 0) ? 1.0f : -1.0f; };
+
+		TileSpec ftile;
+		getSpecialTile(0, &ftile);
+		const float w = (1.0f / 32.0f) * BS; // frame width (in-plane)
+		const float d = (1.0f / 32.0f) * BS; // frame depth (along the normal)
+		const int nAxis = faceAxis(front);
+		const float nSign = faceSign(front);
+
+		// The two in-plane axes (everything except the normal axis).
+		int ip0 = -1, ip1 = -1;
+		for (int a = 0; a < 3; a++) {
+			if (a == nAxis) continue;
+			if (ip0 < 0) ip0 = a; else ip1 = a;
+		}
+
+		for (int f = 0; f < 6; f++) {
+			if (f == front || f == back)
+				continue;
+			if (mask & (1 << f))
+				continue; // merged edge → continuous cavity, no border
+			const int eAxis = faceAxis(f);
+			const float eSign = faceSign(f);
+			float lo[3] = {-H, -H, -H};
+			float hi[3] = { H,  H,  H};
+			// Lip protruding outward (player side) from the front face.
+			if (nSign > 0) { lo[nAxis] = H;      hi[nAxis] = H + d; }
+			else           { lo[nAxis] = -H - d; hi[nAxis] = -H; }
+			// Border strip of width w on this edge.
+			if (eSign > 0) { lo[eAxis] = H - w; hi[eAxis] = H; }
+			else           { lo[eAxis] = -H;    hi[eAxis] = -H + w; }
+			// Inset the strips on one in-plane axis so the 4 sides don't overlap.
+			const int spanAxis = (eAxis == ip0) ? ip1 : ip0;
+			if (eAxis == ip1) { lo[spanAxis] += w; hi[spanAxis] -= w; }
+
+			aabb3f fb(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+			f32 ftxc[24];
+			generateCuboidTextureCoords(fb, ftxc);
+			drawAutoLightedCuboid(fb, ftile, ftxc, 0);
+		}
+	}
 }
 
 void MapblockMeshGenerator::drawMeshNode()
