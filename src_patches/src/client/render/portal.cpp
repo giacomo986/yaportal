@@ -530,8 +530,17 @@ static void renderPortalRTTs(
 				// wall).  Using the exit (dst_r) portal keeps the approach side visible
 				// while clipping the interior of the frame.  Using the entrance portal
 				// instead clips the room between entrance and exit for same-world portals.
+				//
+				// Anchor to the node's OUTER FACE (pos + normal*0.5*BS), not the node
+				// center.  pos is the node center for both frame and block portals; the
+				// real portal surface is half a node out.  At grazing (~90°) view angles
+				// the Lengyel oblique near-plane is disabled (c_e_z ≈ 0), leaving this
+				// plane as the only depth clip.  Anchored at the center it kept the front
+				// half of the exit node — the solid portal_block face — which then covered
+				// the RTT.  Anchored at the outer face it clips the whole node body.
 				v3f n4 = dst_r.normal;
-				float d4 = -dst_r.normal.dotProduct(dst_r.pos); // dst_r.pos already render-space
+				v3f face4 = dst_r.pos + dst_r.normal * (0.5f * BS); // render-space outer face
+				float d4 = -dst_r.normal.dotProduct(face4);
 				cp.data[16] = n4.X; cp.data[17] = n4.Y; cp.data[18] = n4.Z; cp.data[19] = d4;
 				pm.setClipPlanes(cp);
 				use_clip_planes = true;
