@@ -319,6 +319,14 @@ void Camera::update(LocalPlayer* player, f32 frametime, f32 tool_reload_ratio)
 	f32 yaw = player->getYaw();
 	f32 pitch = player->getPitch();
 
+	// Portal warp: a decaying camera offset that turns a hard teleport into a
+	// smooth roto-translation (entry pose → exit pose). The weight eases 1 → 0
+	// over the warp duration; offsets are applied to yaw/pitch here, to the
+	// camera roll below, and to the player position before the node is placed.
+	const f32 warp_w = player->stepPortalWarp(frametime);
+	yaw   += player->m_warp_yaw_off   * warp_w;
+	pitch += player->m_warp_pitch_off * warp_w;
+
 	// This is worse than `LocalPlayer::getPosition()` but
 	// mods expect the player head to be at the parent's position
 	// plus eye height.
@@ -340,6 +348,10 @@ void Camera::update(LocalPlayer* player, f32 frametime, f32 tool_reload_ratio)
 		f32 t = std::exp(-23 * frametime);
 		player_position.Y = oldy * t + newy * (1-t);
 	}
+
+	// Portal warp positional offset (decays with warp_w). Applied after the
+	// stepheight smoothing so it shifts the whole camera, not the smoothing math.
+	player_position += player->m_warp_pos_off * warp_w;
 
 	// Set player node transformation
 	m_playernode->setPosition(player_position);
@@ -383,7 +395,8 @@ void Camera::update(LocalPlayer* player, f32 frametime, f32 tool_reload_ratio)
 			rot_pitch.setRotationDegrees(v3f(pitch, 0, 0));
 			rot_roll.setRotationDegrees(v3f(0, 0,
 				cameratilt * player->hurt_tilt_strength
-				+ player->m_camera_roll * core::RADTODEG));
+				+ (player->m_camera_roll + player->m_warp_roll_off * warp_w)
+					* core::RADTODEG));
 			// Irrlicht A*B applies B first (scene-graph child semantics)
 			core::matrix4 rot = rot_pitch * rot_roll;
 			m_headnode->setRotation(rot.getRotationDegrees());

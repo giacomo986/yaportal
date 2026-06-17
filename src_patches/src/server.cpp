@@ -2299,13 +2299,16 @@ void Server::SendPlayerSpeed(session_t peer_id, const v3f &added_vel)
 	Send(&pkt);
 }
 
-void Server::SendPortalTeleport(PlayerSAO *sao, const v3f &pos, f32 pitch, f32 yaw, f32 roll, const v3f &vel_delta, u8 sky_sunlit, u8 sky_slot, bool roll_only, bool pitch_only)
+void Server::SendPortalTeleport(PlayerSAO *sao, const v3f &pos, f32 pitch, f32 yaw, f32 roll, const v3f &vel_delta, u8 sky_sunlit, u8 sky_slot, bool roll_only, bool pitch_only, bool warp, const v3f &warp_off)
 {
 	sao->sendOutdatedData();
 	NetworkPacket pkt(TOCLIENT_PORTAL_TELEPORT, 0, sao->getPeerID());
 	pkt << pos << pitch << yaw << vel_delta << sky_sunlit << sky_slot << roll;
-	u8 flags = (roll_only ? 0x01 : 0x00) | (pitch_only ? 0x02 : 0x00);
+	u8 flags = (roll_only ? 0x01 : 0x00) | (pitch_only ? 0x02 : 0x00)
+		| (warp ? 0x04 : 0x00);
 	pkt << flags;
+	if (warp)
+		pkt << warp_off;
 	Send(&pkt);
 }
 

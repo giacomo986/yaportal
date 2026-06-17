@@ -190,6 +190,39 @@ public:
 		m_snap_view       = true;
 	}
 
+	// Portal warp: a decaying camera offset that makes a hard teleport look like
+	// a smooth roto-translation from the entry pose to the exit pose.  The player
+	// is already at the exit; these offsets (pos in BS, yaw/pitch in degrees, roll
+	// in radians) start at entry-minus-exit and ease to zero over m_warp_dur, so
+	// the rendered camera starts at the entry pose and catches up to the live one.
+	void startPortalWarp(const v3f &pos_off, f32 yaw_off, f32 pitch_off,
+			f32 roll_off, f32 dur)
+	{
+		m_warp_pos_off   = pos_off;
+		m_warp_yaw_off   = yaw_off;
+		m_warp_pitch_off = pitch_off;
+		m_warp_roll_off  = roll_off;
+		m_warp_dur       = dur;
+		m_warp_time      = 0.0f;
+		m_warp_active    = (dur > 0.0f);
+	}
+
+	// Advance the warp timer by dt and return the current offset weight (1 at the
+	// start, easing to 0 at m_warp_dur; 0 when inactive).  Camera::update calls
+	// this once per frame and scales the stored offsets by the result.
+	f32 stepPortalWarp(f32 dt)
+	{
+		if (!m_warp_active)
+			return 0.0f;
+		m_warp_time += dt;
+		if (m_warp_time >= m_warp_dur) {
+			m_warp_active = false;
+			return 0.0f;
+		}
+		f32 p = m_warp_time / m_warp_dur;       // 0 → 1
+		return 1.0f - p * p * (3.0f - 2.0f * p); // 1 → 0, smoothstep ease
+	}
+
 	bool m_snap_view       = false;
 	bool m_snap_roll_only  = false;
 	bool m_snap_pitch_only = false;
@@ -197,6 +230,15 @@ public:
 	f32  m_snap_pitch = 0.0f;
 	f32  m_snap_roll  = 0.0f;
 	f32  m_camera_roll = 0.0f;  // persistent camera roll (radians), visual only
+
+	// Portal warp state (see startPortalWarp). Offsets decay over m_warp_dur.
+	bool m_warp_active    = false;
+	f32  m_warp_time      = 0.0f;
+	f32  m_warp_dur       = 0.0f;
+	f32  m_warp_yaw_off   = 0.0f;  // degrees
+	f32  m_warp_pitch_off = 0.0f;  // degrees
+	f32  m_warp_roll_off  = 0.0f;  // radians
+	v3f  m_warp_pos_off   = v3f(0.0f, 0.0f, 0.0f);  // BS units
 
 	// Set by TOCLIENT_PORTAL_TELEPORT to override sunlight_seen for N frames,
 	// preventing a 1-2 frame sky-type glitch after dimension change.

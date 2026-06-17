@@ -140,6 +140,31 @@ end
 
 local function node_at(x,y,z) return minetest.get_node({x=x,y=y,z=z}).name end
 
+-- A node blocks the player's collision box when it is walkable.  Unknown nodes
+-- (not yet loaded / unregistered) are treated as solid so we never embed the
+-- player inside one.
+local function node_is_walkable(name)
+    if name == "ignore" then return true end
+    local def = minetest.registered_nodes[name]
+    return (def == nil) or def.walkable
+end
+
+-- Raise a feet position out of any solid block it sits inside, so the player
+-- ends up standing on top instead of embedded.  Only the single node directly
+-- under the feet centre is tested — sampling the box corners would push the
+-- player up whenever a corner grazes adjacent geometry (e.g. the portal's own
+-- frame), launching them too high.  Up-only; returns the new feet Y.  A node
+-- whose top exactly meets the feet is support, not embedding, so a resting
+-- position is left untouched.  Climbs through a solid fill via the iteration cap.
+local function lift_feet_out_of_blocks(x, z, feet)
+    for _ = 1, 16 do                      -- cap iterations (solid fill)
+        local y_n = math.floor(feet + 0.5) -- node whose span contains the feet
+        if not node_is_walkable(node_at(x, y_n, z)) then break end
+        feet = y_n + 0.5                   -- rest on this node's top, recheck above
+    end
+    return feet
+end
+
 local function check_frame(cx, cy, cz, axis, frame_node, w, h)
     if axis == 0 then
         for dx = 0, w-1 do
@@ -312,6 +337,22 @@ end
 
 local function past_trigger(ppos, pp)
     return portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
+end
+
+-- True only when the player is positioned to actually drop through a floor
+-- portal (axis==2, ns==1): horizontally over the opening hole (shrunk by 0.15 so
+-- standing on the surrounding frame doesn't count) and vertically within the
+-- entry slab spanning from the plane down to where the teleport fires.  Gates
+-- the collision-box shift so it never engages while merely standing nearby.
+local function over_floor_opening(ppos, pp)
+    if pp.axis ~= 2 or (pp.ns or 1) ~= 1 then return false end
+    local c  = inner_center(pp)
+    local w  = pp.w or 1
+    local h  = pp.h or 1
+    return math.abs(ppos.x - c.x) <= (w / 2 - 0.15)
+       and math.abs(ppos.z - c.z) <= (h / 2 - 0.15)
+       and ppos.y >= pp.cy - 1.3
+       and ppos.y <= pp.cy + 0.6
 end
 
 -- Rotate right/up vectors by rot×90° around the portal normal axis.
@@ -1051,7 +1092,8 @@ minetest.register_globalstep(function(dtime)
         for portal_name, pp in pairs(portals) do
             local s = state[portal_name]
             if pp.axis == 2 and (pp.ns or 1) == 1
-               and s and s.in_bounds and s.entered_from_front and not s.triggered then
+               and s and s.entered_from_front and not s.triggered
+               and over_floor_opening(ppos, pp) then
                 need_shift = true
                 shift_cy = pp.cy
                 break
@@ -1107,6 +1149,25 @@ minetest.register_globalstep(function(dtime)
                 y = dst_c.y + new_off.y - eff_eye_h,
                 z = dst_c.z + new_off.z,
             }
+
+            -- Step-up on exit: if the destination feet land inside a solid block,
+            -- raise the player so they stand on top of it rather than embedded.
+            -- Box bottom = feet + collisionbox min-Y (usually 0 for players).
+            local warp_off = nil   -- camera warp offset (world nodes), nil = none
+            do
+                local cb     = props and props.collisionbox
+                local boxbot = cb and cb[2] or 0.0
+                local bottom = new_pos.y + boxbot
+                local lifted = lift_feet_out_of_blocks(new_pos.x, new_pos.z, bottom)
+                if lifted > bottom + 1e-3 then
+                    local dy  = lifted - bottom
+                    new_pos.y = new_pos.y + dy
+                    -- Camera starts at the un-lifted (seamless) exit and rises to
+                    -- the lifted standing position over the warp; offset points
+                    -- from the actual exit back down to the seamless view.
+                    warp_off  = {x = 0, y = -dy, z = 0}
+                end
+            end
 
             local vel      = player:get_velocity() or {x=0,y=0,z=0}
             local new_vel  = portal_transform_dir(vel,  src_n, eff_src_r, src_u, dst_n, dst_r, dst_u)
@@ -1197,6 +1258,10 @@ minetest.register_globalstep(function(dtime)
                 sky_sunlit = true   -- overworld→void
                 src_slot = portal_index[teleport_src]
             end
+            -- warp_off is set only when the exit step-up forced the player up to
+            -- avoid clipping into blocks. The client then eases the camera from
+            -- the seamless (un-lifted) exit up to the standing position. Rotation
+            -- is left to the normal roll-settling animation below.
             player:portal_teleport(new_pos, new_yaw, {
                 x=new_vel.x-vel.x,
                 y=new_vel.y-vel.y,
@@ -1206,6 +1271,7 @@ minetest.register_globalstep(function(dtime)
                 sky_slot   = src_slot,
                 pitch      = new_pitch,
                 roll       = new_roll,  -- instant disorientation; roll_targets recovers to 0
+                warp       = warp_off,
             })
             -- Portal-style smooth recovery: animate new_roll → 0 (upright).
             -- Controls are briefly inverted only while roll is large; recover in ~|new_roll|/π s.

@@ -1716,12 +1716,20 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 
 	bool roll_only  = false;
 	bool pitch_only = false;
+	bool warp       = false;
 	if (pkt->getRemainingBytes() >= 1) {
 		u8 flags = 0;
 		*pkt >> flags;
 		roll_only  = (flags & 0x01) != 0;
 		pitch_only = (flags & 0x02) != 0;
+		warp       = (flags & 0x04) != 0;
 	}
+
+	// Warp offset (BS): the vector from the actual exit back to the seamless
+	// (un-adjusted) exit. Present only when the warp flag is set.
+	v3f warp_off(0, 0, 0);
+	if (warp && pkt->getRemainingBytes() >= 12)
+		*pkt >> warp_off;
 
 	LocalPlayer *player = m_env.getLocalPlayer();
 	assert(player != NULL);
@@ -1738,6 +1746,17 @@ void Client::handleCommand_PortalTeleport(NetworkPacket *pkt)
 		player->setPosition(pos);
 		player->snapView(yaw, pitch, roll);
 		player->addVelocity(vel_delta);
+
+		if (warp) {
+			// Exit step-up forced the player up to avoid clipping into blocks,
+			// so the position diverges from the seamless portal view. Ease the
+			// camera from the seamless exit (pos + warp_off) up to the actual
+			// standing position. Rotation is left to the roll-settling animation,
+			// so only a positional offset is supplied here.
+			const f32 PORTAL_WARP_DURATION = 0.3f; // seconds
+			player->startPortalWarp(warp_off, 0.0f, 0.0f, 0.0f,
+				PORTAL_WARP_DURATION);
+		}
 
 		if (sky_sunlit != 0 || sky_slot != 0xFF) {
 			player->sky_sunlit_override_frames = 3;

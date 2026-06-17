@@ -225,10 +225,19 @@ int ObjectRef::l_portal_teleport(lua_State *L)
 	}
 
 	float roll = 0.0f;
+	bool  warp = false;
+	v3f   warp_off(0.0f, 0.0f, 0.0f);
 	if (lua_istable(L, 5)) {
 		lua_getfield(L, 5, "roll");
 		if (lua_isnumber(L, -1))
 			roll = readParam<float>(L, -1);
+		lua_pop(L, 1);
+		// warp = {x,y,z} world offset (nodes) the camera eases from, or nil.
+		lua_getfield(L, 5, "warp");
+		if (lua_istable(L, -1)) {
+			warp = true;
+			warp_off = read_v3f(L, -1) * BS;
+		}
 		lua_pop(L, 1);
 	}
 	s_player_roll[playersao->getPeerID()] = roll;
@@ -236,7 +245,7 @@ int ObjectRef::l_portal_teleport(lua_State *L)
 	playersao->setPlayerYaw(yaw);
 	playersao->setPosTeleportNoSend(pos);
 	playersao->setMaxSpeedOverride(vel_delta);
-	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, roll, vel_delta, sky_sunlit, sky_slot);
+	getServer(L)->SendPortalTeleport(playersao, pos, playersao->getLookPitch(), yaw, roll, vel_delta, sky_sunlit, sky_slot, false, false, warp, warp_off);
 	return 0;
 }
 
