@@ -46,6 +46,11 @@ local roll_targets      = {}    -- pname → target roll (radians), nil = no ani
 -- Set when player is in a floor-portal's bounds from above and not yet triggered;
 -- cleared on trigger or exit.  Avoids redundant set_physics_override calls.
 local floor_portal_shift_active = {}  -- pname → bool
+-- Floor-portal fall-damage grace: get_us_time() stamp set while a player is
+-- dropping through a floor portal (shift active) or just teleported out of one.
+-- Any "fall" hpchange within the grace window is negated, so a single contact
+-- tick that slips past the collision shift never deals damage.
+local floor_portal_grace = {}  -- pname → us timestamp
 local player_form_context = {}  -- pname → portal_name currently being configured
 local player_mat_preview  = {}  -- pname → node_name selected in textlist (not yet applied)
 local player_mat_filter   = {}  -- pname → filter string for material textlist
@@ -339,20 +344,18 @@ local function past_trigger(ppos, pp)
     return portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
 end
 
--- True only when the player is positioned to actually drop through a floor
--- portal (axis==2, ns==1): horizontally over the opening hole (shrunk by 0.15 so
--- standing on the surrounding frame doesn't count) and vertically within the
--- entry slab spanning from the plane down to where the teleport fires.  Gates
--- the collision-box shift so it never engages while merely standing nearby.
-local function over_floor_opening(ppos, pp)
+-- Lateral (XZ) test for a floor portal (axis==2, ns==1): is the player
+-- horizontally over the opening hole?  Shrunk by 0.15 so standing on the
+-- surrounding frame (or, for type-2 block portals, the block's solid rim) does
+-- not count.  Since the opening is a hole, being laterally over it means the
+-- player is dropping through — there is no solid ground to merely stand on.
+local function over_floor_opening_xz(ppos, pp)
     if pp.axis ~= 2 or (pp.ns or 1) ~= 1 then return false end
-    local c  = inner_center(pp)
-    local w  = pp.w or 1
-    local h  = pp.h or 1
+    local c = inner_center(pp)
+    local w = pp.w or 1
+    local h = pp.h or 1
     return math.abs(ppos.x - c.x) <= (w / 2 - 0.15)
        and math.abs(ppos.z - c.z) <= (h / 2 - 0.15)
-       and ppos.y >= pp.cy - 1.3
-       and ppos.y <= pp.cy + 0.6
 end
 
 -- Rotate right/up vectors by rot×90° around the portal normal axis.
@@ -1078,6 +1081,7 @@ minetest.register_on_leaveplayer(function(player)
     local name = player:get_player_name()
     player_states[name] = nil
     floor_portal_shift_active[name] = nil
+    floor_portal_grace[name] = nil
     player_form_context[name] = nil
     player_mat_preview[name] = nil
     player_mat_filter[name]  = nil
@@ -1095,6 +1099,7 @@ minetest.register_globalstep(function(dtime)
         local props = player:get_properties()
         local eye_h = (props and props.eye_height) or 1.625
         local cpos  = {x=ppos.x, y=ppos.y + eye_h, z=ppos.z}
+        local vel   = player:get_velocity() or {x=0, y=0, z=0}
 
         if not player_states[pname] then player_states[pname] = {} end
         local state = player_states[pname]
@@ -1116,7 +1121,13 @@ minetest.register_globalstep(function(dtime)
                 local just_entered = not s.in_bounds
                 if just_entered then
                     s.in_bounds          = true
+                    -- A fast faller's first in-bounds sample can already be below the
+                    -- on_ns_side floor tolerance (-1.0) even though they dropped in
+                    -- from the top.  Treat "descending and laterally over the hole" as
+                    -- front entry too, so the teleport/shift path isn't gated off.
                     s.entered_from_front = on_ns_side(ppos, pp)
+                        or (pp.axis == 2 and (pp.ns or 1) == 1
+                            and vel.y < -0.1 and over_floor_opening_xz(ppos, pp))
                     s.triggered          = false
                 end
 
@@ -1137,31 +1148,46 @@ minetest.register_globalstep(function(dtime)
             end
         end
 
-        -- Floor portal passthrough: while in a floor-portal's bounds from above and not yet
-        -- triggered, raise the collision-box bottom so the player can sink past the blocking
-        -- block below the portal frame, letting cpos reach past_trigger naturally.
-        -- Shift = pp.cy + 0.5 - ppos.y + 0.1 clears the portal frame top (at pp.cy+0.5).
+        -- Floor portal passthrough: while over a floor portal's hole and not yet
+        -- triggered, raise the collision-box bottom so the player sinks past the
+        -- blocking node below (type-1: the block under the frame; type-2: the portal
+        -- block's own solid bottom panel), letting cpos reach past_trigger naturally.
+        --
+        -- Gate on a one-tick-ahead predicted feet Y (ppos.y + vy·dtime), NOT on raw
+        -- velocity: a fast faller whose box-shift is overrun and arrested on the block
+        -- has vy≈0, so a velocity gate would clear the shift and leave them stuck on
+        -- the block forever (never descending to trigger depth).  The predicted-Y gate
+        -- both engages early for fast falls and keeps re-engaging to un-stick an
+        -- arrested player.  Since the opening is a hole, being laterally over it always
+        -- means dropping through, so no extra "is falling" guard is needed.
+        local look_y = ppos.y + math.min(0, vel.y) * dtime  -- predicted next-tick feet Y
         local need_shift = false
         local shift_cy = nil
         for portal_name, pp in pairs(portals) do
             local s = state[portal_name]
             if pp.axis == 2 and (pp.ns or 1) == 1
                and s and s.entered_from_front and not s.triggered
-               and over_floor_opening(ppos, pp) then
+               and over_floor_opening_xz(ppos, pp)
+               and ppos.y >= pp.cy - 1.3
+               and look_y <= pp.cy + 0.6 then
                 need_shift = true
                 shift_cy = pp.cy
                 break
             end
         end
         if need_shift then
-            -- Recompute every frame: shift must push box bottom above portal frame top
-            -- (pp.cy + 0.5).  Capped at 1.7 (just under player height 1.77) to keep box valid.
-            local shift = math.min(1.7, math.max(0, shift_cy + 0.5 - ppos.y + 0.1))
+            -- Recompute every frame: shift must push box bottom above the obstruction
+            -- top (pp.cy + 0.5 is the frame/block-bottom plane).  Capped at 1.7 (just
+            -- under player height 1.77) to keep the box valid.  Uses the same predicted
+            -- look_y so the pin tracks where the feet WILL be next physics step
+            -- (set_physics_override only takes effect next step).
+            local shift = math.min(1.7, math.max(0, shift_cy + 0.5 - look_y + 0.1))
             local prev  = floor_portal_shift_active[pname]
             if prev ~= shift then
                 floor_portal_shift_active[pname] = shift
                 player:set_physics_override({floor_portal_cb_shift = shift})
             end
+            floor_portal_grace[pname] = minetest.get_us_time()
         elseif floor_portal_shift_active[pname] then
             floor_portal_shift_active[pname] = nil
             player:set_physics_override({floor_portal_cb_shift = 0})
@@ -1170,6 +1196,12 @@ minetest.register_globalstep(function(dtime)
         if teleport_src and teleport_dst then
             local src = portals[teleport_src]
             local dst = portals[teleport_dst]
+
+            -- Extend the fall-damage grace through a floor-portal exit so the
+            -- arrival (and any block grazed on the way out) deals no fall damage.
+            if src.axis == 2 and (src.ns or 1) == 1 then
+                floor_portal_grace[pname] = minetest.get_us_time()
+            end
 
             local src_n, src_r, src_u = portal_basis(src)
             local dst_n, dst_r, dst_u = portal_basis(dst)
@@ -2447,9 +2479,15 @@ local function wearing_antifall_boots(player)
 end
 
 minetest.register_on_player_hpchange(function(player, hp_change, reason)
-    if hp_change < 0 and reason and reason.type == "fall"
-       and wearing_antifall_boots(player) then
-        return 0
+    if hp_change < 0 and reason and reason.type == "fall" then
+        if wearing_antifall_boots(player) then return 0 end
+        -- Negate fall damage during/just after a floor-portal drop: a fast faller
+        -- may graze the under-block for a single tick before the collision shift
+        -- engages.  The grace stamp is refreshed every shift tick and on exit.
+        local grace = floor_portal_grace[player:get_player_name()]
+        if grace and (minetest.get_us_time() - grace) < 500000 then
+            return 0
+        end
     end
     return hp_change
 end, true)  -- modifier = true so the returned value replaces the damage
