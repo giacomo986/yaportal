@@ -676,22 +676,64 @@ local function try_activate_near(pos, frame_node, placer)
     end
 end
 
+-- Tear a portal down: drop the reverse link, forget it, persist, resync the
+-- render list and remove its config anchor. Central path for every close
+-- reason (dig, delete button, frame-integrity check).
+local function close_portal(name, msg)
+    local pp = portals[name]
+    if not pp then return end
+    if pp.link and portals[pp.link] then
+        portals[pp.link].link = nil
+    end
+    portals[name] = nil
+    save_portals()
+    sync_portals()
+    update_anchor(name, nil)
+    if msg then minetest.chat_send_all(msg) end
+end
+
 local function deactivate_if_frame(pos)
     for name, pp in pairs(portals) do
         if block_in_frame(pos, pp) then
-            -- Clean up bidirectional link
-            if pp.link and portals[pp.link] then
-                portals[pp.link].link = nil
-            end
-            portals[name] = nil
-            save_portals()
-            sync_portals()
-            update_anchor(name, nil)
-            minetest.chat_send_all("[portal] '" .. name .. "' deactivated.")
+            close_portal(name, "[portal] '" .. name .. "' deactivated.")
             return
         end
     end
 end
+
+-- Frame-integrity check: every frame node of a config-built portal ("portal_N")
+-- must still be its chosen material. Catches destruction the dig callbacks miss
+-- (explosions, pistons, set_node by other mods). Unloaded nodes (get_node_or_nil
+-- == nil) are treated as intact so portals in unloaded chunks aren't culled.
+local function frame_intact(pp)
+    local node_name = pp.node_name or "yaportal:frame"
+    for _, fpos in ipairs(get_frame_positions(pp)) do
+        local n = minetest.get_node_or_nil(fpos)
+        if n and n.name ~= node_name then return false end
+    end
+    return true
+end
+
+-- Gun- and pocket-spawned portals manage their own block structures and use a
+-- different geometry, so the frame check must skip them. Everything else is a
+-- player-built frame portal (default "portal_N", or any name the user renamed it
+-- to in the config menu).
+local function is_user_frame_portal(name)
+    return not (name:match("^gun_") or name:match("^gun%d_")
+             or name:match("^pocket_"))
+end
+
+local frame_check_accum = 0
+minetest.register_globalstep(function(dtime)
+    frame_check_accum = frame_check_accum + dtime
+    if frame_check_accum < 1.0 then return end
+    frame_check_accum = 0
+    for name, pp in pairs(portals) do
+        if is_user_frame_portal(name) and not frame_intact(pp) then
+            close_portal(name, "[portal] '" .. name .. "' closed (frame broken).")
+        end
+    end
+end)
 
 -- ── config GUI ──────────────────────────────────────────────────────────────
 
@@ -779,7 +821,7 @@ open_portal_config = function(player, portal_name)
 
     minetest.show_formspec(pname, "yaportal:config",
         "formspec_version[4]" ..
-        "size[9,13]" ..
+        "size[9,13.2]" ..
         "label[0.5,0.5;Configure Portal]" ..
         "label[0.5,1.1;" .. minetest.formspec_escape(info) .. "]" ..
         "field[0.5,2;8.5,0.8;portal_name;Portal name;" ..
@@ -804,7 +846,8 @@ open_portal_config = function(player, portal_name)
         "textlist[0.5,7.6;8.5,3.5;material_list;" ..
             table.concat(mat_items, ",") .. ";" .. mat_selected .. "]" ..
         "button[0.5,11.6;4,0.8;apply_material;Apply Material]" ..
-        "button[5,11.6;3.5,0.8;save;Save]"
+        "button[5,11.6;3.5,0.8;save;Save]" ..
+        "button[0.5,12.2;8,0.8;delete_portal;Delete Portal]"
     )
 end
 
@@ -819,6 +862,17 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     if fields.quit then
         player_mat_preview[pname] = nil
         player_mat_filter[pname]  = nil
+        return
+    end
+
+    -- "Delete Portal" button → tear the portal down and close the menu.
+    -- Handled early so a stale textlist event can't shadow the press.
+    if fields.delete_portal then
+        close_portal(portal_name, "[portal] '" .. portal_name .. "' deleted.")
+        player_form_context[pname] = nil
+        player_mat_preview[pname]  = nil
+        player_mat_filter[pname]   = nil
+        minetest.close_formspec(pname, "yaportal:config")
         return
     end
 
@@ -2332,3 +2386,70 @@ minetest.register_globalstep(function(dtime)
         end
     end
 end)
+
+-- Anti-fall boots: negate all fall damage while worn. Crafted from iron and
+-- diamonds. Integrates with VoxeLibre's mcl_armor (equippable in the feet slot)
+-- when present; falls back to a plain inventory-carried item otherwise.
+local ANTIFALL_BOOTS = "yaportal:antifall_boots"
+local HAVE_MCL_ARMOR = minetest.get_modpath("mcl_armor") ~= nil
+
+if HAVE_MCL_ARMOR then
+    minetest.register_tool(ANTIFALL_BOOTS, {
+        description = "Anti-Fall Boots\nNegate fall damage while worn",
+        inventory_image = "yaportal_boots_inv.png",
+        -- feet armor piece; no mcl_armor_uses group => never wears out
+        groups = {armor = 1, armor_feet = 1,
+                  non_combat_armor = 1, non_combat_feet = 1},
+        on_place = mcl_armor.equip_on_use,
+        on_secondary_use = mcl_armor.equip_on_use,
+        _mcl_armor_element = "feet",
+        _mcl_armor_texture = "yaportal_boots.png",
+        sounds = {
+            _mcl_armor_equip   = "mcl_armor_equip_diamond",
+            _mcl_armor_unequip = "mcl_armor_unequip_diamond",
+        },
+    })
+else
+    minetest.register_craftitem(ANTIFALL_BOOTS, {
+        description = "Anti-Fall Boots\nNegate fall damage while carried",
+        inventory_image = "yaportal_boots_inv.png",
+        stack_max = 1,
+        groups = {armor_feet = 1},
+    })
+end
+
+do
+    local diamond = (minetest.get_modpath("mcl_core") and "mcl_core:diamond")
+                 or (minetest.get_modpath("default")  and "default:diamond")
+    local iron    = (minetest.get_modpath("mcl_core") and "mcl_core:iron_ingot")
+                 or (minetest.get_modpath("default")  and "default:steel_ingot")
+    if diamond and iron then
+        minetest.register_craft({
+            output = ANTIFALL_BOOTS,
+            recipe = {
+                {diamond, "", diamond},
+                {iron,    "", iron   },
+            },
+        })
+    end
+end
+
+-- True when the player has the boots equipped in the feet armor slot (mcl_armor
+-- list "armor" index 5), or — without mcl_armor — simply carried in "main".
+local function wearing_antifall_boots(player)
+    local inv = player:get_inventory()
+    if not inv then return false end
+    if HAVE_MCL_ARMOR then
+        local st = inv:get_stack("armor", 5)
+        return st and st:get_name() == ANTIFALL_BOOTS
+    end
+    return inv:contains_item("main", ANTIFALL_BOOTS)
+end
+
+minetest.register_on_player_hpchange(function(player, hp_change, reason)
+    if hp_change < 0 and reason and reason.type == "fall"
+       and wearing_antifall_boots(player) then
+        return 0
+    end
+    return hp_change
+end, true)  -- modifier = true so the returned value replaces the damage
