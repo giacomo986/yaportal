@@ -1166,6 +1166,7 @@ minetest.register_globalstep(function(dtime)
         for portal_name, pp in pairs(portals) do
             local s = state[portal_name]
             if pp.axis == 2 and (pp.ns or 1) == 1
+               and pp.link and portals[pp.link]   -- only a linked portal lets you drop through
                and s and s.entered_from_front and not s.triggered
                and over_floor_opening_xz(ppos, pp)
                and ppos.y >= pp.cy - 1.3
@@ -1988,9 +1989,8 @@ end
 -- frame around the opening (engine group portal_frame, drawn with special_tiles
 -- [1] = the portal colour). Separate node ids keep gun3's blocks untouched.
 local function pgun4_register_block(color, frametex)
-    minetest.register_node("yaportal:portal_wallblock_" .. color, {
-        description = color:gsub("^%l", string.upper) ..
-            " Wall Portal Block (type 2, unbreakable)",
+    local Color = color:gsub("^%l", string.upper)
+    local base = {
         drawtype = "nodebox",
         paramtype = "light",
         paramtype2 = "wallmounted",
@@ -1998,12 +1998,43 @@ local function pgun4_register_block(color, frametex)
         tiles = {"[fill:16x16:#ffffff"},   -- white shell
         special_tiles = {frametex},        -- 1/32 frame around the opening
         node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
-        groups = {portal_block = 1, portal_frame = 1, not_in_creative_inventory = 1},
         diggable = false,
-    })
+    }
+    -- Open variant: linked portal. Front face is carved away (see-through hole).
+    local open = table.copy(base)
+    open.description = Color .. " Wall Portal Block (type 2, unbreakable)"
+    open.groups = {portal_block = 1, portal_frame = 1, not_in_creative_inventory = 1}
+    minetest.register_node("yaportal:portal_wallblock_" .. color, open)
+    -- Closed variant: unlinked portal. Solid block + colored frame, no hole
+    -- (group portal_closed makes the engine keep the front face solid).
+    local closed = table.copy(base)
+    closed.description = Color .. " Wall Portal Block (closed)"
+    closed.groups = {portal_block = 1, portal_frame = 1, portal_closed = 1,
+        not_in_creative_inventory = 1}
+    minetest.register_node("yaportal:portal_wallblock_" .. color .. "_off", closed)
 end
 pgun4_register_block("blue",   "yaportal_blue.png")
 pgun4_register_block("orange", "yaportal_orange.png")
+
+-- Swap a gun4 portal's blocks between the open (linked, see-through) and closed
+-- (unlinked, solid + frame) variants to match its current link state.
+local function pgun4_apply_state(portal_name)
+    local pp = portals[portal_name]
+    if not pp then return end
+    local color = portal_name:match("^gun4_(%w+)_")
+    if not color then return end
+    local base   = "yaportal:portal_wallblock_" .. color
+    local linked = pp.link ~= nil and portals[pp.link] ~= nil
+    local target = linked and base or (base .. "_off")
+    local param2 = pgun3_param2(pp.axis, pp.ns)
+    for _, c in ipairs(pgun3_block_positions(pp)) do
+        local nn = minetest.get_node(c).name
+        if nn == base or nn == base .. "_off" then
+            minetest.set_node(c, {name = target, param2 = param2})
+        end
+    end
+    pp.node_name = target
+end
 
 local function portal_gun4_remove(pname, color)
     local portal_name = "gun4_" .. color .. "_" .. pname
@@ -2011,15 +2042,21 @@ local function portal_gun4_remove(pname, color)
     if not pp then return end
     local bnode = "yaportal:portal_wallblock_" .. color
     for _, bpos in ipairs(pgun3_block_positions(pp)) do
-        if minetest.get_node(bpos).name == bnode then
+        local nn = minetest.get_node(bpos).name
+        if nn == bnode or nn == bnode .. "_off" then
             minetest.set_node(bpos, {name = PGUN4_WALL})
         end
     end
-    if pp.link and portals[pp.link] then
-        portals[pp.link].link = nil
+    local partner = pp.link
+    if partner and portals[partner] then
+        portals[partner].link = nil
     end
     portals[portal_name] = nil
     update_anchor(portal_name, nil)
+    -- Partner is now unlinked → reclose its blocks (solid + frame, no hole).
+    if partner and portals[partner] then
+        pgun4_apply_state(partner)
+    end
 end
 
 local function portal_gun4_shoot(player, pointed_thing, color)
@@ -2054,12 +2091,27 @@ local function portal_gun4_shoot(player, pointed_thing, color)
     local pw, ph, rot = PGUN4_W, PGUN4_H, 0
     if axis == 2 then
         local look = player:get_look_dir()
+        local along, step   -- long (2-block) axis and +1/-1 step to the far cell
         if math.abs(look.z) >= math.abs(look.x) then
-            pw, ph = 1, 2
-            rot = (look.z >= 0) and 0 or 2
+            pw, ph = 1, 2                       -- 1 wide (X) × 2 long (Z)
+            rot  = (look.z >= 0) and 0 or 2
+            along, step = "z", (look.z >= 0) and 1 or -1
         else
-            pw, ph = 2, 1
-            rot = (look.x >= 0) and 3 or 1
+            pw, ph = 2, 1                       -- 2 long (X) × 1 wide (Z)
+            rot  = (look.x >= 0) and 3 or 1
+            along, step = "x", (look.x >= 0) and 1 or -1
+        end
+        -- Pointed block is the near end; portal extends one block toward the view.
+        -- If that far block can't form a portal, fall back to the opposite side
+        -- (pointed block becomes the far end).
+        local far = {x = under.x, y = under.y, z = under.z}
+        far[along] = under[along] + step
+        if minetest.get_node(far).name ~= PGUN4_WALL then
+            step = -step
+        end
+        -- cx/cz must hold the min footprint coord.
+        if step < 0 then
+            if along == "z" then bz0 = under.z - 1 else bx0 = under.x - 1 end
         end
     end
 
@@ -2075,8 +2127,10 @@ local function portal_gun4_shoot(player, pointed_thing, color)
             return
         end
     end
+    -- Place the closed (solid) variant; pgun4_apply_state below opens it (and the
+    -- partner) only if a paired portal already exists.
     for _, c in ipairs(cells) do
-        minetest.set_node(c, {name = bnode, param2 = param2})
+        minetest.set_node(c, {name = bnode .. "_off", param2 = param2})
     end
 
     local portal_name = "gun4_" .. color .. "_" .. pname
@@ -2085,7 +2139,7 @@ local function portal_gun4_shoot(player, pointed_thing, color)
         axis = axis, ns = ns,
         w = pw, h = ph, rot = rot,
         kind = "block",
-        node_name = bnode,
+        node_name = bnode .. "_off",
     }
 
     local other_color = color == "blue" and "orange" or "blue"
@@ -2093,6 +2147,12 @@ local function portal_gun4_shoot(player, pointed_thing, color)
     if portals[other_name] then
         portals[portal_name].link = other_name
         portals[other_name].link  = portal_name
+    end
+
+    -- Open both ends when linked, otherwise leave this one closed (solid + frame).
+    pgun4_apply_state(portal_name)
+    if portals[portal_name].link then
+        pgun4_apply_state(portals[portal_name].link)
     end
 
     save_portals()

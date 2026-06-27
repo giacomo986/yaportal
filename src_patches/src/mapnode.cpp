@@ -434,6 +434,9 @@ static aabb3f portal_block_panel(int face)
 static u8 portal_block_open_faces(const MapNode &n, const NodeDefManager *nodemgr,
 	u8 neighbors)
 {
+	// Closed (unlinked) portal block: fully solid, no passable/open faces.
+	if (itemgroup_get(nodemgr->get(n).groups, "portal_closed") != 0)
+		return 0;
 	int front = portal_block_dir_to_face(n.getWallMountedDir(nodemgr));
 	int back = front ^ 1;
 	u8 open = (u8)(1 << front);

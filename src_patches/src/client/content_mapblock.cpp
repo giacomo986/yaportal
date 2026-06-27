@@ -1730,8 +1730,11 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 		if (face_dirs[i] == frontdir) { front = i; break; }
 	int back = front ^ 1;
 
-	// Faces to skip (mask bit set = face not drawn = open).
-	u8 mask = (u8)(1 << front);
+	// Faces to skip (mask bit set = face not drawn = open). A "closed" portal
+	// block (group portal_closed, set by yaportal when the portal is unlinked)
+	// keeps its front face solid — only the colored frame is drawn, no hole.
+	const bool closed = itemgroup_get(cur_node.f->groups, "portal_closed") != 0;
+	u8 mask = closed ? 0 : (u8)(1 << front);
 	for (int face = 0; face < 6; face++) {
 		if (face == front || face == back)
 			continue;

@@ -30,7 +30,17 @@ quasi-verticale (gimbal lock).
 
 Funzioni aggiunte non previste in questa lista, già operative:
 
-- **Portal gun** (`portal_gun`, `portal_gun4` in-wall su blocco bianco craftabile).
+- **Portal gun** (`portal_gun`, `portal_gun3` type-2, `portal_gun4` in-wall su
+  blocco bianco craftabile).
+  - **Wall gun — posizionamento pavimento:** direzione = direzione ortogonale più
+    vicina alla vista (asse + segno); il blocco puntato è l'estremo *vicino* e il
+    portale si estende un blocco in avanti (lontano dal player). Se quel secondo
+    blocco non può formare il portale, fallback sul lato opposto (il blocco puntato
+    diventa l'estremo lontano).
+  - **Wall gun — portale chiuso se non accoppiato:** variante nodo `_off` (gruppo
+    `portal_closed`) → blocco solido con sola cornice colorata, niente foro
+    trasparente né passthrough pavimento (gated su `pp.link`); si apre solo quando
+    linkato. Swap open↔closed via `pgun4_apply_state` su shoot/remove.
 - **Portali type-2** = blocchi cavi (`portal_block`, gruppo `portal_block`,
   solidità direzionale lato engine). Tool `portal_gun3`.
 - **Exit step-up**: i piedi che atterrano in un blocco solido vengono alzati sopra

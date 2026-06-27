@@ -60,6 +60,19 @@ Places portals on surfaces without building a frame.
 
 The two portals are automatically linked. Walking through one teleports the player with correct orientation.
 
+### Wall Portal Gun (`yaportal:portal_gun4`)
+
+Carves a portal *into* a craftable **Portal Wall Block** surface (the portal sits flush in the wall instead of in front of it).
+
+| Action | Effect |
+|--------|--------|
+| Left click | Carve blue portal into the pointed Portal Wall Block |
+| Right click | Carve orange portal into the pointed Portal Wall Block |
+
+On a **floor/ceiling** the portal orients along the nearest cardinal to your view and grows *away* from you: the block you point at is the near edge, with the portal extending one block forward (it falls back to the opposite side if that block can't form the portal).
+
+A portal whose pair doesn't exist yet stays **closed** — a solid block showing only the coloured frame (no see-through hole, no fall-through). It opens once both blue and orange are placed; removing one re-closes the other.
+
 ### Pocket Dimension Gun (`yaportal:pocket_gun`)
 
 Creates a private pocket dimension for the player.
