@@ -429,6 +429,60 @@ static aabb3f portal_block_panel(int face)
 	}
 }
 
+// yaportal partial-carve descriptor, stored in the param2 bits above the
+// wallmounted direction (getWallMounted masks & 0x07, so bits 3..6 are free):
+//   carve = (param2 >> 3) & 0x0F
+//   0      = front face fully open (classic portal block)
+//   1..4   = only HALF of the front face is open, split along one of the two
+//            in-plane world axes (taken in ascending X<Y<Z order):
+//            1 = first axis, open on the - half   2 = first axis, open on +
+//            3 = second axis, open on the - half  4 = second axis, open on +
+//   5..8   = only a QUARTER is open (portal offset on both in-plane axes):
+//            5 + (first axis open on + ? 1 : 0) + (second axis open on + ? 2 : 0)
+// Used by yaportal for portals offset half a node from the grid: the edge
+// blocks are partially carved and get partial front panels plus partition
+// walls separating the cavity from the solid (dead) parts.
+static inline int portal_block_carve(const MapNode &n)
+{
+	return (n.getParam2() >> 3) & 0x0F;
+}
+
+// Decode a carve value into up to two cuts. Each cut says: on `axis`, the
+// open part of the front face is the `open_pos` half. Returns cut count.
+static int portal_block_carve_cuts(int carve, int a0, int a1,
+	int axes[2], bool open_pos[2])
+{
+	if (carve >= 1 && carve <= 4) {
+		axes[0] = (carve <= 2) ? a0 : a1;
+		open_pos[0] = (carve == 2 || carve == 4);
+		return 1;
+	}
+	if (carve >= 5 && carve <= 8) {
+		axes[0] = a0; open_pos[0] = ((carve - 5) & 1) != 0;
+		axes[1] = a1; open_pos[1] = ((carve - 5) & 2) != 0;
+		return 2;
+	}
+	return 0;
+}
+
+// The two in-plane world axes (0=X,1=Y,2=Z) of a face, ascending.
+static inline void portal_face_inplane_axes(int face, int *a0, int *a1)
+{
+	int naxis = (face < 2) ? 1 : (face < 4 ? 0 : 2);
+	if (naxis == 0)      { *a0 = 1; *a1 = 2; }
+	else if (naxis == 1) { *a0 = 0; *a1 = 2; }
+	else                 { *a0 = 0; *a1 = 1; }
+}
+
+static inline void portal_box_set_axis(aabb3f &b, int axis, float lo, float hi)
+{
+	switch (axis) {
+	case 0: b.MinEdge.X = lo; b.MaxEdge.X = hi; break;
+	case 1: b.MinEdge.Y = lo; b.MaxEdge.Y = hi; break;
+	default: b.MinEdge.Z = lo; b.MaxEdge.Z = hi; break;
+	}
+}
+
 // Bitmask (1<<face) of the open faces of a portal_block. `neighbors` carries the
 // in-plane same-param2 neighbor bits computed by getNeighbors().
 static u8 portal_block_open_faces(const MapNode &n, const NodeDefManager *nodemgr,
@@ -449,6 +503,57 @@ static u8 portal_block_open_faces(const MapNode &n, const NodeDefManager *nodemg
 	return open;
 }
 
+// Shared collision/selection box builder for portal_block nodes: one thin
+// panel per solid face, plus — for half-carved blocks — a partial front panel
+// over the closed half and a partition wall between cavity and dead half.
+static void portal_block_push_boxes(const MapNode &n, const NodeDefManager *nodemgr,
+	u8 neighbors, std::vector<aabb3f> *boxes)
+{
+	u8 open = portal_block_open_faces(n, nodemgr, neighbors);
+	for (int face = 0; face < 6; face++)
+		if (!(open & (1 << face)))
+			boxes->push_back(portal_block_panel(face));
+
+	int carve = portal_block_carve(n);
+	if (open == 0 || carve < 1 || carve > 8)
+		return;
+	int front = portal_block_dir_to_face(n.getWallMountedDir(nodemgr));
+	if (!(open & (1 << front)))
+		return;
+	int a0, a1;
+	portal_face_inplane_axes(front, &a0, &a1);
+	int axes[2];
+	bool open_pos[2];
+	const int ncuts = portal_block_carve_cuts(carve, a0, a1, axes, open_pos);
+	const float H = 0.5f * BS;
+	const float t = (1.0f / 32.0f) * BS;
+	for (int i = 0; i < ncuts; i++) {
+		// Front panel over the closed part of the face along this cut; later
+		// panels are clipped to the open range of earlier cuts so quarter
+		// carves get a non-overlapping L shape.
+		aabb3f fp = portal_block_panel(front);
+		if (open_pos[i])
+			portal_box_set_axis(fp, axes[i], -H, 0.0f);
+		else
+			portal_box_set_axis(fp, axes[i], 0.0f, H);
+		for (int j = 0; j < i; j++) {
+			if (open_pos[j])
+				portal_box_set_axis(fp, axes[j], 0.0f, H);
+			else
+				portal_box_set_axis(fp, axes[j], -H, 0.0f);
+		}
+		boxes->push_back(fp);
+		// Partition wall at the half plane, flush against the cavity on the
+		// dead side (cavity floor/ceiling/side wall).
+		aabb3f part(-H, -H, -H, H, H, H);
+		if (open_pos[i])
+			portal_box_set_axis(part, axes[i], -t, 0.0f);
+		else
+			portal_box_set_axis(part, axes[i], 0.0f, t);
+		boxes->push_back(part);
+	}
+}
+
 u8 MapNode::getNeighbors(v3s16 p, Map *map) const
 {
 	const NodeDefManager *nodedef = map->getNodeDefManager();
@@ -458,12 +563,17 @@ u8 MapNode::getNeighbors(v3s16 p, Map *map) const
 	if (is_portal_block(f)) {
 		int front = portal_block_dir_to_face(this->getWallMountedDir(nodedef));
 		int back = front ^ 1;
+		// One portal's cells may be different node ids (shell-material
+		// variants), so merging keys on the portal_block group VALUE (one
+		// value per portal colour) plus the wallmounted direction bits;
+		// carve bits (3..6) may differ between edge and middle blocks.
+		const int my_pb = itemgroup_get(f.groups, "portal_block");
 		for (int face = 0; face < 6; face++) {
 			if (face == front || face == back)
 				continue;
 			MapNode n2 = map->getNode(p + portal_block_face_dirs[face]);
-			if (is_portal_block(nodedef->get(n2)) &&
-					n2.getParam2() == this->getParam2())
+			if (itemgroup_get(nodedef->get(n2).groups, "portal_block") == my_pb &&
+					(n2.getParam2() & 0x07) == (this->getParam2() & 0x07))
 				neighbors |= (u8)(1 << face);
 		}
 	} else if (f.drawtype == NDT_NODEBOX && f.node_box.type == NODEBOX_CONNECTED) {
@@ -508,10 +618,7 @@ void MapNode::getCollisionBoxes(const NodeDefManager *nodemgr,
 {
 	const ContentFeatures &f = nodemgr->get(*this);
 	if (is_portal_block(f)) {
-		u8 open = portal_block_open_faces(*this, nodemgr, neighbors);
-		for (int face = 0; face < 6; face++)
-			if (!(open & (1 << face)))
-				boxes->push_back(portal_block_panel(face));
+		portal_block_push_boxes(*this, nodemgr, neighbors, boxes);
 		return;
 	}
 	if (f.collision_box.fixed.empty())
@@ -525,13 +632,9 @@ void MapNode::getSelectionBoxes(const NodeDefManager *nodemgr,
 {
 	const ContentFeatures &f = nodemgr->get(*this);
 	if (is_portal_block(f)) {
-		// DEBUG: selection box mirrors the actual collision panels so the
-		// pointed-node wireframe shows exactly which faces are solid (the open
-		// front + merged faces have no panel → visible gap).
-		u8 open = portal_block_open_faces(*this, nodemgr, neighbors);
-		for (int face = 0; face < 6; face++)
-			if (!(open & (1 << face)))
-				boxes->push_back(portal_block_panel(face));
+		// Selection box mirrors the actual collision panels so the pointed-node
+		// wireframe shows exactly which faces (or half-faces) are solid.
+		portal_block_push_boxes(*this, nodemgr, neighbors, boxes);
 		return;
 	}
 	transformNodeBox(*this, f.selection_box, nodemgr, boxes, neighbors);

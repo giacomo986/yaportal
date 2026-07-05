@@ -1720,8 +1720,13 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 	};
 
 	TileSpec tiles[6];
-	for (int face = 0; face < 6; face++)
+	for (int face = 0; face < 6; face++) {
 		getTile(face_dirs[face], &tiles[face]);
+		// The shell must line up with neighboring wall panels (param2 = 0):
+		// drop the wallmounted tile rotation the engine derived from our
+		// param2, which encodes direction + carve bits, not a visual spin.
+		tiles[face].rotation = TileRotation::None;
+	}
 
 	// Front (portal) face from the wallmounted param2.
 	v3s16 frontdir = cur_node.n.getWallMountedDir(nodedef);
@@ -1733,16 +1738,28 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 	// Faces to skip (mask bit set = face not drawn = open). A "closed" portal
 	// block (group portal_closed, set by yaportal when the portal is unlinked)
 	// keeps its front face solid — only the colored frame is drawn, no hole.
+	// Merging compares only the wallmounted direction bits (param2 & 7): the
+	// bits above carry the yaportal half-carve descriptor and may differ
+	// between edge and middle blocks of the same cavity.
 	const bool closed = itemgroup_get(cur_node.f->groups, "portal_closed") != 0;
-	u8 mask = closed ? 0 : (u8)(1 << front);
+	// Merged-neighbor bits are tracked separately from the draw mask: a closed
+	// portal draws every face solid (mask 0) but its frame must still treat
+	// same-portal neighbors as one opening. Cells of one portal may be
+	// DIFFERENT node ids (yaportal shell-material variants), so merging keys
+	// on the portal_block group VALUE (one value per portal colour) plus the
+	// wallmounted direction bits — never on param0.
+	const int my_pb = itemgroup_get(cur_node.f->groups, "portal_block");
+	u8 merged = 0;
 	for (int face = 0; face < 6; face++) {
 		if (face == front || face == back)
 			continue;
 		MapNode n2 = data->m_vmanip.getNodeNoEx(
 				blockpos_nodes + cur_node.p + face_dirs[face]);
-		if (n2.param0 == cur_node.n.param0 && n2.param2 == cur_node.n.param2)
-			mask |= (u8)(1 << face); // merged neighbor → open
+		if (itemgroup_get(nodedef->get(n2).groups, "portal_block") == my_pb &&
+				(n2.param2 & 0x07) == (cur_node.n.param2 & 0x07))
+			merged |= (u8)(1 << face); // merged neighbor → open
 	}
+	u8 mask = closed ? 0 : (u8)((1 << front) | merged);
 
 	const float H = 0.5f * BS;
 	aabb3f box(-H, -H, -H, H, H, H);
@@ -1750,46 +1767,101 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 	generateCuboidTextureCoords(box, txc);
 	drawAutoLightedCuboid(box, tiles, 6, txc, mask);
 
+	// Geometry helpers shared by the half-carve slab and the frame below.
+	auto faceAxis = [](int f) -> int { return (f < 2) ? 1 : (f < 4 ? 0 : 2); };
+	auto faceSign = [](int f) -> float { return (f % 2 == 0) ? 1.0f : -1.0f; };
+	const int nAxis = faceAxis(front);
+	const float nSign = faceSign(front);
+	// The two in-plane axes (everything except the normal axis), ascending.
+	int ip0 = -1, ip1 = -1;
+	for (int a = 0; a < 3; a++) {
+		if (a == nAxis) continue;
+		if (ip0 < 0) ip0 = a; else ip1 = a;
+	}
+
+	// yaportal partial-carve descriptor (param2 bits 3..6, see mapnode.cpp):
+	// only half (1..4) or a quarter (5..8) of the front face is open; oLo/oHi
+	// hold the opening's in-plane extent. Computed for closed blocks too, so
+	// the colored frame of an unlinked offset portal already outlines the
+	// future opening instead of the whole (wider) footprint.
+	const int carve = (cur_node.n.param2 >> 3) & 0x0F;
+	float oLo[3] = {-H, -H, -H};
+	float oHi[3] = { H,  H,  H};
+	if (carve >= 1 && carve <= 8) {
+		int caxes[2];
+		bool copen_pos[2];
+		int ncuts;
+		if (carve <= 4) {
+			caxes[0] = (carve <= 2) ? ip0 : ip1;
+			copen_pos[0] = (carve == 2 || carve == 4);
+			ncuts = 1;
+		} else {
+			caxes[0] = ip0; copen_pos[0] = ((carve - 5) & 1) != 0;
+			caxes[1] = ip1; copen_pos[1] = ((carve - 5) & 2) != 0;
+			ncuts = 2;
+		}
+		for (int i = 0; i < ncuts; i++) {
+			if (copen_pos[i]) oLo[caxes[i]] = 0.0f; else oHi[caxes[i]] = 0.0f;
+		}
+		// Solid part of the front face (open blocks only — closed blocks draw
+		// the full cube face): thin slab(s) flush with the face; the second
+		// slab of a quarter carve is clipped to the open range of the first
+		// cut so the L shape has no overlapping (z-fighting) region.
+		const float d = (1.0f / 32.0f) * BS;
+		for (int i = 0; !closed && i < ncuts; i++) {
+			float lo[3] = {-H, -H, -H};
+			float hi[3] = { H,  H,  H};
+			if (nSign > 0) lo[nAxis] = H - d; else hi[nAxis] = -H + d;
+			if (copen_pos[i]) hi[caxes[i]] = 0.0f; else lo[caxes[i]] = 0.0f;
+			for (int j = 0; j < i; j++) {
+				if (copen_pos[j]) lo[caxes[j]] = 0.0f;
+				else hi[caxes[j]] = 0.0f;
+			}
+			aabb3f hb(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+			f32 htxc[24];
+			generateCuboidTextureCoords(hb, htxc);
+			drawAutoLightedCuboid(hb, tiles, 6, htxc, 0);
+		}
+	}
+
 	// yaportal: optional 1/32-block frame around the portal opening (group
 	// portal_frame). A thin lip protruding from the front face on the portal
-	// side, drawn with special_tiles[0], only along the outer edges (edges shared
-	// with a merged neighbor get no border, so a stacked portal frames the whole
-	// opening, not each block). Purely cosmetic — collision/passability unchanged.
+	// side, drawn with special_tiles[0], along the opening's outer edges (edges
+	// shared with a merged neighbor get no border, so a stacked portal frames
+	// the whole opening, not each block). For half-carved blocks the strips
+	// follow the opening: the strip on the dead side sits at the half plane and
+	// the perpendicular strips span only the open half. Purely cosmetic.
 	if (itemgroup_get(cur_node.f->groups, "portal_frame")) {
-		auto faceAxis = [](int f) -> int { return (f < 2) ? 1 : (f < 4 ? 0 : 2); };
-		auto faceSign = [](int f) -> float { return (f % 2 == 0) ? 1.0f : -1.0f; };
-
 		TileSpec ftile;
 		getSpecialTile(0, &ftile);
 		const float w = (1.0f / 32.0f) * BS; // frame width (in-plane)
 		const float d = (1.0f / 32.0f) * BS; // frame depth (along the normal)
-		const int nAxis = faceAxis(front);
-		const float nSign = faceSign(front);
-
-		// The two in-plane axes (everything except the normal axis).
-		int ip0 = -1, ip1 = -1;
-		for (int a = 0; a < 3; a++) {
-			if (a == nAxis) continue;
-			if (ip0 < 0) ip0 = a; else ip1 = a;
-		}
 
 		for (int f = 0; f < 6; f++) {
 			if (f == front || f == back)
 				continue;
-			if (mask & (1 << f))
-				continue; // merged edge → continuous cavity, no border
 			const int eAxis = faceAxis(f);
 			const float eSign = faceSign(f);
+			// Does the opening reach this face's edge, or stop at the half
+			// plane (dead side of a half-carved block)?
+			const bool at_edge = (eSign > 0) ? (oHi[eAxis] >= H - 0.001f)
+			                                 : (oLo[eAxis] <= -H + 0.001f);
+			if (at_edge && (merged & (1 << f)))
+				continue; // merged edge → continuous opening, no border
 			float lo[3] = {-H, -H, -H};
 			float hi[3] = { H,  H,  H};
 			// Lip protruding outward (player side) from the front face.
 			if (nSign > 0) { lo[nAxis] = H;      hi[nAxis] = H + d; }
 			else           { lo[nAxis] = -H - d; hi[nAxis] = -H; }
-			// Border strip of width w on this edge.
-			if (eSign > 0) { lo[eAxis] = H - w; hi[eAxis] = H; }
-			else           { lo[eAxis] = -H;    hi[eAxis] = -H + w; }
-			// Inset the strips on one in-plane axis so the 4 sides don't overlap.
+			// Border strip of width w just inside the opening boundary on this
+			// side (face edge, or the half plane on the dead side).
+			if (eSign > 0) { lo[eAxis] = oHi[eAxis] - w; hi[eAxis] = oHi[eAxis]; }
+			else           { lo[eAxis] = oLo[eAxis];     hi[eAxis] = oLo[eAxis] + w; }
+			// Span only the opening on the other in-plane axis; inset one pair
+			// of strips so the 4 sides don't overlap.
 			const int spanAxis = (eAxis == ip0) ? ip1 : ip0;
+			lo[spanAxis] = oLo[spanAxis];
+			hi[spanAxis] = oHi[spanAxis];
 			if (eAxis == ip1) { lo[spanAxis] += w; hi[spanAxis] -= w; }
 
 			aabb3f fb(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);

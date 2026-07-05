@@ -217,13 +217,19 @@ local function check_frame(cx, cy, cz, axis, frame_node, w, h)
     return true
 end
 
+-- pp.ou / pp.ov (wall portals only): half-node in-plane offsets of the opening
+-- relative to the node grid (0 or 0.5) — horizontal (in-plane) and vertical.
+-- The opening size stays w×h; the footprint gains one extra half-carved cell
+-- row/column on the offset axis. Every consumer of the portal centre
+-- (engine sync, bounds, teleport transforms) goes through inner_center, so
+-- the offset is applied exactly here.
 local function inner_center(pp)
     local w = pp.w or 2
     local h = pp.h or 3
     if pp.axis == 0 then
-        return {x=pp.cx+(w-1)/2, y=pp.cy+(h-1)/2, z=pp.cz}
+        return {x=pp.cx+(w-1)/2+(pp.ou or 0), y=pp.cy+(h-1)/2+(pp.ov or 0), z=pp.cz}
     elseif pp.axis == 1 then
-        return {x=pp.cx, y=pp.cy+(h-1)/2, z=pp.cz+(w-1)/2}
+        return {x=pp.cx, y=pp.cy+(h-1)/2+(pp.ov or 0), z=pp.cz+(w-1)/2+(pp.ou or 0)}
     else -- axis == 2: horizontal, opening in XZ plane
         return {x=pp.cx+(w-1)/2, y=pp.cy, z=pp.cz+(h-1)/2}
     end
@@ -1392,6 +1398,7 @@ local function should_teleport_entity(obj)
     local ent = obj:get_luaentity()
     if not ent then return false end
     if ent.name == "yaportal:anchor" then return false end
+    if ent._carrier then return false end  -- carried cube follows its carrier, never the portal
     local def = minetest.registered_entities[ent.name]
     if not def then return false end
     if def._portal_exempt then return false end
@@ -1791,7 +1798,11 @@ local function pgun3_register_block(color, tex)
         sunlight_propagates = false,
         tiles = {tex},
         node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
-        groups = {portal_block = 1, not_in_creative_inventory = 1},
+        -- portal_block VALUE identifies the portal family/colour: the engine
+        -- merges adjacent cells into one cavity only when the value matches
+        -- (cells of one portal may be different node ids).
+        groups = {portal_block = (color == "blue") and 1 or 2,
+                  not_in_creative_inventory = 1},
         diggable = false,
     })
 end
@@ -1988,36 +1999,113 @@ end
 -- carved cells blend with the surrounding Portal Wall Block) plus a thin 1/32
 -- frame around the opening (engine group portal_frame, drawn with special_tiles
 -- [1] = the portal colour). Separate node ids keep gun3's blocks untouched.
+-- Shell-texture variants: the carved blocks take the look of the wall
+-- material they replaced (portal_wall = white, wall_upper/lower = Aperture
+-- panels), so a portal shot into a panel wall doesn't turn its cells white.
+-- Name scheme: yaportal:portal_wallblock_<color><mat>[_off].
+local PGUN4_MAT_TILES = {
+    [""]    = "[fill:16x16:#ffffff",
+    ["_up"] = "yaportal_wall_upper.png",
+    ["_lo"] = "yaportal_wall_lower.png",
+}
+local PGUN4_MAT_OF = {
+    ["yaportal:portal_wall"] = "",
+    ["yaportal:wall_upper"]  = "_up",
+    ["yaportal:wall_lower"]  = "_lo",
+}
+
 local function pgun4_register_block(color, frametex)
     local Color = color:gsub("^%l", string.upper)
-    local base = {
-        drawtype = "nodebox",
-        paramtype = "light",
-        paramtype2 = "wallmounted",
-        sunlight_propagates = false,
-        tiles = {"[fill:16x16:#ffffff"},   -- white shell
-        special_tiles = {frametex},        -- 1/32 frame around the opening
-        node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
-        diggable = false,
-    }
-    -- Open variant: linked portal. Front face is carved away (see-through hole).
-    local open = table.copy(base)
-    open.description = Color .. " Wall Portal Block (type 2, unbreakable)"
-    open.groups = {portal_block = 1, portal_frame = 1, not_in_creative_inventory = 1}
-    minetest.register_node("yaportal:portal_wallblock_" .. color, open)
-    -- Closed variant: unlinked portal. Solid block + colored frame, no hole
-    -- (group portal_closed makes the engine keep the front face solid).
-    local closed = table.copy(base)
-    closed.description = Color .. " Wall Portal Block (closed)"
-    closed.groups = {portal_block = 1, portal_frame = 1, portal_closed = 1,
-        not_in_creative_inventory = 1}
-    minetest.register_node("yaportal:portal_wallblock_" .. color .. "_off", closed)
+    for mat, tex in pairs(PGUN4_MAT_TILES) do
+        local base = {
+            drawtype = "nodebox",
+            paramtype = "light",
+            paramtype2 = "wallmounted",
+            sunlight_propagates = false,
+            tiles = {tex},                     -- shell = original wall material
+            special_tiles = {frametex},        -- 1/32 frame around the opening
+            node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
+            diggable = false,
+        }
+        -- portal_block VALUE = portal family/colour: engine merge key (cells
+        -- of one portal are different node ids across shell materials).
+        local pbval = (color == "blue") and 3 or 4
+        -- Open variant: linked portal. Front face is carved away.
+        local open = table.copy(base)
+        open.description = Color .. " Wall Portal Block (type 2, unbreakable)"
+        open.groups = {portal_block = pbval, portal_frame = 1,
+            not_in_creative_inventory = 1}
+        minetest.register_node(
+            "yaportal:portal_wallblock_" .. color .. mat, open)
+        -- Closed variant: unlinked portal. Solid block + colored frame, no
+        -- hole (group portal_closed keeps the front face solid).
+        local closed = table.copy(base)
+        closed.description = Color .. " Wall Portal Block (closed)"
+        closed.groups = {portal_block = pbval, portal_frame = 1,
+            portal_closed = 1, not_in_creative_inventory = 1}
+        minetest.register_node(
+            "yaportal:portal_wallblock_" .. color .. mat .. "_off", closed)
+    end
 end
 pgun4_register_block("blue",   "yaportal_blue.png")
 pgun4_register_block("orange", "yaportal_orange.png")
 
 -- Swap a gun4 portal's blocks between the open (linked, see-through) and closed
 -- (unlinked, solid + frame) variants to match its current link state.
+-- Cells + per-cell param2 for a gun4 portal footprint, including the extra
+-- edge cells of a half-offset portal. param2 = wallmounted dir | carve<<3,
+-- where carve (engine encoding, see mapnode.cpp) marks half-carved cells:
+-- axis_sel 0 = first in-plane world axis ascending (axis 0 → X = horizontal,
+-- axis 1 → Y = vertical), value 1+sel*2 = open on the - half, +1 = open on +.
+-- Cell order is deterministic: pp.saved is indexed by it.
+local function pgun4_cells(pp)
+    local dirp2 = pgun3_param2(pp.axis, pp.ns)
+    local ou, ov = pp.ou or 0, pp.ov or 0
+    local out = {}
+    if pp.axis == 2 or (ou == 0 and ov == 0) then
+        for _, c in ipairs(pgun3_block_positions(pp)) do
+            out[#out + 1] = {pos = c, param2 = dirp2}
+        end
+        return out
+    end
+    local nu = (pp.w or 1) + (ou > 0 and 1 or 0)   -- in-plane horizontal cells
+    local nv = (pp.h or 1) + (ov > 0 and 1 or 0)   -- vertical cells
+    -- Which half of the cell's front face is open on one offset axis:
+    -- +1 = the + half, -1 = the - half, 0 = fully open on that axis.
+    local function side_state(i, n, off)
+        if off == 0 then return 0 end
+        if i == 0 then return 1 end
+        if i == n - 1 then return -1 end
+        return 0
+    end
+    for du = 0, nu - 1 do
+        for dv = 0, nv - 1 do
+            local hs = side_state(du, nu, ou)
+            local vs = side_state(dv, nv, ov)
+            -- engine first/second in-plane axis (ascending X<Y<Z):
+            -- axis 0 → X (horizontal), Y (vertical); axis 1 → Y, Z.
+            local s0, s1
+            if pp.axis == 0 then s0, s1 = hs, vs else s0, s1 = vs, hs end
+            local carve = 0
+            if s0 ~= 0 and s1 ~= 0 then
+                carve = 5 + (s0 > 0 and 1 or 0) + (s1 > 0 and 2 or 0)
+            elseif s0 ~= 0 then
+                carve = (s0 > 0) and 2 or 1
+            elseif s1 ~= 0 then
+                carve = (s1 > 0) and 4 or 3
+            end
+            local pos
+            if pp.axis == 0 then
+                pos = {x = pp.cx + du, y = pp.cy + dv, z = pp.cz}
+            else
+                pos = {x = pp.cx, y = pp.cy + dv, z = pp.cz + du}
+            end
+            out[#out + 1] = {pos = pos, param2 = dirp2 + carve * 8}
+        end
+    end
+    return out
+end
+
 local function pgun4_apply_state(portal_name)
     local pp = portals[portal_name]
     if not pp then return end
@@ -2025,15 +2113,46 @@ local function pgun4_apply_state(portal_name)
     if not color then return end
     local base   = "yaportal:portal_wallblock_" .. color
     local linked = pp.link ~= nil and portals[pp.link] ~= nil
-    local target = linked and base or (base .. "_off")
-    local param2 = pgun3_param2(pp.axis, pp.ns)
-    for _, c in ipairs(pgun3_block_positions(pp)) do
-        local nn = minetest.get_node(c).name
-        if nn == base or nn == base .. "_off" then
-            minetest.set_node(c, {name = target, param2 = param2})
+    for i, c in ipairs(pgun4_cells(pp)) do
+        local nn = minetest.get_node(c.pos).name
+        if nn:sub(1, #base) == base then
+            local mat = (pp.saved and PGUN4_MAT_OF[pp.saved[i]]) or ""
+            local target = base .. mat .. (linked and "" or "_off")
+            minetest.set_node(c.pos, {name = target, param2 = c.param2})
         end
     end
-    pp.node_name = target
+    pp.node_name = base .. (linked and "" or "_off")
+end
+
+-- Wall materials the wall gun can carve a portal into. The original node of
+-- every carved cell is remembered in pp.saved and restored on close.
+local PGUN4_CARVEABLE = {
+    [PGUN4_WALL] = true,
+    ["yaportal:wall_upper"] = true,
+    ["yaportal:wall_lower"] = true,
+}
+
+-- Every footprint cell one step out along the normal must be passable,
+-- otherwise part of the opening would be buried in a floor/ceiling/wall.
+local function pgun4_front_clear(pp)
+    local n = portal_normal(pp.axis, pp.ns)
+    for _, c in ipairs(pgun4_cells(pp)) do
+        local f = {x = c.pos.x + n.x, y = c.pos.y + n.y, z = c.pos.z + n.z}
+        local def = minetest.registered_nodes[minetest.get_node(f).name]
+        if not def or def.walkable then return false end
+    end
+    return true
+end
+
+-- A candidate placement is valid when the whole footprint is carveable wall
+-- material AND the space in front of the opening is clear.
+local function pgun4_probe_ok(pp)
+    for _, c in ipairs(pgun4_cells(pp)) do
+        if not PGUN4_CARVEABLE[minetest.get_node(c.pos).name] then
+            return false
+        end
+    end
+    return pgun4_front_clear(pp)
 end
 
 local function portal_gun4_remove(pname, color)
@@ -2041,10 +2160,11 @@ local function portal_gun4_remove(pname, color)
     local pp = portals[portal_name]
     if not pp then return end
     local bnode = "yaportal:portal_wallblock_" .. color
-    for _, bpos in ipairs(pgun3_block_positions(pp)) do
-        local nn = minetest.get_node(bpos).name
-        if nn == bnode or nn == bnode .. "_off" then
-            minetest.set_node(bpos, {name = PGUN4_WALL})
+    for i, c in ipairs(pgun4_cells(pp)) do
+        local nn = minetest.get_node(c.pos).name
+        if nn:sub(1, #bnode) == bnode then
+            local orig = pp.saved and pp.saved[i] or PGUN4_WALL
+            minetest.set_node(c.pos, {name = orig})
         end
     end
     local partner = pp.link
@@ -2059,13 +2179,34 @@ local function portal_gun4_remove(pname, color)
     end
 end
 
+-- Precise ray hit point on the pointed node: on_use pointed_things carry no
+-- intersection_point, so re-raycast along the player's look. nil on mismatch
+-- (callers fall back to grid-aligned placement).
+local function pgun4_hit_point(player, under)
+    local eye = player:get_pos()
+    local props = player:get_properties()
+    eye.y = eye.y + ((props and props.eye_height) or 1.5)
+    local dir = player:get_look_dir()
+    local ray = minetest.raycast(eye,
+        {x = eye.x + dir.x * 20, y = eye.y + dir.y * 20, z = eye.z + dir.z * 20},
+        false, false)
+    for pt in ray do
+        if pt.type == "node" and pt.under
+           and pt.under.x == under.x and pt.under.y == under.y
+           and pt.under.z == under.z then
+            return pt.intersection_point
+        end
+    end
+    return nil
+end
+
 local function portal_gun4_shoot(player, pointed_thing, color)
     if pointed_thing.type ~= "node" then return end
     local pname = player:get_player_name()
     local under = pointed_thing.under
     local above = pointed_thing.above
-    -- Only fires when aimed at a Portal Wall Block.
-    if minetest.get_node(under).name ~= PGUN4_WALL then return end
+    -- Only fires when aimed at a carveable wall material.
+    if not PGUN4_CARVEABLE[minetest.get_node(under).name] then return end
 
     local dx = above.x - under.x
     local dy = above.y - under.y
@@ -2079,15 +2220,69 @@ local function portal_gun4_shoot(player, pointed_thing, color)
 
     portal_gun4_remove(pname, color)
 
-    local param2 = pgun3_param2(axis, ns)
     local bnode  = "yaportal:portal_wallblock_" .. color
     -- Plane lives IN the wall: carve into the hit block itself (not the air cell
     -- in front, unlike gun3). cx/cy/cz hold the min footprint coords.
     local bx0, by0, bz0 = under.x, under.y, under.z
 
+    -- Wall portals: snap the opening centre to the nearest HALF node of the
+    -- precise ray hit, in-plane. A centre landing on a seam/mid-block gives a
+    -- half-offset portal (ou/ov = 0.5, both axes allowed → diagonal offsets
+    -- use quarter-carved corner cells). No hit point → grid-aligned fallback.
+    -- Vertical fit: candidates step half a node up/down from the aim until
+    -- the footprint is carveable AND the space in front of the opening is
+    -- clear (no floor/ceiling burying part of the portal); if the offset
+    -- column can't fit either, retry grid-aligned horizontally.
+    local ou, ov = 0, 0
+    if axis ~= 2 then
+        local hit = pgun4_hit_point(player, under)
+        local ha = (axis == 0) and "x" or "z"   -- in-plane horizontal axis
+        local col = under[ha]
+        local cv2 = under.y * 2 + 1             -- aligned default, half-units
+        if hit then
+            local cu2 = math.floor(hit[ha] * 2 + 0.5)
+            cv2 = math.floor(hit.y * 2 + 0.5)
+            if (cu2 % 2) ~= 0 then ou = 0.5; col = (cu2 - 1) / 2
+            else col = cu2 / 2 end
+        end
+
+        local ucands = {{ou, col}}
+        if ou > 0 then
+            ucands[#ucands + 1] =
+                {0, hit and math.floor(hit[ha] + 0.5) or under[ha]}
+        end
+        local chosen
+        for _, uc in ipairs(ucands) do
+            for _, dd in ipairs({0, 1, -1, 2, -2, 3, -3}) do
+                local c2 = cv2 + dd
+                local vo = ((c2 % 2) == 0) and 0.5 or 0
+                local b0 = (vo > 0) and (c2 / 2 - 1) or ((c2 - 1) / 2)
+                local probe = {
+                    cx = (axis == 0) and uc[2] or under.x,
+                    cy = b0,
+                    cz = (axis == 0) and under.z or uc[2],
+                    axis = axis, ns = ns, w = PGUN4_W, h = PGUN4_H,
+                    ou = uc[1], ov = vo,
+                }
+                if pgun4_probe_ok(probe) then
+                    chosen = probe
+                    break
+                end
+            end
+            if chosen then break end
+        end
+        if not chosen then
+            minetest.chat_send_player(pname,
+                "[yaportal] No room for a portal here (opening blocked or wall too small).")
+            return
+        end
+        bx0, by0, bz0 = chosen.cx, chosen.cy, chosen.cz
+        ou, ov = chosen.ou, chosen.ov
+    end
+
     -- Opening dimensions / rotation, same scheme as gun3: walls keep a fixed 1×2
-    -- (the hit block is the bottom, footprint runs up along Y). Floor/ceiling
-    -- portals orient the 1×2 opening along the shooter's facing.
+    -- opening. Floor/ceiling portals orient the 1×2 opening along the shooter's
+    -- facing (always grid-aligned).
     local pw, ph, rot = PGUN4_W, PGUN4_H, 0
     if axis == 2 then
         local look = player:get_look_dir()
@@ -2101,36 +2296,56 @@ local function portal_gun4_shoot(player, pointed_thing, color)
             rot  = (look.x >= 0) and 3 or 1
             along, step = "x", (look.x >= 0) and 1 or -1
         end
-        -- Pointed block is the near end; portal extends one block toward the view.
-        -- If that far block can't form a portal, fall back to the opposite side
-        -- (pointed block becomes the far end).
-        local far = {x = under.x, y = under.y, z = under.z}
-        far[along] = under[along] + step
-        if minetest.get_node(far).name ~= PGUN4_WALL then
-            step = -step
+        -- Pointed block is the near end; portal extends one block toward the
+        -- view. If that placement can't form a portal (far block not
+        -- carveable, or a wall in front would bury part of the opening),
+        -- fall back to the opposite side; if neither fits, refuse.
+        local chosen
+        for _, st in ipairs({step, -step}) do
+            local bx, bz = under.x, under.z
+            -- cx/cz must hold the min footprint coord.
+            if st < 0 then
+                if along == "z" then bz = under.z - 1 else bx = under.x - 1 end
+            end
+            local probe = {cx = bx, cy = by0, cz = bz,
+                           axis = 2, ns = ns, w = pw, h = ph}
+            if pgun4_probe_ok(probe) then
+                chosen = probe
+                break
+            end
         end
-        -- cx/cz must hold the min footprint coord.
-        if step < 0 then
-            if along == "z" then bz0 = under.z - 1 else bx0 = under.x - 1 end
-        end
-    end
-
-    -- The whole footprint must be Portal Wall Block (we only carve into the wall,
-    -- and only restore what we carved).
-    local probe = {cx = bx0, cy = by0, cz = bz0, axis = axis, w = pw, h = ph}
-    local cells = pgun3_block_positions(probe)
-    for _, c in ipairs(cells) do
-        if minetest.get_node(c).name ~= PGUN4_WALL then
+        if not chosen then
             minetest.chat_send_player(pname,
-                "[yaportal] Need a " .. pw .. "×" .. ph ..
-                " Portal Wall Block surface here.")
+                "[yaportal] No room for a portal here (opening blocked or floor too small).")
             return
         end
+        bx0, bz0 = chosen.cx, chosen.cz
     end
-    -- Place the closed (solid) variant; pgun4_apply_state below opens it (and the
-    -- partner) only if a paired portal already exists.
-    for _, c in ipairs(cells) do
-        minetest.set_node(c, {name = bnode .. "_off", param2 = param2})
+
+    -- The whole footprint (including the extra half-carved cells of an offset
+    -- portal) must be carveable wall material: we only carve into the wall,
+    -- and restore exactly what we carved via pp.saved.
+    local probe = {cx = bx0, cy = by0, cz = bz0, axis = axis, ns = ns,
+                   w = pw, h = ph, ou = ou, ov = ov}
+    local cells = pgun4_cells(probe)
+    local saved = {}
+    for i, c in ipairs(cells) do
+        local nn = minetest.get_node(c.pos).name
+        if not PGUN4_CARVEABLE[nn] then
+            minetest.chat_send_player(pname,
+                "[yaportal] Need a " .. pw .. "×" .. ph ..
+                " portal-wall surface here.")
+            return
+        end
+        saved[i] = nn
+    end
+    -- Place the closed (solid) variant in the shell material of the original
+    -- node; pgun4_apply_state below opens it (and the partner) only if a
+    -- paired portal already exists.
+    for i, c in ipairs(cells) do
+        local mat = PGUN4_MAT_OF[saved[i]] or ""
+        minetest.set_node(c.pos,
+            {name = bnode .. mat .. "_off", param2 = c.param2})
     end
 
     local portal_name = "gun4_" .. color .. "_" .. pname
@@ -2138,8 +2353,10 @@ local function portal_gun4_shoot(player, pointed_thing, color)
         cx = bx0, cy = by0, cz = bz0,
         axis = axis, ns = ns,
         w = pw, h = ph, rot = rot,
+        ou = ou, ov = ov,
         kind = "block",
         node_name = bnode .. "_off",
+        saved = saved,
     }
 
     local other_color = color == "blue" and "orange" or "blue"
@@ -2203,6 +2420,219 @@ minetest.register_node("yaportal:frame_green", {
     tiles = {"yaportal_green.png"},
     groups = {not_in_creative_inventory=1},
     diggable = false,
+})
+
+-- ── Portal 1 / Aperture Science decorative blocks ────────────────────────────
+
+minetest.register_node("yaportal:wall_white", {
+    description = "Aperture Science White Wall Panel\nClean white ceramic wall tile from Portal test chambers",
+    tiles = {"yaportal_wall_white.png"},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+})
+
+-- Two-block wall panel: stack upper on top of lower to form one tall
+-- Aperture panel (16x32) with a recessed seam around each panel.
+minetest.register_node("yaportal:wall_upper", {
+    description = "Aperture Science Wall Panel (upper)\nTop half of a tall white test-chamber panel; place above a lower panel",
+    tiles = {"yaportal_wall_upper.png"},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+})
+
+minetest.register_node("yaportal:wall_lower", {
+    description = "Aperture Science Wall Panel (lower)\nBottom half of a tall white test-chamber panel; place below an upper panel",
+    tiles = {"yaportal_wall_lower.png"},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+})
+
+-- 45° diagonal wall pieces: the upper/lower panels cut in half vertically
+-- from edge to edge (triangular prism mesh, models/yaportal_diag.obj).  The
+-- diagonal face is sqrt(2) wide and maps the full panel texture stretched
+-- across it, so the pattern lines up with the flat panels at both edges.
+-- facedir picks which corner stays solid; placement takes it from the
+-- placer's look direction.
+do
+    -- Staircase boxes for the solid half (x >= z at facedir 0, right angle
+    -- at the +X/-Z corner); facedir rotates them with the mesh.  8 steps
+    -- centered on the diagonal plane: each step straddles it by 1/16 on
+    -- either side, so the wireframe/collision hugs the oblique face instead
+    -- of jutting a quarter node past it.
+    local steps = {}
+    for k = 0, 7 do
+        local z0 = -0.5 + k * 0.125
+        steps[#steps + 1] = {z0 + 0.0625, -0.5, z0, 0.5, 0.5, z0 + 0.125}
+    end
+    for _, part in ipairs({"upper", "lower"}) do
+        minetest.register_node("yaportal:wall_" .. part .. "_diag", {
+            description = "Aperture Science Wall Panel (" .. part .. ", 45°)\n" ..
+                "Panel cut diagonally edge to edge for 45° walls; " ..
+                "places with the diagonal face toward you",
+            drawtype = "mesh",
+            mesh = "yaportal_diag.obj",
+            tiles = {"yaportal_wall_" .. part .. ".png"},
+            paramtype = "light",
+            paramtype2 = "facedir",
+            sunlight_propagates = true,
+            collision_box = {type = "fixed", fixed = steps},
+            selection_box = {type = "fixed", fixed = steps},
+            groups = {cracky = 3, oddly_breakable_by_hand = 1},
+            sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+            on_place = function(itemstack, placer, pointed)
+                -- Diagonal-face normals per facedir (from the verified
+                -- facedir rotation (x,z)→(z,-x)): 0:(-X,+Z) 1:(+X,+Z)
+                -- 2:(+X,-Z) 3:(-X,-Z).  Pick the facedir whose normal points
+                -- back at the placer, so the oblique face looks toward them.
+                local p2 = 0
+                if placer then
+                    local ld = placer:get_look_dir()
+                    if ld.x >= 0 then
+                        p2 = (ld.z >= 0) and 3 or 0
+                    else
+                        p2 = (ld.z >= 0) and 2 or 1
+                    end
+                end
+                return minetest.item_place(itemstack, placer, pointed, p2)
+            end,
+        })
+    end
+end
+
+minetest.register_node("yaportal:floor", {
+    description = "Aperture Science Floor Tile\nDark grey concrete floor tile from Portal test chambers",
+    tiles = {"yaportal_floor.png"},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+})
+
+-- Thin (1/32) glass panel that can occupy one OR MORE faces of the same node
+-- cell. Each of the 6 faces is a bit in a mask (1..63); every non-empty mask is
+-- a registered variant node "yaportal:thin_glass_<mask>" whose fixed node_box is
+-- the union of the slabs for its set bits. A custom on_place OR-s the pointed
+-- face into the target cell, so pointing at the six solids around one air cell
+-- builds a hollow glass cube in that single cell.
+local THIN = 1/32
+local GLASS_FACES = {
+    {bit = 1,  dir = {x=-1, y= 0, z= 0}, box = {-0.5,      -0.5,      -0.5,      -0.5+THIN, 0.5,       0.5     }},
+    {bit = 2,  dir = {x= 1, y= 0, z= 0}, box = { 0.5-THIN, -0.5,      -0.5,       0.5,      0.5,       0.5     }},
+    {bit = 4,  dir = {x= 0, y=-1, z= 0}, box = {-0.5,      -0.5,      -0.5,       0.5,     -0.5+THIN,  0.5     }},
+    {bit = 8,  dir = {x= 0, y= 1, z= 0}, box = {-0.5,       0.5-THIN, -0.5,       0.5,      0.5,       0.5     }},
+    {bit = 16, dir = {x= 0, y= 0, z=-1}, box = {-0.5,      -0.5,      -0.5,       0.5,      0.5,      -0.5+THIN}},
+    {bit = 32, dir = {x= 0, y= 0, z= 1}, box = {-0.5,      -0.5,       0.5-THIN,  0.5,      0.5,       0.5     }},
+}
+local function glass_dir_to_bit(d)
+    for _, f in ipairs(GLASS_FACES) do
+        if f.dir.x == d.x and f.dir.y == d.y and f.dir.z == d.z then return f.bit end
+    end
+end
+local function glass_mask_boxes(mask)
+    local t = {}
+    for _, f in ipairs(GLASS_FACES) do
+        if mask % (f.bit*2) >= f.bit then t[#t+1] = f.box end
+    end
+    return t
+end
+local function glass_has_bit(mask, bit) return mask % (bit*2) >= bit end
+local function glass_popcount(m)
+    local c = 0
+    while m > 0 do c = c + (m % 2); m = math.floor(m/2) end
+    return c
+end
+local function glass_mask_of(name)
+    if name == "yaportal:thin_glass" then return 0 end
+    local m = name:match("^yaportal:thin_glass_(%d+)$")
+    return m and tonumber(m) or nil
+end
+
+-- on_place shared by the base item and every variant: add the targeted face to
+-- an existing glass cell, or drop a fresh single-face panel on the side opposite
+-- the placer (flush against the surface pointed at).
+local function glass_place(itemstack, placer, pointed)
+    if pointed.type ~= "node" then return itemstack end
+    local pname = placer and placer:is_player() and placer:get_player_name() or ""
+    local under, above = pointed.under, pointed.above
+    local un = minetest.get_node(under)
+
+    -- Standard courtesy: let the pointed node handle a rightclick (chests, etc.)
+    -- unless sneaking.
+    if placer and not placer:get_player_control().sneak then
+        local ndef = minetest.registered_nodes[un.name]
+        if ndef and ndef.on_rightclick then
+            return ndef.on_rightclick(under, un, placer, itemstack, pointed) or itemstack
+        end
+    end
+
+    local function put(pos, base_mask, bit)
+        if not bit or glass_has_bit(base_mask, bit) then return false end
+        if minetest.is_protected(pos, pname) then
+            minetest.record_protection_violation(pos, pname)
+            return false
+        end
+        minetest.set_node(pos, {name = "yaportal:thin_glass_" .. (base_mask + bit)})
+        if placer and not minetest.is_creative_enabled(pname) then
+            itemstack:take_item()
+        end
+        return true
+    end
+
+    -- Case A: pointing at an existing glass cell with the clicked face still
+    -- empty → fill that face of the SAME cell.
+    local unmask = glass_mask_of(un.name)
+    if unmask and unmask > 0 then
+        local bit = glass_dir_to_bit({x=above.x-under.x, y=above.y-under.y, z=above.z-under.z})
+        if put(under, unmask, bit) then return itemstack end
+    end
+
+    -- Case B: place into the neighbour cell, on the face touching the pointed
+    -- surface (opposite side from the player). Merge into glass already there.
+    local tn = minetest.get_node(above)
+    local tmask = glass_mask_of(tn.name)
+    if not tmask then
+        local tdef = minetest.registered_nodes[tn.name]
+        if not (tdef and tdef.buildable_to) then return itemstack end
+        tmask = 0
+    end
+    local bit = glass_dir_to_bit({x=under.x-above.x, y=under.y-above.y, z=under.z-above.z})
+    put(above, tmask, bit)
+    return itemstack
+end
+
+for mask = 1, 63 do
+    local boxes = glass_mask_boxes(mask)
+    minetest.register_node("yaportal:thin_glass_" .. mask, {
+        description = "Thin Glass Panel",
+        drawtype = "nodebox",
+        paramtype = "light",
+        sunlight_propagates = true,
+        use_texture_alpha = "blend",
+        tiles = {"yaportal_thin_glass.png"},
+        node_box = {type = "fixed", fixed = boxes},
+        selection_box = {type = "fixed", fixed = boxes},
+        groups = {cracky = 3, oddly_breakable_by_hand = 1, not_in_creative_inventory = 1},
+        drop = "yaportal:thin_glass " .. glass_popcount(mask),
+        sounds = minetest.get_modpath("default") and default and default.node_sound_glass_defaults() or nil,
+        on_place = glass_place,
+    })
+end
+
+-- Creative / inventory item. When placed it delegates to glass_place, which
+-- converts it into the right thin_glass_<mask> variant.
+minetest.register_node("yaportal:thin_glass", {
+    description = "Thin Glass Panel\n1/32-thick glass — occupies one or more faces of a cell (aim at each face)",
+    drawtype = "nodebox",
+    paramtype = "light",
+    sunlight_propagates = true,
+    use_texture_alpha = "blend",
+    inventory_image = "yaportal_thin_glass.png",
+    wield_image = "yaportal_thin_glass.png",
+    tiles = {"yaportal_thin_glass.png"},
+    node_box = {type = "fixed", fixed = GLASS_FACES[5].box},  -- single -Z slab preview
+    selection_box = {type = "fixed", fixed = GLASS_FACES[5].box},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    drop = "yaportal:thin_glass",
+    sounds = minetest.get_modpath("default") and default and default.node_sound_glass_defaults() or nil,
+    on_place = glass_place,
 })
 
 local function _in_any_pocket(pos)
@@ -2551,3 +2981,928 @@ minetest.register_on_player_hpchange(function(player, hp_change, reason)
     end
     return hp_change
 end, true)  -- modifier = true so the returned value replaces the damage
+
+-- ── Portal 1 interactive blocks (cube, super button, dispenser, door) ────────
+-- Weighted Storage Cube (carried Portal-style in front of the camera), a 2x2
+-- Heavy Duty Super-Colliding Super Button pressed by players and loose cubes,
+-- a Vital Apparatus Vent that dispenses cubes (and replaces its lost one), and
+-- a 2x2 automatic door.  The door auto-detects its mode: with a super button
+-- within 8 nodes it opens only while that button is pressed (the classic
+-- Portal puzzle loop, no redstone needed); otherwise it opens on approach.
+-- When a mesecons implementation is present (VoxeLibre's fork or the mesecons
+-- mod) the button is additionally a receptor and the door an effector.
+
+local hashpos = minetest.hash_node_position
+local HAVE_MESECON = rawget(_G, "mesecon") ~= nil
+
+local carried_cubes = {}  -- pname → ObjectRef of the cube that player carries
+local superbuttons  = {}  -- hash(anchor) → {pos = anchor (min X/Z corner), pressed}
+local dispensers    = {}  -- hash(pos) → {pos, empty_ticks}
+local doors         = {}  -- hash(bl) → {pos = bottom-left quarter, p2, open, powered}
+
+local CARRY_DIST  = 1.75
+local CUBE_ENTITY = "yaportal:cube"
+
+-- Classic mesecon API (Minetest Game mesecons and VoxeLibre's bundled fork
+-- both provide it).  Newer VoxeLibre replaces it with mcl_redstone whose API
+-- is not verified against any installed game here — if needed, extend these
+-- three helpers with an `elseif rawget(_G, "mcl_redstone")` branch.
+local function signal_rules()
+    return mesecon.rules.pplate or mesecon.rules.default
+end
+
+local function signal_receptor(state)
+    if not HAVE_MESECON then return nil end
+    return {receptor = {
+        state = (state == "on") and mesecon.state.on or mesecon.state.off,
+        rules = signal_rules(),
+    }}
+end
+
+local function signal_set(quarter_positions, on)
+    if not HAVE_MESECON then return end
+    for _, p in ipairs(quarter_positions) do
+        if on then mesecon.receptor_on(p, signal_rules())
+        else mesecon.receptor_off(p, signal_rules()) end
+    end
+end
+
+local function button_sound(center, pressed)
+    local spec = {pos = center, gain = 0.5, max_hear_distance = 16,
+                  pitch = pressed and 1.0 or 0.9}
+    if minetest.get_modpath("mesecons_button") then
+        minetest.sound_play("mesecons_button_push", spec, true)
+    elseif minetest.get_modpath("default") then
+        minetest.sound_play("default_metal_footstep", spec, true)
+    end
+end
+
+local function door_sound(center, open)
+    local name
+    if minetest.get_modpath("doors") then
+        name = open and "doors_steel_door_open" or "doors_steel_door_close"
+    elseif minetest.get_modpath("mcl_doors") then
+        name = open and "doors_door_open" or "doors_door_close"
+    end
+    if name then
+        minetest.sound_play(name, {pos = center, gain = 0.5,
+                                   max_hear_distance = 16}, true)
+    end
+end
+
+local block_sounds = minetest.get_modpath("default") and default
+    and default.node_sound_stone_defaults() or nil
+
+-- ── weighted storage cube ─────────────
+
+-- Drop a carried cube back into the world (restores physics).  If the cube
+-- currently overlaps a solid node, pull it back to the carrier's eye position
+-- first so it cannot be released inside a wall.
+local function drop_cube(pname)
+    local obj = carried_cubes[pname]
+    carried_cubes[pname] = nil
+    if not obj then return end
+    local ent = obj:get_luaentity()
+    if not ent then return end
+    ent._carrier = nil
+    local pos = obj:get_pos()
+    if pos then
+        local def = minetest.registered_nodes[minetest.get_node(pos).name]
+        if def and def.walkable then
+            local player = minetest.get_player_by_name(pname)
+            if player then
+                local eye = player:get_pos()
+                local props = player:get_properties()
+                eye.y = eye.y + ((props and props.eye_height) or 1.5)
+                obj:move_to(eye, false)
+            end
+        end
+    end
+    obj:set_properties({physical = true, collide_with_objects = true})
+    obj:set_velocity({x = 0, y = 0, z = 0})
+    obj:set_acceleration({x = 0, y = -9.81, z = 0})
+end
+
+minetest.register_entity(CUBE_ENTITY, {
+    initial_properties = {
+        visual = "cube",
+        visual_size = {x = 0.9, y = 0.9, z = 0.9},
+        textures = {
+            "yaportal_cube.png", "yaportal_cube.png", "yaportal_cube.png",
+            "yaportal_cube.png", "yaportal_cube.png", "yaportal_cube.png",
+        },
+        collisionbox = {-0.45, -0.45, -0.45, 0.45, 0.45, 0.45},
+        selectionbox = {-0.45, -0.45, -0.45, 0.45, 0.45, 0.45},
+        physical = true, collide_with_objects = true,
+        pointable = true, is_visible = true,
+        hp_max = 5, static_save = true,
+        damage_texture_modifier = "^[brighten",
+    },
+    -- _home: hash of the dispenser that spawned this cube (persisted).
+    -- _carrier: name of the carrying player (runtime only — after a server
+    -- restart a carried cube reloads as a loose cube at its last position).
+    on_activate = function(self, staticdata)
+        self.object:set_armor_groups({fleshy = 100})
+        self.object:set_acceleration({x = 0, y = -9.81, z = 0})
+        if staticdata and staticdata ~= "" then
+            local data = minetest.parse_json(staticdata)
+            if type(data) == "table" then
+                self._home = data.home
+                if type(data.hp) == "number" and data.hp > 0 then
+                    self.object:set_hp(data.hp)
+                end
+            end
+        end
+    end,
+    get_staticdata = function(self)
+        return minetest.write_json({home = self._home,
+                                    hp = self.object:get_hp()})
+    end,
+    on_rightclick = function(self, clicker)
+        if not (clicker and clicker:is_player()) then return end
+        local pname = clicker:get_player_name()
+        if self._carrier then
+            if self._carrier == pname then drop_cube(pname) end
+            return
+        end
+        if carried_cubes[pname] then
+            minetest.chat_send_player(pname, "You are already carrying a cube.")
+            return
+        end
+        self._carrier = pname
+        carried_cubes[pname] = self.object
+        self.object:set_properties({physical = false, collide_with_objects = false})
+        self.object:set_velocity({x = 0, y = 0, z = 0})
+        self.object:set_acceleration({x = 0, y = 0, z = 0})
+    end,
+    on_death = function(self)
+        if self._carrier then
+            carried_cubes[self._carrier] = nil
+        end
+    end,
+})
+
+minetest.register_on_leaveplayer(function(player)
+    drop_cube(player:get_player_name())
+end)
+minetest.register_on_dieplayer(function(player)
+    drop_cube(player:get_player_name())
+end)
+
+-- ── heavy duty super-colliding super button (2x2) ─────────────
+
+-- The quarter node is registered with its cap flush toward +X/+Z; facedir
+-- param2 rotates the cap toward the 2x2 center.  param2 doubles as the corner
+-- id, so the anchor (min X/Z quarter) is recovered arithmetically — no meta.
+-- Engine yaw convention verified in-game: if the caps point outward instead
+-- of meeting at the center, swap 1↔3 in BOTH tables below.
+local BTN_P2 = {[0] = {[0] = 0, [1] = 1}, [1] = {[0] = 3, [1] = 2}}  -- [dx][dz]
+local BTN_ANCHOR_OFF = {
+    [0] = {x = 0, z = 0}, [1] = {x = 0, z = -1},
+    [2] = {x = -1, z = -1}, [3] = {x = -1, z = 0},
+}
+
+local function button_anchor(pos, param2)
+    local off = BTN_ANCHOR_OFF[param2 % 4]
+    return {x = pos.x + off.x, y = pos.y, z = pos.z + off.z}
+end
+
+local function button_quarters(anchor)
+    local out = {}
+    for dx = 0, 1 do
+        for dz = 0, 1 do
+            out[#out + 1] = {
+                pos = {x = anchor.x + dx, y = anchor.y, z = anchor.z + dz},
+                param2 = BTN_P2[dx][dz],
+            }
+        end
+    end
+    return out
+end
+
+local function button_swap(anchor, pressed)
+    local target = pressed and "yaportal:superbutton_pressed"
+                            or "yaportal:superbutton"
+    for _, q in ipairs(button_quarters(anchor)) do
+        local nn = minetest.get_node(q.pos).name
+        if nn:find("^yaportal:superbutton") and nn ~= target then
+            minetest.set_node(q.pos, {name = target, param2 = q.param2})
+        end
+    end
+end
+
+local function button_positions(anchor)
+    local out = {}
+    for _, q in ipairs(button_quarters(anchor)) do out[#out + 1] = q.pos end
+    return out
+end
+
+local function superbutton_place(itemstack, placer, pointed)
+    if pointed.type ~= "node" then return itemstack end
+    local pname = placer and placer:is_player() and placer:get_player_name() or ""
+    local un = minetest.get_node(pointed.under)
+
+    -- Standard courtesy: let the pointed node handle a rightclick (chests,
+    -- etc.) unless sneaking.
+    if placer and not placer:get_player_control().sneak then
+        local ndef = minetest.registered_nodes[un.name]
+        if ndef and ndef.on_rightclick then
+            return ndef.on_rightclick(pointed.under, un, placer, itemstack, pointed) or itemstack
+        end
+    end
+
+    local anchor = pointed.above
+    for dx = 0, 1 do
+        for dz = 0, 1 do
+            local cell = {x = anchor.x + dx, y = anchor.y, z = anchor.z + dz}
+            local cdef = minetest.registered_nodes[minetest.get_node(cell).name]
+            local below = {x = cell.x, y = cell.y - 1, z = cell.z}
+            local bdef = minetest.registered_nodes[minetest.get_node(below).name]
+            if not (cdef and cdef.buildable_to) or not (bdef and bdef.walkable) then
+                minetest.chat_send_player(pname,
+                    "The super button needs a free 2x2 area on solid ground " ..
+                    "(expands +X/+Z from the clicked cell).")
+                return itemstack
+            end
+            if minetest.is_protected(cell, pname) then
+                minetest.record_protection_violation(cell, pname)
+                return itemstack
+            end
+        end
+    end
+
+    for _, q in ipairs(button_quarters(anchor)) do
+        minetest.set_node(q.pos, {name = "yaportal:superbutton", param2 = q.param2})
+    end
+    superbuttons[hashpos(anchor)] = {
+        pos = {x = anchor.x, y = anchor.y, z = anchor.z}, pressed = false,
+    }
+    if placer and not minetest.is_creative_enabled(pname) then
+        itemstack:take_item()
+    end
+    return itemstack
+end
+
+local function superbutton_after_dig(pos, oldnode)
+    local anchor = button_anchor(pos, oldnode.param2)
+    local h = hashpos(anchor)
+    local entry = superbuttons[h]
+    superbuttons[h] = nil
+    for _, q in ipairs(button_quarters(anchor)) do
+        if not (q.pos.x == pos.x and q.pos.y == pos.y and q.pos.z == pos.z) then
+            if minetest.get_node(q.pos).name:find("^yaportal:superbutton") then
+                minetest.remove_node(q.pos)
+            end
+        end
+    end
+    if entry and entry.pressed then
+        signal_set(button_positions(anchor), false)
+    end
+end
+
+do
+    -- Cap: staircase of three boxes approximating a quarter disc rounded away
+    -- from the 2x2 center; assembled, the four caps form an octagonal button.
+    local cap_up = {
+        {-4/16, -6/16,  0,     8/16, -2/16, 8/16},
+        { 0,    -6/16, -4/16,  8/16, -2/16, 8/16},
+        {-2/16, -6/16, -2/16,  8/16, -2/16, 8/16},
+    }
+    local cap_dn = {}
+    for i, b in ipairs(cap_up) do
+        cap_dn[i] = {b[1], b[2], b[3], b[4], -4/16, b[6]}
+    end
+    local function boxes(cap)
+        local out = {{-0.5, -0.5, -0.5, 0.5, -6/16, 0.5}}  -- base slab
+        for _, b in ipairs(cap) do out[#out + 1] = b end
+        return out
+    end
+
+    local base = {
+        description = "Heavy Duty Super-Colliding Super Button\n" ..
+            "2x2 floor button (expands +X/+Z from the clicked cell); " ..
+            "pressed by players and storage cubes",
+        drawtype = "nodebox",
+        paramtype = "light",
+        paramtype2 = "facedir",
+        sunlight_propagates = true,
+        is_ground_content = false,
+        inventory_image = "yaportal_superbutton_inv.png",
+        wield_image = "yaportal_superbutton_inv.png",
+        selection_box = {type = "fixed",
+            fixed = {-0.5, -0.5, -0.5, 0.5, -2/16, 0.5}},
+        sounds = block_sounds,
+        on_place = superbutton_place,
+        after_dig_node = superbutton_after_dig,
+    }
+
+    local up = table.copy(base)
+    up.tiles = {"yaportal_button_top.png", "[fill:16x16:#3a3a3c",
+                "yaportal_button_side.png"}
+    up.node_box = {type = "fixed", fixed = boxes(cap_up)}
+    up.groups = {cracky = 3, oddly_breakable_by_hand = 1}
+    up.mesecons = signal_receptor("off")
+    minetest.register_node("yaportal:superbutton", up)
+
+    local dn = table.copy(base)
+    dn.tiles = {"yaportal_button_top_pressed.png", "[fill:16x16:#3a3a3c",
+                "yaportal_button_side_pressed.png"}
+    dn.node_box = {type = "fixed", fixed = boxes(cap_dn)}
+    dn.groups = {cracky = 3, oddly_breakable_by_hand = 1,
+                 not_in_creative_inventory = 1}
+    dn.drop = "yaportal:superbutton"
+    dn.mesecons = signal_receptor("on")
+    minetest.register_node("yaportal:superbutton_pressed", dn)
+end
+
+minetest.register_lbm({
+    label = "Re-register super buttons",
+    name = "yaportal:register_superbutton",
+    nodenames = {"yaportal:superbutton", "yaportal:superbutton_pressed"},
+    run_at_every_load = true,
+    action = function(pos, node)
+        local anchor = button_anchor(pos, node.param2)
+        local h = hashpos(anchor)
+        if not superbuttons[h] then
+            -- A reloaded pressed button with nothing on it self-corrects on
+            -- the first poll.
+            superbuttons[h] = {pos = anchor,
+                pressed = node.name == "yaportal:superbutton_pressed"}
+        end
+    end,
+})
+
+-- ── vital apparatus vent (2x2x2 dispenser) + decorative tube ─────────────
+
+-- Same corner scheme as the super button: each quarter is registered with its
+-- two outer walls toward -X/-Z and facedir param2 = BTN_P2 corner id; the
+-- node name carries the layer (bottom = "yaportal:dispenser", top =
+-- "yaportal:dispenser_top"), so the anchor (bottom min-X/Z quarter) is
+-- arithmetic — no meta.  The 2x2 bottom is open: the cube spawns inside the
+-- cavity and falls out of the opening.
+local function vent_anchor(pos, name, param2)
+    local off = BTN_ANCHOR_OFF[param2 % 4]
+    return {x = pos.x + off.x,
+            y = pos.y - (name:find("_top", 1, true) and 1 or 0),
+            z = pos.z + off.z}
+end
+
+local function vent_cells(anchor)
+    local out = {}
+    for dy = 0, 1 do
+        for dx = 0, 1 do
+            for dz = 0, 1 do
+                out[#out + 1] = {
+                    pos = {x = anchor.x + dx, y = anchor.y + dy, z = anchor.z + dz},
+                    name = dy == 0 and "yaportal:dispenser" or "yaportal:dispenser_top",
+                    param2 = BTN_P2[dx][dz],
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function dispense(anchor, h)
+    -- The cube drops out of the open 2x2 bottom: all 4 cells below must be
+    -- clear of walkable nodes.
+    for dx = 0, 1 do
+        for dz = 0, 1 do
+            local below = {x = anchor.x + dx, y = anchor.y - 1, z = anchor.z + dz}
+            local bdef = minetest.registered_nodes[minetest.get_node(below).name]
+            if not bdef or bdef.walkable then return false end
+        end
+    end
+    local center = {x = anchor.x + 0.5, y = anchor.y + 0.6, z = anchor.z + 0.5}
+    -- Re-home rule: orphan any previous cube of this vent so only the newest
+    -- one counts — right-clicking cannot create runaway auto-respawn loops.
+    for _, obj in ipairs(minetest.get_objects_inside_radius(center, 16)) do
+        local ent = obj:get_luaentity()
+        if ent and ent.name == CUBE_ENTITY and ent._home == h then
+            ent._home = nil
+        end
+    end
+    local obj = minetest.add_entity(center, CUBE_ENTITY)
+    if obj then
+        local ent = obj:get_luaentity()
+        if ent then ent._home = h end
+        return true
+    end
+    return false
+end
+
+local function vent_rightclick(pos, node)
+    local anchor = vent_anchor(pos, node.name, node.param2)
+    local h = hashpos(anchor)
+    dispense(anchor, h)
+    local entry = dispensers[h]
+    if entry then entry.empty_ticks = 0 end
+end
+
+local function vent_after_dig(pos, oldnode)
+    local anchor = vent_anchor(pos, oldnode.name, oldnode.param2)
+    dispensers[hashpos(anchor)] = nil
+    for _, c in ipairs(vent_cells(anchor)) do
+        if not (c.pos.x == pos.x and c.pos.y == pos.y and c.pos.z == pos.z) then
+            if minetest.get_node(c.pos).name:find("^yaportal:dispenser") then
+                minetest.remove_node(c.pos)
+            end
+        end
+    end
+end
+
+local function vent_place(itemstack, placer, pointed)
+    if pointed.type ~= "node" then return itemstack end
+    local pname = placer and placer:is_player() and placer:get_player_name() or ""
+    local un = minetest.get_node(pointed.under)
+    if placer and not placer:get_player_control().sneak then
+        local ndef = minetest.registered_nodes[un.name]
+        if ndef and ndef.on_rightclick then
+            return ndef.on_rightclick(pointed.under, un, placer, itemstack, pointed) or itemstack
+        end
+    end
+    -- Clicking a ceiling underside hangs the vent below it (the clicked free
+    -- cell becomes the top layer); anything else builds upward.
+    local anchor = {x = pointed.above.x, y = pointed.above.y, z = pointed.above.z}
+    if pointed.under.y > pointed.above.y then anchor.y = anchor.y - 1 end
+    local cells = vent_cells(anchor)
+    for _, c in ipairs(cells) do
+        local cdef = minetest.registered_nodes[minetest.get_node(c.pos).name]
+        if not (cdef and cdef.buildable_to) then
+            minetest.chat_send_player(pname,
+                "The vent needs a free 2x2x2 volume " ..
+                "(expands +X/+Z from the clicked cell).")
+            return itemstack
+        end
+        if minetest.is_protected(c.pos, pname) then
+            minetest.record_protection_violation(c.pos, pname)
+            return itemstack
+        end
+    end
+    for _, c in ipairs(cells) do
+        minetest.set_node(c.pos, {name = c.name, param2 = c.param2})
+    end
+    dispensers[hashpos(anchor)] = {pos = anchor, empty_ticks = 0}
+    if placer and not minetest.is_creative_enabled(pname) then
+        itemstack:take_item()
+    end
+    return itemstack
+end
+
+local tube_walls = {
+    {-0.5,   -0.5, -0.5,   -0.375, 0.5,  0.5},
+    { 0.375, -0.5, -0.5,    0.5,   0.5,  0.5},
+    {-0.5,   -0.5, -0.5,    0.5,   0.5, -0.375},
+    {-0.5,   -0.5,  0.375,  0.5,   0.5,  0.5},
+}
+
+do
+    -- Quarter walls toward -X/-Z (the outer faces of the anchor corner);
+    -- facedir rotates them outward on the other three corners.
+    local vent_walls = {
+        {-0.5, -0.5, -0.5, -0.375, 0.5,  0.5},
+        {-0.5, -0.5, -0.5,  0.5,   0.5, -0.375},
+    }
+
+    local base = {
+        drawtype = "nodebox",
+        paramtype = "light",
+        paramtype2 = "facedir",
+        sunlight_propagates = true,
+        is_ground_content = false,
+        tiles = {"yaportal_vent_top.png", "[fill:16x16:#2a2a2c",
+                 "yaportal_tube_side.png"},
+        selection_box = {type = "fixed",
+            fixed = {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5}},
+        groups = {cracky = 3, oddly_breakable_by_hand = 1},
+        sounds = block_sounds,
+        drop = "yaportal:dispenser",
+        on_rightclick = vent_rightclick,
+        after_dig_node = vent_after_dig,
+    }
+
+    local bottom = table.copy(base)
+    bottom.description = "Vital Apparatus Vent\n" ..
+        "2x2x2 cube dispenser, open at the bottom (expands +X/+Z and " ..
+        "upward from the clicked cell; hangs downward from a ceiling).\n" ..
+        "Right-click: dispense a Weighted Storage Cube; automatically " ..
+        "replaces its cube when lost"
+    bottom.inventory_image = "yaportal_tube_open.png"
+    bottom.wield_image = "yaportal_tube_open.png"
+    bottom.node_box = {type = "fixed", fixed = vent_walls}
+    bottom.on_place = vent_place
+    minetest.register_node("yaportal:dispenser", bottom)
+
+    local top = table.copy(base)
+    top.description = "Vital Apparatus Vent (top segment)"
+    local top_boxes = table.copy(vent_walls)
+    top_boxes[#top_boxes + 1] = {-0.5, 0.375, -0.5, 0.5, 0.5, 0.5}  -- cap
+    top.node_box = {type = "fixed", fixed = top_boxes}
+    top.groups = {cracky = 3, oddly_breakable_by_hand = 1,
+                  not_in_creative_inventory = 1}
+    minetest.register_node("yaportal:dispenser_top", top)
+end
+
+minetest.register_node("yaportal:tube", {
+    description = "Apparatus Tube\nDecorative tube segment, open at both ends",
+    drawtype = "nodebox",
+    paramtype = "light",
+    sunlight_propagates = true,
+    is_ground_content = false,
+    tiles = {"yaportal_tube_open.png", "yaportal_tube_open.png",
+             "yaportal_tube_side.png"},
+    node_box = {type = "fixed", fixed = tube_walls},
+    selection_box = {type = "fixed", fixed = {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5}},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    sounds = block_sounds,
+})
+
+minetest.register_lbm({
+    label = "Re-register vital apparatus vents",
+    name = "yaportal:register_dispenser",
+    nodenames = {"yaportal:dispenser", "yaportal:dispenser_top"},
+    run_at_every_load = true,
+    action = function(pos, node)
+        local anchor = vent_anchor(pos, node.name, node.param2)
+        local h = hashpos(anchor)
+        if not dispensers[h] then
+            dispensers[h] = {pos = anchor, empty_ticks = 0}
+        end
+    end,
+})
+
+-- ── automatic door (2x2, Aperture style) ─────────────
+
+-- Quarters live in the wall plane: bl/br bottom row, tl/tr top row, with the
+-- big circular seam meeting at the door center.  facedir param2 is the plane
+-- orientation only (0 = width along X, 1 = width along Z); the quarter id is
+-- in the node name, so the bottom-left anchor is arithmetic — no meta.
+-- DOOR_WDIR[p2] = world direction from the left to the right column (the
+-- rotated +X axis; same engine yaw convention as BTN_P2 — verify in-game).
+local DOOR_WDIR = {
+    [0] = {x = 1, y = 0, z = 0}, [1] = {x = 0, y = 0, z = -1},
+    [2] = {x = -1, y = 0, z = 0}, [3] = {x = 0, y = 0, z = 1},
+}
+local DOOR_Q = {
+    bl = {right = false, top = false}, br = {right = true, top = false},
+    tl = {right = false, top = true},  tr = {right = true, top = true},
+}
+
+local function door_cells(bl, p2)
+    local wd = DOOR_WDIR[p2 % 4]
+    return {
+        {q = "bl", pos = {x = bl.x, y = bl.y, z = bl.z}},
+        {q = "br", pos = {x = bl.x + wd.x, y = bl.y, z = bl.z + wd.z}},
+        {q = "tl", pos = {x = bl.x, y = bl.y + 1, z = bl.z}},
+        {q = "tr", pos = {x = bl.x + wd.x, y = bl.y + 1, z = bl.z + wd.z}},
+    }
+end
+
+local function door_bl_from(pos, name, param2)
+    local q = name:match("^yaportal:door_(%a%a)")
+    local info = q and DOOR_Q[q]
+    if not info then return nil end
+    local wd = DOOR_WDIR[param2 % 4]
+    return {
+        x = pos.x - (info.right and wd.x or 0),
+        y = pos.y - (info.top and 1 or 0),
+        z = pos.z - (info.right and wd.z or 0),
+    }
+end
+
+local function door_set(entry, open)
+    local suffix = open and "_open" or ""
+    for _, c in ipairs(door_cells(entry.pos, entry.p2)) do
+        local want = "yaportal:door_" .. c.q .. suffix
+        local n = minetest.get_node(c.pos)
+        if n.name:find("^yaportal:door_") and n.name ~= want then
+            minetest.set_node(c.pos, {name = want, param2 = entry.p2})
+        end
+    end
+    entry.open = open
+end
+
+local function door_power(pos, node, on)
+    local bl = door_bl_from(pos, node.name, node.param2)
+    if not bl then return end
+    local h = hashpos(bl)
+    local entry = doors[h]
+    if not entry then
+        entry = {pos = bl, p2 = node.param2 % 4,
+                 open = node.name:find("_open") ~= nil, powered = false}
+        doors[h] = entry
+    end
+    entry.powered = on
+end
+
+local function door_effector()
+    if not HAVE_MESECON then return nil end
+    return {effector = {
+        action_on = function(pos, node) door_power(pos, node, true) end,
+        action_off = function(pos, node) door_power(pos, node, false) end,
+        rules = mesecon.rules.default,
+    }}
+end
+
+local function door_after_dig(pos, oldnode)
+    local bl = door_bl_from(pos, oldnode.name, oldnode.param2)
+    if not bl then return end
+    doors[hashpos(bl)] = nil
+    for _, c in ipairs(door_cells(bl, oldnode.param2 % 4)) do
+        if not (c.pos.x == pos.x and c.pos.y == pos.y and c.pos.z == pos.z) then
+            if minetest.get_node(c.pos).name:find("^yaportal:door_") then
+                minetest.remove_node(c.pos)
+            end
+        end
+    end
+end
+
+do
+    local DOOR_EDGE = "[fill:16x16:#9a9a9e"
+    for q, info in pairs(DOOR_Q) do
+        local face = info.top and "yaportal_door_upper.png"
+                              or "yaportal_door_lower.png"
+        local facem = face .. "^[transformFX"
+        -- Engine UV (generateCuboidTextureCoords): the -Z face maps u+ to +X,
+        -- the +Z face maps u+ to -X, so front and back need mutually mirrored
+        -- tiles: plain art (circle center at pixel x=15 = node +X) goes on -Z
+        -- for the left column, and the right column uses the mirrored pair.
+        local front, back  -- +Z tile, -Z tile
+        if info.right then front, back = face, facem
+        else front, back = facem, face end
+
+        local base = {
+            drawtype = "nodebox",
+            paramtype = "light",
+            paramtype2 = "facedir",
+            sunlight_propagates = true,
+            is_ground_content = false,
+            tiles = {DOOR_EDGE, DOOR_EDGE, DOOR_EDGE, DOOR_EDGE, front, back},
+            sounds = block_sounds,
+            drop = "yaportal:door",
+            after_dig_node = door_after_dig,
+            mesecons = door_effector(),
+        }
+
+        local closed = table.copy(base)
+        closed.description = "Aperture Automatic Door (segment)"
+        closed.node_box = {type = "fixed",
+            fixed = {-0.5, -0.5, -1/16, 0.5, 0.5, 1/16}}
+        closed.selection_box = closed.node_box
+        closed.groups = {cracky = 3, oddly_breakable_by_hand = 1,
+                         not_in_creative_inventory = 1}
+        minetest.register_node("yaportal:door_" .. q, closed)
+
+        -- Open: only a sliver toward the column's outer edge remains (the
+        -- retracted leaf); the passage is clear.
+        local sliver
+        if info.right then sliver = {0.5 - 2/16, -0.5, -1/16, 0.5, 0.5, 1/16}
+        else sliver = {-0.5, -0.5, -1/16, -0.5 + 2/16, 0.5, 1/16} end
+        local open = table.copy(base)
+        open.description = "Aperture Automatic Door (open segment)"
+        open.node_box = {type = "fixed", fixed = sliver}
+        open.selection_box = open.node_box
+        open.groups = {cracky = 3, oddly_breakable_by_hand = 1,
+                       not_in_creative_inventory = 1}
+        minetest.register_node("yaportal:door_" .. q .. "_open", open)
+    end
+end
+
+minetest.register_craftitem("yaportal:door", {
+    description = "Aperture Automatic Door\n" ..
+        "2 wide x 2 tall; opens on approach — or, with a super button within " ..
+        "8 nodes, only while that button is pressed",
+    inventory_image = "yaportal_door_inv.png",
+    wield_image = "yaportal_door_inv.png",
+    on_place = function(itemstack, placer, pointed)
+        if pointed.type ~= "node" then return itemstack end
+        local pname = placer and placer:is_player() and placer:get_player_name() or ""
+        local un = minetest.get_node(pointed.under)
+        if placer and not placer:get_player_control().sneak then
+            local ndef = minetest.registered_nodes[un.name]
+            if ndef and ndef.on_rightclick then
+                return ndef.on_rightclick(pointed.under, un, placer, itemstack, pointed) or itemstack
+            end
+        end
+        -- Plane orientation from the placer's view: looking mostly along X
+        -- puts the passage along X, i.e. the width along Z.
+        local p2 = 0
+        if placer then
+            local ld = placer:get_look_dir()
+            if math.abs(ld.x) > math.abs(ld.z) then p2 = 1 end
+        end
+        local bl = pointed.above
+        local cells = door_cells(bl, p2)
+        for _, c in ipairs(cells) do
+            local cdef = minetest.registered_nodes[minetest.get_node(c.pos).name]
+            if not (cdef and cdef.buildable_to) then
+                minetest.chat_send_player(pname,
+                    "The door needs a free 2x2 area (upward from the clicked cell).")
+                return itemstack
+            end
+            if minetest.is_protected(c.pos, pname) then
+                minetest.record_protection_violation(c.pos, pname)
+                return itemstack
+            end
+        end
+        for _, c in ipairs(cells) do
+            minetest.set_node(c.pos, {name = "yaportal:door_" .. c.q, param2 = p2})
+        end
+        doors[hashpos(bl)] = {pos = {x = bl.x, y = bl.y, z = bl.z},
+                              p2 = p2, open = false, powered = false}
+        if placer and not minetest.is_creative_enabled(pname) then
+            itemstack:take_item()
+        end
+        return itemstack
+    end,
+})
+
+minetest.register_lbm({
+    label = "Re-register automatic doors",
+    name = "yaportal:register_door",
+    nodenames = {"yaportal:door_bl", "yaportal:door_bl_open"},
+    run_at_every_load = true,
+    action = function(pos, node)
+        local h = hashpos(pos)
+        if not doors[h] then
+            doors[h] = {pos = {x = pos.x, y = pos.y, z = pos.z},
+                        p2 = node.param2 % 4,
+                        open = node.name:find("_open") ~= nil, powered = false}
+        end
+    end,
+})
+
+-- ── combined stepper ─────────────
+-- tier 0 (every step): carried-cube positioning; tier 1 (0.2s): button and
+-- door polling; tier 2 (2s): dispenser auto-respawn.
+
+local ib_button_accum, ib_vent_accum = 0, 0
+
+minetest.register_globalstep(function(dtime)
+    -- carried cubes float in front of the carrier's camera
+    for pname, obj in pairs(carried_cubes) do
+        local player = minetest.get_player_by_name(pname)
+        if not obj:get_pos() then
+            carried_cubes[pname] = nil        -- cube object died/unloaded
+        elseif not player then
+            drop_cube(pname)                  -- carrier gone (leave handler missed)
+        else
+            local eye = player:get_pos()
+            local props = player:get_properties()
+            eye.y = eye.y + ((props and props.eye_height) or 1.5)
+            local ld = player:get_look_dir()
+            obj:move_to({x = eye.x + ld.x * CARRY_DIST,
+                         y = eye.y + ld.y * CARRY_DIST,
+                         z = eye.z + ld.z * CARRY_DIST}, true)
+            obj:set_rotation({x = 0, y = player:get_look_horizontal(), z = 0})
+        end
+    end
+
+    ib_button_accum = ib_button_accum + dtime
+    if ib_button_accum >= 0.2 then
+        ib_button_accum = 0
+
+        for h, b in pairs(superbuttons) do
+            if not minetest.get_node(b.pos).name:find("^yaportal:superbutton") then
+                superbuttons[h] = nil
+            else
+                local center = {x = b.pos.x + 0.5, y = b.pos.y, z = b.pos.z + 0.5}
+                local pressed = false
+                for _, obj in ipairs(minetest.get_objects_inside_radius(center, 1.8)) do
+                    local opos = obj:get_pos()
+                    if opos
+                       and math.abs(opos.x - center.x) <= 1.35
+                       and math.abs(opos.z - center.z) <= 1.35
+                       and opos.y >= b.pos.y - 0.45 and opos.y <= b.pos.y + 0.7 then
+                        if obj:is_player() then
+                            pressed = true
+                            break
+                        end
+                        local ent = obj:get_luaentity()
+                        if ent and ent.name == CUBE_ENTITY and not ent._carrier then
+                            pressed = true
+                            break
+                        end
+                    end
+                end
+                if pressed ~= b.pressed then
+                    b.pressed = pressed
+                    button_swap(b.pos, pressed)
+                    button_sound(center, pressed)
+                    signal_set(button_positions(b.pos), pressed)
+                end
+            end
+        end
+
+        for h, e in pairs(doors) do
+            local n = minetest.get_node(e.pos)
+            if not n.name:find("^yaportal:door_bl") then
+                doors[h] = nil
+            else
+                e.p2 = n.param2 % 4
+                local wd = DOOR_WDIR[e.p2]
+                local center = {x = e.pos.x + wd.x * 0.5, y = e.pos.y + 0.5,
+                                z = e.pos.z + wd.z * 0.5}
+                local controlled = false
+                local want = e.powered
+                for _, b in pairs(superbuttons) do
+                    local bc = {x = b.pos.x + 0.5, y = b.pos.y, z = b.pos.z + 0.5}
+                    if vector.distance(bc, center) <= 8 then
+                        controlled = true
+                        if b.pressed then want = true end
+                    end
+                end
+                if not controlled and not want then
+                    for _, pl in ipairs(minetest.get_connected_players()) do
+                        if vector.distance(pl:get_pos(), center) <= 2.5 then
+                            want = true
+                            break
+                        end
+                    end
+                end
+                if want ~= e.open then
+                    door_set(e, want)
+                    door_sound(center, want)
+                end
+            end
+        end
+    end
+
+    ib_vent_accum = ib_vent_accum + dtime
+    if ib_vent_accum >= 2.0 then
+        ib_vent_accum = 0
+        for h, d in pairs(dispensers) do
+            if minetest.get_node(d.pos).name ~= "yaportal:dispenser" then
+                dispensers[h] = nil
+            else
+                local found = false
+                for _, obj in ipairs(minetest.get_objects_inside_radius(d.pos, 16)) do
+                    local ent = obj:get_luaentity()
+                    if ent and ent.name == CUBE_ENTITY and ent._home == h then
+                        found = true
+                        break
+                    end
+                end
+                if found then
+                    d.empty_ticks = 0
+                else
+                    -- Accepted edge case: a home cube beyond 16 nodes (walked
+                    -- off, portal-teleported) or in an unloaded mapblock counts
+                    -- as lost and gets replaced — a duplicate may appear.
+                    d.empty_ticks = d.empty_ticks + 1
+                    if d.empty_ticks >= 2 then  -- ~4s, Portal-like delay
+                        if dispense(d.pos, h) then d.empty_ticks = 0 end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ── crafts ─────────────
+
+do
+    local iron  = (minetest.get_modpath("mcl_core") and "mcl_core:iron_ingot")
+               or (minetest.get_modpath("default")  and "default:steel_ingot")
+    local stone = (minetest.get_modpath("mcl_core") and "mcl_core:stone")
+               or (minetest.get_modpath("default")  and "default:stone")
+    local glass = (minetest.get_modpath("mcl_core") and "mcl_core:glass")
+               or (minetest.get_modpath("default")  and "default:glass")
+    if iron and stone then
+        minetest.register_craft({
+            output = "yaportal:superbutton",
+            recipe = {
+                {iron,  iron,  iron },
+                {stone, stone, stone},
+            },
+        })
+    end
+    if iron and glass then
+        minetest.register_craft({
+            output = "yaportal:dispenser",
+            recipe = {
+                {iron, iron,  iron},
+                {iron, glass, iron},
+                {iron, iron,  iron},
+            },
+        })
+    end
+    if iron then
+        minetest.register_craft({
+            output = "yaportal:tube 8",
+            recipe = {
+                {iron, iron, iron},
+                {iron, "",   iron},
+                {iron, iron, iron},
+            },
+        })
+        minetest.register_craft({
+            output = "yaportal:door",
+            recipe = {
+                {iron, iron},
+                {iron, iron},
+                {iron, iron},
+            },
+        })
+    end
+end

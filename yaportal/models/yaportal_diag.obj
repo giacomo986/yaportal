@@ -1,0 +1,39 @@
+# Half-cube cut vertically at 45 degrees, edge to edge (triangular prism).
+# NOTE: Irrlicht's OBJ loader negates every vertex X ("change handedness",
+# COBJMeshFileLoader.cpp), so this file is written PRE-MIRRORED in X with
+# reversed winding.  After the loader's mirror the in-engine solid half is
+# the XZ triangle (-0.5,-0.5) (0.5,-0.5) (0.5,0.5) — right angle at the
+# +X/-Z corner, matching the node's staircase collision boxes — and the
+# diagonal face runs corner (-X,-Z) to corner (+X,+Z).
+# The diagonal face is sqrt(2) wide and maps the full texture width (u 0..1),
+# i.e. the panel art is stretched across it so it lines up with the flat
+# panels at both edges.  Square faces follow the engine cube UV convention
+# (-Z: u+ = +X, +X: u+ = +Z, v up).
+o yaportal_diag
+v  0.5 -0.5 -0.5
+v -0.5 -0.5 -0.5
+v -0.5 -0.5  0.5
+v  0.5  0.5 -0.5
+v -0.5  0.5 -0.5
+v -0.5  0.5  0.5
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vn  0 -1  0
+vn  0  1  0
+vn  0  0 -1
+vn -1  0  0
+vn  0.7071068 0 0.7071068
+usemtl none
+# bottom triangle
+f 3/3/1 2/2/1 1/1/1
+# top triangle
+f 5/3/2 6/2/2 4/4/2
+# -Z square face (in-engine)
+f 2/2/3 5/3/3 4/4/3 1/1/3
+# +X square face (in-engine)
+f 3/2/4 6/3/4 5/4/4 2/1/4
+# diagonal face (texture stretched across the sqrt(2) width; u runs C->A to
+# match the mirrored u direction solid cube faces use in-engine)
+f 4/3/5 6/4/5 3/1/5 1/2/5
