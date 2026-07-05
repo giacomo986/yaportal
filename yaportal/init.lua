@@ -164,7 +164,10 @@ end
 local function lift_feet_out_of_blocks(x, z, feet)
     for _ = 1, 16 do                      -- cap iterations (solid fill)
         local y_n = math.floor(feet + 0.5) -- node whose span contains the feet
-        if not node_is_walkable(node_at(x, y_n, z)) then break end
+        local nm = node_at(x, y_n, z)
+        -- Thin glass is a 1/32 pane, not a block to embed in: exiting beside/into
+        -- glass must not force a step-up. Treat it as non-embedding here.
+        if not node_is_walkable(nm) or nm:match("^yaportal:thin_glass") then break end
         feet = y_n + 0.5                   -- rest on this node's top, recheck above
     end
     return feet
@@ -2229,14 +2232,68 @@ local function pgun4_aim_ok(node, axis, ns)
     return (info.half:sub(2, 2) == "p") == (ns > 0)
 end
 
+-- Thin glass may share the exit cell of a portal as long as it sits BESIDE or
+-- OPPOSITE the opening — never on the face toward the portal (which would block
+-- the walk-through). These reproduce the thin_glass conventions without the
+-- glass helpers (glass_dir_to_bit etc.), which are defined later in the file.
+-- Full-face bit per outward direction (GLASS_FACES): -X=1 +X=2 -Y=4 +Y=8 -Z=16 +Z=32.
+local FRONT_GLASS_BIT = {
+    ["-1,0,0"] = 1, ["1,0,0"] = 2, ["0,-1,0"] = 4,
+    ["0,1,0"]  = 8, ["0,0,-1"] = 16, ["0,0,1"] = 32,
+}
+local function front_glass_face_key(dx, dy, dz)
+    if dx ~= 0 then return "x" .. (dx > 0 and "p" or "m") end
+    if dy ~= 0 then return "y" .. (dy > 0 and "p" or "m") end
+    return "z" .. (dz > 0 and "p" or "m")
+end
+-- True when a thin_glass node in the exit cell blocks the portal OPENING of
+-- footprint cell `c` (carve = c.carve, axis = pp.axis). (ndx,ndy,ndz) points
+-- from the exit cell back toward the portal (-n) — the face a blocking pane
+-- would sit on. A full-face pane on that face always blocks. A half-pane blocks
+-- only when the half it covers overlaps the opening's half: a half-pane sitting
+-- beside the opening (e.g. glass on the +X half while the opening is on -X) is
+-- fine, so half-slab + half-glass walls stay portable.
+local function front_glass_blocks(name, ndx, ndy, ndz, carve, axis)
+    local mask = tonumber(name:match("^yaportal:thin_glass_(%d+)$"))
+    if mask then
+        local b = FRONT_GLASS_BIT[ndx .. "," .. ndy .. "," .. ndz]
+        return b ~= nil and (mask % (b * 2)) >= b
+    end
+    local fkey, hkey = name:match("^yaportal:thin_glass_half_(%a%a)_(%a%a)$")
+    if not fkey or fkey ~= front_glass_face_key(ndx, ndy, ndz) then
+        return false                       -- not glass, or pane on a side face
+    end
+    -- Half-pane flush on the opening face. A full-width opening (carve 0, or an
+    -- axis with no in-plane offsets) is covered by any pane; otherwise the pane
+    -- blocks only if its half meets the opening's half on the same in-plane axis.
+    local s = PGUN4_CARVE_S[carve or 0]
+    local inpl = PGUN4_INPLANE[axis]
+    if (carve or 0) == 0 or not (s and inpl) then return true end
+    local ha = hkey:sub(1, 1)
+    local hs = (hkey:sub(2, 2) == "p") and 1 or -1
+    local os = (ha == inpl[1]) and s[1] or (ha == inpl[2]) and s[2] or 0
+    return os == 0 or os == hs             -- opening spans ha, or its half == pane half
+end
+
 -- Every footprint cell one step out along the normal must be passable,
 -- otherwise part of the opening would be buried in a floor/ceiling/wall.
+-- Thin glass in the exit cell is allowed (side/opposite panes, or a front pane
+-- on the half beside the opening); only a pane covering the opening itself
+-- blocks and refuses placement.
 local function pgun4_front_clear(pp)
     local n = portal_normal(pp.axis, pp.ns)
     for _, c in ipairs(pgun4_cells(pp)) do
         local f = {x = c.pos.x + n.x, y = c.pos.y + n.y, z = c.pos.z + n.z}
-        local def = minetest.registered_nodes[minetest.get_node(f).name]
-        if not def or def.walkable then return false end
+        local nn = minetest.get_node(f).name
+        local def = minetest.registered_nodes[nn]
+        if not def then return false end
+        if nn:match("^yaportal:thin_glass") then
+            if front_glass_blocks(nn, -n.x, -n.y, -n.z, c.carve, pp.axis) then
+                return false
+            end
+        elseif def.walkable then
+            return false
+        end
     end
     return true
 end
