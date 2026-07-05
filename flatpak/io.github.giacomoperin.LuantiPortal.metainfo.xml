@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.giacomoperin.LuantiPortal</id>
+  <name>Luanti (portal)</name>
+  <summary>Luanti fork with real-time see-through portals</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LGPL-2.1-or-later</project_license>
+  <description>
+    <p>
+      Fork of Luanti 5.16 with a portal gun: real-time rendered portals
+      (render-to-texture with oblique clip planes), seamless teleport with
+      velocity/orientation transform, and Portal-style puzzle blocks.
+      Bundles VoxeLibre and the yaportal mod.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.giacomoperin.LuantiPortal.desktop</launchable>
+  <developer_name>Giacomo Perin</developer_name>
+  <releases>
+    <release version="5.16.1-portal" date="2026-07-05"/>
+  </releases>
+</component>

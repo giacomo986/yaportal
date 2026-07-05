@@ -1,0 +1,120 @@
+# Flatpak manifest for Luanti-portal.
+# Built by ../release-flatpak.sh — builds luanti_src from the local tree
+# inside the freedesktop 24.08 sandbox (no host deps/ tarballs needed).
+#
+# Deps not in the freedesktop runtime are built as modules below (LuaJIT,
+# OpenAL). jsoncpp/gmp use the copies bundled in luanti_src/lib.
+# leveldb/postgres/redis are disabled: worlds use sqlite by default.
+app-id: io.github.giacomoperin.LuantiPortal
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: luanti-portal-run
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio
+  # Multiplayer + ContentDB.
+  - --share=network
+  # Same user dir as the AppImage/dev build, so worlds are shared.
+  - --filesystem=~/.minetest:create
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/man
+  - '*.a'
+  - '*.la'
+  - /bin/luajit*
+
+modules:
+  - name: luajit
+    buildsystem: simple
+    build-commands:
+      - make -j"$FLATPAK_BUILDER_N_JOBS" amalg PREFIX=/app
+      - make install PREFIX=/app
+    sources:
+      - type: git
+        url: https://github.com/LuaJIT/LuaJIT.git
+        branch: v2.1
+        commit: a2bde60819d83e6f75130ac2c93ee4b3c7615800
+
+  - name: openal-soft
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DALSOFT_EXAMPLES=OFF
+      - -DALSOFT_UTILS=OFF
+    sources:
+      - type: archive
+        url: https://github.com/kcat/openal-soft/archive/refs/tags/1.24.2.tar.gz
+        sha256: 7efd383d70508587fbc146e4c508771a2235a5fc8ae05bf6fe721c20a348bd7c
+
+  - name: luanti
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DRUN_IN_PLACE=FALSE
+      # Match the AppImage/dev builds (and keep the final link light).
+      - -DENABLE_LTO=FALSE
+      - -DBUILD_SERVER=FALSE
+      - -DBUILD_UNITTESTS=FALSE
+      - -DENABLE_GETTEXT=ON
+      - -DENABLE_SOUND=ON
+      - -DENABLE_LUAJIT=ON
+      - -DENABLE_SYSTEM_GMP=OFF
+      - -DENABLE_SYSTEM_JSONCPP=OFF
+      - -DENABLE_LEVELDB=OFF
+      - -DENABLE_POSTGRESQL=OFF
+      - -DENABLE_REDIS=OFF
+      - -DENABLE_CURSES=OFF
+      - -DENABLE_SPATIAL=OFF
+      - -DENABLE_UPDATE_CHECKER=FALSE
+    post-install:
+      # cmake only installs devtest (optional); bundle the game manually.
+      - mkdir -p /app/share/luanti/games
+      - cp -r ../games/mineclone2 /app/share/luanti/games/mineclone2
+      - install -Dm644 ../misc/luanti-xorg-icon-128.png
+        /app/share/icons/hicolor/128x128/apps/${FLATPAK_ID}.png
+    sources:
+      - type: dir
+        path: ../luanti_src
+        skip:
+          - .git
+          - build
+          - cache
+          - bin
+          - android
+          - debug.txt
+
+  - name: yaportal-mod
+    buildsystem: simple
+    build-commands:
+      # Staged here; luanti-portal-run copies it into ~/.minetest/mods
+      # on launch (same logic as the AppImage AppRun).
+      - mkdir -p /app/share/luanti-portal/bundled_mods/yaportal
+      - cp -r init.lua mod.conf textures /app/share/luanti-portal/bundled_mods/yaportal/
+    sources:
+      - type: dir
+        path: ../yaportal
+
+  - name: launcher
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 luanti-portal-run /app/bin/luanti-portal-run
+      - install -Dm644 io.github.giacomoperin.LuantiPortal.desktop
+        /app/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 io.github.giacomoperin.LuantiPortal.metainfo.xml
+        /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+    sources:
+      - type: file
+        path: luanti-portal-run
+      - type: file
+        path: io.github.giacomoperin.LuantiPortal.desktop
+      - type: file
+        path: io.github.giacomoperin.LuantiPortal.metainfo.xml

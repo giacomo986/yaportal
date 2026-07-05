@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Luanti (portal)
+Comment=Luanti fork with real-time portals
+Exec=luanti-portal-run
+Icon=io.github.giacomoperin.LuantiPortal
+Type=Application
+Categories=Game;

@@ -1,0 +1,27 @@
+#!/bin/bash
+# Flatpak launcher: sync the bundled yaportal mod into the user dir,
+# then start Luanti. Mirrors the AppImage AppRun logic.
+
+LUANTI_USER="$HOME/.minetest"
+export LUANTI_USER_PATH="$LUANTI_USER"
+mkdir -p "$LUANTI_USER"
+
+# Remove old mod dir left over from rename mio_portale → yaportal
+rm -rf "$LUANTI_USER/mods/mio_portale"
+
+BUNDLED="/app/share/luanti-portal/bundled_mods/yaportal"
+USERMOD="$LUANTI_USER/mods/yaportal"
+if [ ! -d "$USERMOD" ] || [ "$BUNDLED/init.lua" -nt "$USERMOD/init.lua" ]; then
+    mkdir -p "$LUANTI_USER/mods"
+    rm -rf "$USERMOD"
+    cp -r "$BUNDLED" "$USERMOD"
+fi
+
+# Migrate world.mt: rename old mod key and force-enable yaportal
+find "$LUANTI_USER/worlds" -name "world.mt" 2>/dev/null | while read -r wmt; do
+    sed -i \
+        's|^load_mod_mio_portale = .*|load_mod_yaportal = true|' \
+        "$wmt"
+done
+
+exec /app/bin/luanti "$@"

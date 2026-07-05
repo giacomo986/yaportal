@@ -4,3 +4,4 @@ tmp/
 *.AppImage
 .vscode/
 .claude/
+*.flatpak
