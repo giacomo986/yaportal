@@ -1762,7 +1762,23 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 	u8 mask = closed ? 0 : (u8)((1 << front) | merged);
 
 	const float H = 0.5f * BS;
-	aabb3f box(-H, -H, -H, H, H, H);
+
+	// yaportal slab shell (group portal_slab, see mapnode.cpp): the solid
+	// material fills only half of the cell — value-1 is the face index of the
+	// occupied half's outer face. All shell geometry is confined to these
+	// bounds so a carved panel slab keeps its slab silhouette.
+	float mLo[3] = {-H, -H, -H};
+	float mHi[3] = { H,  H,  H};
+	{
+		const int ps = itemgroup_get(cur_node.f->groups, "portal_slab");
+		if (ps >= 1 && ps <= 6) {
+			const int sface = ps - 1;
+			const int saxis = (sface < 2) ? 1 : (sface < 4 ? 0 : 2);
+			if (sface % 2 == 0) mLo[saxis] = 0.0f; else mHi[saxis] = 0.0f;
+		}
+	}
+
+	aabb3f box(mLo[0], mLo[1], mLo[2], mHi[0], mHi[1], mHi[2]);
 	f32 txc[24];
 	generateCuboidTextureCoords(box, txc);
 	drawAutoLightedCuboid(box, tiles, 6, txc, mask);
@@ -1806,7 +1822,8 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 		// Solid part of the front face (open blocks only — closed blocks draw
 		// the full cube face): thin slab(s) flush with the face; the second
 		// slab of a quarter carve is clipped to the open range of the first
-		// cut so the L shape has no overlapping (z-fighting) region.
+		// cut so the L shape has no overlapping (z-fighting) region. Clamped
+		// to the material bounds (slab shells have no dead half to panel).
 		const float d = (1.0f / 32.0f) * BS;
 		for (int i = 0; !closed && i < ncuts; i++) {
 			float lo[3] = {-H, -H, -H};
@@ -1817,11 +1834,28 @@ void MapblockMeshGenerator::drawPortalBlockNode()
 				if (copen_pos[j]) lo[caxes[j]] = 0.0f;
 				else hi[caxes[j]] = 0.0f;
 			}
+			bool empty = false;
+			for (int a = 0; a < 3; a++) {
+				lo[a] = std::max(lo[a], mLo[a]);
+				hi[a] = std::min(hi[a], mHi[a]);
+				if (lo[a] >= hi[a]) empty = true;
+			}
+			if (empty)
+				continue;
 			aabb3f hb(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
 			f32 htxc[24];
 			generateCuboidTextureCoords(hb, htxc);
 			drawAutoLightedCuboid(hb, tiles, 6, htxc, 0);
 		}
+	}
+
+	// Clip the opening extent to the material bounds: in a slab cell the
+	// opening stops at the slab's inner boundary, and the frame strips below
+	// must follow that edge instead of the cell edge.
+	for (int a = 0; a < 3; a++) {
+		if (a == nAxis) continue;
+		if (oLo[a] < mLo[a]) oLo[a] = mLo[a];
+		if (oHi[a] > mHi[a]) oHi[a] = mHi[a];
 	}
 
 	// yaportal: optional 1/32-block frame around the portal opening (group

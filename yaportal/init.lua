@@ -2001,18 +2001,49 @@ end
 -- [1] = the portal colour). Separate node ids keep gun3's blocks untouched.
 -- Shell-texture variants: the carved blocks take the look of the wall
 -- material they replaced (portal_wall = white, wall_upper/lower = Aperture
--- panels), so a portal shot into a panel wall doesn't turn its cells white.
+-- panels, floor = Aperture floor tile), so a portal shot into a panel wall
+-- or tiled floor doesn't turn its cells white.
 -- Name scheme: yaportal:portal_wallblock_<color><mat>[_off].
 local PGUN4_MAT_TILES = {
     [""]    = "[fill:16x16:#ffffff",
     ["_up"] = "yaportal_wall_upper.png",
     ["_lo"] = "yaportal_wall_lower.png",
+    ["_fl"] = "yaportal_floor.png",
+    ["_fc"] = "yaportal_floor_checker.png",
 }
 local PGUN4_MAT_OF = {
     ["yaportal:portal_wall"] = "",
     ["yaportal:wall_upper"]  = "_up",
     ["yaportal:wall_lower"]  = "_lo",
+    ["yaportal:floor"]       = "_fl",
+    ["yaportal:floor_checker"] = "_fc",
 }
+-- Panel slabs the wall gun can also carve: node name → shell material suffix
+-- + the half of the cell the slab occupies ("ym".."zp"). Slabs are fixed-box
+-- variant nodes (no facedir), one per half; the base item name is the bottom
+-- ("ym") node. Orientation rules in pgun4_cell_carveable below.
+local PGUN4_SLAB_INFO = {}
+for _, m in ipairs({{"upper", "_up"}, {"lower", "_lo"}}) do
+    local basename = "yaportal:wall_" .. m[1] .. "_slab"
+    PGUN4_SLAB_INFO[basename] = {mat = m[2], half = "ym"}
+    for _, h in ipairs({"yp", "xm", "xp", "zm", "zp"}) do
+        PGUN4_SLAB_INFO[basename .. "_" .. h] = {mat = m[2], half = h}
+    end
+end
+
+-- Engine face order (+Y -Y +X -X +Z -Z) index+1 of the slab's outer face:
+-- value of the portal_slab group on wallblock slab variants (mapnode.cpp
+-- confines the shell geometry to that half of the cell).
+local PGUN4_SLAB_GROUP = {yp = 1, ym = 2, xp = 3, xm = 4, zp = 5, zm = 6}
+
+-- Wallblock name suffix for the shell of a carved cell: the wall material
+-- variant, plus "_s<half>" when the original node was a panel slab.
+local function pgun4_shell_mat(name)
+    if PGUN4_MAT_OF[name] then return PGUN4_MAT_OF[name] end
+    local info = PGUN4_SLAB_INFO[name]
+    if info then return info.mat .. "_s" .. info.half end
+    return ""
+end
 
 local function pgun4_register_block(color, frametex)
     local Color = color:gsub("^%l", string.upper)
@@ -2045,6 +2076,21 @@ local function pgun4_register_block(color, frametex)
             portal_closed = 1, not_in_creative_inventory = 1}
         minetest.register_node(
             "yaportal:portal_wallblock_" .. color .. mat .. "_off", closed)
+        -- Slab-shell variants (panel slab materials only): group portal_slab
+        -- tells the engine the solid material fills just half of the cell,
+        -- so the shell keeps the slab silhouette instead of a full cube.
+        if mat == "_up" or mat == "_lo" then
+            for half, gv in pairs(PGUN4_SLAB_GROUP) do
+                local sopen = table.copy(open)
+                sopen.groups.portal_slab = gv
+                minetest.register_node("yaportal:portal_wallblock_"
+                    .. color .. mat .. "_s" .. half, sopen)
+                local sclosed = table.copy(closed)
+                sclosed.groups.portal_slab = gv
+                minetest.register_node("yaportal:portal_wallblock_"
+                    .. color .. mat .. "_s" .. half .. "_off", sclosed)
+            end
+        end
     end
 end
 pgun4_register_block("blue",   "yaportal_blue.png")
@@ -2064,7 +2110,7 @@ local function pgun4_cells(pp)
     local out = {}
     if pp.axis == 2 or (ou == 0 and ov == 0) then
         for _, c in ipairs(pgun3_block_positions(pp)) do
-            out[#out + 1] = {pos = c, param2 = dirp2}
+            out[#out + 1] = {pos = c, param2 = dirp2, carve = 0}
         end
         return out
     end
@@ -2100,7 +2146,7 @@ local function pgun4_cells(pp)
             else
                 pos = {x = pp.cx, y = pp.cy + dv, z = pp.cz + du}
             end
-            out[#out + 1] = {pos = pos, param2 = dirp2 + carve * 8}
+            out[#out + 1] = {pos = pos, param2 = dirp2 + carve * 8, carve = carve}
         end
     end
     return out
@@ -2116,7 +2162,7 @@ local function pgun4_apply_state(portal_name)
     for i, c in ipairs(pgun4_cells(pp)) do
         local nn = minetest.get_node(c.pos).name
         if nn:sub(1, #base) == base then
-            local mat = (pp.saved and PGUN4_MAT_OF[pp.saved[i]]) or ""
+            local mat = pp.saved and pgun4_shell_mat(pp.saved[i]) or ""
             local target = base .. mat .. (linked and "" or "_off")
             minetest.set_node(c.pos, {name = target, param2 = c.param2})
         end
@@ -2125,12 +2171,63 @@ local function pgun4_apply_state(portal_name)
 end
 
 -- Wall materials the wall gun can carve a portal into. The original node of
--- every carved cell is remembered in pp.saved and restored on close.
+-- every carved cell is remembered in pp.saved (name) + pp.saved_p2 (param2)
+-- and restored on close.
 local PGUN4_CARVEABLE = {
     [PGUN4_WALL] = true,
     ["yaportal:wall_upper"] = true,
     ["yaportal:wall_lower"] = true,
+    ["yaportal:floor"] = true,
+    ["yaportal:floor_checker"] = true,
 }
+
+-- Panel slabs are carveable in two ways:
+--  * Fronting slab: occupies the half of the cell pointing along the portal
+--    normal — its outer face IS the wall surface, so it hosts any opening
+--    (the mid-block face never can: the opening plane sits on the node grid).
+--  * In-plane slab (edge cells of a half-offset portal only): the opening in
+--    that cell covers just one in-plane half, and the slab occupies exactly
+--    that half, so the material behind the whole opening exists.
+-- While the portal is open the carved cell becomes a full-depth wallblock
+-- (bulges into the empty half); the slab comes back on close.
+local PGUN4_AXIS_DIR = {[0] = "z", [1] = "x", [2] = "y"}
+-- Engine first/second in-plane axes per portal axis (ascending order).
+local PGUN4_INPLANE = {[0] = {"x", "y"}, [1] = {"y", "z"}}
+-- carve value → open-half state per in-plane axis: 0 = opening spans the
+-- whole axis, ±1 = opening confined to the +/− half (see pgun4_cells).
+local PGUN4_CARVE_S = {
+    [0] = {0, 0},
+    {-1, 0}, {1, 0}, {0, -1}, {0, 1},           -- 1..4: half-open
+    {-1, -1}, {1, -1}, {-1, 1}, {1, 1},         -- 5..8: quarter-open
+}
+
+local function pgun4_cell_carveable(node, axis, ns, carve)
+    if PGUN4_CARVEABLE[node.name] then return true end
+    local info = PGUN4_SLAB_INFO[node.name]
+    if not info then return false end
+    local ha = info.half:sub(1, 1)
+    local hs = (info.half:sub(2, 2) == "p") and 1 or -1
+    if ha == PGUN4_AXIS_DIR[axis] then
+        return hs == ((ns > 0) and 1 or -1)     -- fronting slab
+    end
+    local inpl = PGUN4_INPLANE[axis]
+    if not inpl then return false end           -- axis 2 has no offsets
+    local s = PGUN4_CARVE_S[carve or 0]
+    local sa = (ha == inpl[1]) and s[1] or (ha == inpl[2]) and s[2]
+    return sa == hs
+end
+
+-- Aim gate: like pgun4_cell_carveable, but an in-plane slab always passes —
+-- whether the opening fits its half depends on the offset candidate, which
+-- the probe loop checks per cell later.
+local function pgun4_aim_ok(node, axis, ns)
+    if PGUN4_CARVEABLE[node.name] then return true end
+    local info = PGUN4_SLAB_INFO[node.name]
+    if not info then return false end
+    local ha = info.half:sub(1, 1)
+    if ha ~= PGUN4_AXIS_DIR[axis] then return PGUN4_INPLANE[axis] ~= nil end
+    return (info.half:sub(2, 2) == "p") == (ns > 0)
+end
 
 -- Every footprint cell one step out along the normal must be passable,
 -- otherwise part of the opening would be buried in a floor/ceiling/wall.
@@ -2148,7 +2245,8 @@ end
 -- material AND the space in front of the opening is clear.
 local function pgun4_probe_ok(pp)
     for _, c in ipairs(pgun4_cells(pp)) do
-        if not PGUN4_CARVEABLE[minetest.get_node(c.pos).name] then
+        if not pgun4_cell_carveable(minetest.get_node(c.pos),
+                                    pp.axis, pp.ns, c.carve) then
             return false
         end
     end
@@ -2164,7 +2262,8 @@ local function portal_gun4_remove(pname, color)
         local nn = minetest.get_node(c.pos).name
         if nn:sub(1, #bnode) == bnode then
             local orig = pp.saved and pp.saved[i] or PGUN4_WALL
-            minetest.set_node(c.pos, {name = orig})
+            minetest.set_node(c.pos,
+                {name = orig, param2 = pp.saved_p2 and pp.saved_p2[i] or 0})
         end
     end
     local partner = pp.link
@@ -2205,8 +2304,6 @@ local function portal_gun4_shoot(player, pointed_thing, color)
     local pname = player:get_player_name()
     local under = pointed_thing.under
     local above = pointed_thing.above
-    -- Only fires when aimed at a carveable wall material.
-    if not PGUN4_CARVEABLE[minetest.get_node(under).name] then return end
 
     local dx = above.x - under.x
     local dy = above.y - under.y
@@ -2217,6 +2314,11 @@ local function portal_gun4_shoot(player, pointed_thing, color)
     if dz ~= 0 then axis, ns = 0, dz
     elseif dx ~= 0 then axis, ns = 1, dx
     else axis, ns = 2, dy end
+
+    -- Only fires when aimed at a carveable wall material (a panel slab counts
+    -- through its full cell-boundary face or as a half-offset edge cell,
+    -- never through the mid-block face).
+    if not pgun4_aim_ok(minetest.get_node(under), axis, ns) then return end
 
     portal_gun4_remove(pname, color)
 
@@ -2328,24 +2430,25 @@ local function portal_gun4_shoot(player, pointed_thing, color)
     local probe = {cx = bx0, cy = by0, cz = bz0, axis = axis, ns = ns,
                    w = pw, h = ph, ou = ou, ov = ov}
     local cells = pgun4_cells(probe)
-    local saved = {}
+    local saved, saved_p2 = {}, {}
     for i, c in ipairs(cells) do
-        local nn = minetest.get_node(c.pos).name
-        if not PGUN4_CARVEABLE[nn] then
+        local node = minetest.get_node(c.pos)
+        if not pgun4_cell_carveable(node, axis, ns, c.carve) then
             minetest.chat_send_player(pname,
                 "[yaportal] Need a " .. pw .. "×" .. ph ..
                 " portal-wall surface here.")
             return
         end
-        saved[i] = nn
+        saved[i] = node.name
+        saved_p2[i] = node.param2
     end
     -- Place the closed (solid) variant in the shell material of the original
     -- node; pgun4_apply_state below opens it (and the partner) only if a
     -- paired portal already exists.
     for i, c in ipairs(cells) do
-        local mat = PGUN4_MAT_OF[saved[i]] or ""
         minetest.set_node(c.pos,
-            {name = bnode .. mat .. "_off", param2 = c.param2})
+            {name = bnode .. pgun4_shell_mat(saved[i]) .. "_off",
+             param2 = c.param2})
     end
 
     local portal_name = "gun4_" .. color .. "_" .. pname
@@ -2357,6 +2460,7 @@ local function portal_gun4_shoot(player, pointed_thing, color)
         kind = "block",
         node_name = bnode .. "_off",
         saved = saved,
+        saved_p2 = saved_p2,
     }
 
     local other_color = color == "blue" and "orange" or "blue"
@@ -2427,7 +2531,7 @@ minetest.register_node("yaportal:frame_green", {
 minetest.register_node("yaportal:wall_white", {
     description = "Aperture Science White Wall Panel\nClean white ceramic wall tile from Portal test chambers",
     tiles = {"yaportal_wall_white.png"},
-    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    groups = {cracky = 1},
     sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
 })
 
@@ -2436,14 +2540,14 @@ minetest.register_node("yaportal:wall_white", {
 minetest.register_node("yaportal:wall_upper", {
     description = "Aperture Science Wall Panel (upper)\nTop half of a tall white test-chamber panel; place above a lower panel",
     tiles = {"yaportal_wall_upper.png"},
-    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    groups = {cracky = 1},
     sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
 })
 
 minetest.register_node("yaportal:wall_lower", {
     description = "Aperture Science Wall Panel (lower)\nBottom half of a tall white test-chamber panel; place below an upper panel",
     tiles = {"yaportal_wall_lower.png"},
-    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    groups = {cracky = 1},
     sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
 })
 
@@ -2477,7 +2581,7 @@ do
             sunlight_propagates = true,
             collision_box = {type = "fixed", fixed = steps},
             selection_box = {type = "fixed", fixed = steps},
-            groups = {cracky = 3, oddly_breakable_by_hand = 1},
+            groups = {cracky = 1},
             sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
             on_place = function(itemstack, placer, pointed)
                 -- Diagonal-face normals per facedir (from the verified
@@ -2499,10 +2603,137 @@ do
     end
 end
 
+-- In-plane click coordinates on the pointed face: returns the normal axis
+-- ("x"/"y"/"z"), its sign, and {axis = offset} for the two in-plane axes,
+-- offsets in [-0.5, 0.5] relative to the face centre (0 when the precise ray
+-- hit is unavailable, e.g. non-player placers).
+local function face_click_info(placer, under, above)
+    local n = {x = above.x - under.x, y = above.y - under.y, z = above.z - under.z}
+    local na = (n.x ~= 0 and "x") or (n.y ~= 0 and "y") or (n.z ~= 0 and "z")
+    if not na or math.abs(n.x) + math.abs(n.y) + math.abs(n.z) ~= 1 then
+        return nil
+    end
+    local hit = placer and placer:is_player() and pgun4_hit_point(placer, under) or nil
+    local inpl = {}
+    for _, a in ipairs({"x", "y", "z"}) do
+        if a ~= na then
+            inpl[a] = hit and math.max(-0.5, math.min(0.5, hit[a] - above[a])) or 0
+        end
+    end
+    return na, n[na], inpl
+end
+
+-- Half-thick slab version of the two panels, placeable in all six
+-- orientations. One fixed-box node per occupied half (suffix ym/yp/xm/xp/
+-- zm/zp; the base item name is the bottom "ym" node): unlike a facedir node,
+-- fixed boxes keep the tile projection world-aligned, so the panel pattern
+-- lines up with neighbouring full wall blocks on every face.
+local SLAB_HALF_BOX = {
+    ym = {-0.5, -0.5, -0.5, 0.5, 0,   0.5},
+    yp = {-0.5,  0,   -0.5, 0.5, 0.5, 0.5},
+    xm = {-0.5, -0.5, -0.5, 0,   0.5, 0.5},
+    xp = { 0,   -0.5, -0.5, 0.5, 0.5, 0.5},
+    zm = {-0.5, -0.5, -0.5, 0.5, 0.5, 0  },
+    zp = {-0.5, -0.5,  0,   0.5, 0.5, 0.5},
+}
+
+-- Click a face near its centre to lay the slab flush against it (a wall face
+-- gives a standing, vertical slab); click in the outer quarter of the face to
+-- push the slab into the half of the cell toward that edge (e.g. a floor
+-- clicked near a wall starts a half-thick wall on that side).
+local function slab_on_place(basename)
+    return function(itemstack, placer, pointed)
+        if pointed.type ~= "node" then return itemstack end
+        -- Standard courtesy: let the pointed node handle a rightclick
+        -- (chests, etc.) unless sneaking.
+        if placer and placer:is_player()
+           and not placer:get_player_control().sneak then
+            local un = minetest.get_node(pointed.under)
+            local ndef = minetest.registered_nodes[un.name]
+            if ndef and ndef.on_rightclick then
+                return ndef.on_rightclick(pointed.under, un, placer,
+                    itemstack, pointed) or itemstack
+            end
+        end
+        local na, nsg, inpl = face_click_info(placer, pointed.under, pointed.above)
+        if not na then return itemstack end
+        local half = na .. (nsg > 0 and "m" or "p")
+        local ea, ev = nil, 0.25
+        for _, a in ipairs({"x", "y", "z"}) do
+            if inpl[a] and math.abs(inpl[a]) > ev then
+                ea, ev = a, math.abs(inpl[a])
+            end
+        end
+        if ea then half = ea .. (inpl[ea] >= 0 and "p" or "m") end
+        local target = (half == "ym") and basename or (basename .. "_" .. half)
+        -- Place a temp stack of the right variant so the standard placement
+        -- path (buildable_to, protection, callbacks) still applies.
+        local temp = ItemStack(target)
+        local _, ppos = minetest.item_place_node(temp, placer, pointed)
+        if ppos and placer and placer:is_player()
+           and not minetest.is_creative_enabled(placer:get_player_name()) then
+            itemstack:take_item()
+        end
+        return itemstack
+    end
+end
+
+for _, part in ipairs({"upper", "lower"}) do
+    local basename = "yaportal:wall_" .. part .. "_slab"
+    local on_place = slab_on_place(basename)
+    for half, box in pairs(SLAB_HALF_BOX) do
+        local def = {
+            description = "Aperture Science Wall Panel Slab (" .. part .. ")\n" ..
+                "Half-thick panel: click a face centre to lay it flush " ..
+                "against it (walls give a vertical slab), near an edge to " ..
+                "stand it toward that edge",
+            drawtype = "nodebox",
+            paramtype = "light",
+            sunlight_propagates = true,
+            node_box = {type = "fixed", fixed = box},
+            tiles = {"yaportal_wall_" .. part .. ".png"},
+            groups = {cracky = 1},
+            drop = basename,
+            sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+            on_place = on_place,
+        }
+        if half == "ym" then
+            minetest.register_node(basename, def)
+        else
+            def.groups.not_in_creative_inventory = 1
+            minetest.register_node(basename .. "_" .. half, def)
+        end
+    end
+end
+
+-- Migration: the first build used one facedir node per slab material; split
+-- those into the fixed-box variants (facedir axis group → occupied half).
+minetest.register_lbm({
+    label = "yaportal: split facedir panel slabs into fixed-box variants",
+    name = "yaportal:slab_facedir_split",
+    nodenames = {"yaportal:wall_upper_slab", "yaportal:wall_lower_slab"},
+    action = function(pos, node)
+        local g = math.floor((node.param2 or 0) / 4) % 6
+        local sfx = ({"zm", "zp", "xm", "xp", "yp"})[g]   -- g=0 → ym (base)
+        if sfx then
+            minetest.set_node(pos, {name = node.name .. "_" .. sfx})
+        elseif node.param2 ~= 0 then
+            minetest.set_node(pos, {name = node.name})
+        end
+    end,
+})
+
 minetest.register_node("yaportal:floor", {
-    description = "Aperture Science Floor Tile\nDark grey concrete floor tile from Portal test chambers",
+    description = "Aperture Science Floor Tile\nLight grey tiled floor from Portal test chambers",
     tiles = {"yaportal_floor.png"},
-    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    groups = {cracky = 1},
+    sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
+})
+
+minetest.register_node("yaportal:floor_checker", {
+    description = "Aperture Science Checker Floor Tile\nCheckerboard grey tiled floor from Portal test chambers",
+    tiles = {"yaportal_floor_checker.png"},
+    groups = {cracky = 1},
     sounds = minetest.get_modpath("default") and default and default.node_sound_stone_defaults() or nil,
 })
 
@@ -2633,6 +2864,117 @@ minetest.register_node("yaportal:thin_glass", {
     drop = "yaportal:thin_glass",
     sounds = minetest.get_modpath("default") and default and default.node_sound_glass_defaults() or nil,
     on_place = glass_place,
+})
+
+-- Half-face thin glass: the same 1/32 pane covering only HALF of one face,
+-- for glass walls that start or stop on a half-node line. One pane per cell
+-- (it does not combine with the full-face mask panels); each (face, half)
+-- pair is its own variant node. Placing the complementary half onto the same
+-- face fuses the two into the corresponding full thin_glass_<bit> panel.
+local GLASS_AXIS_IDX = {x = 1, y = 2, z = 3}   -- box min index; max = idx + 3
+local GLASS_HALF_BIT = {}                       -- face key → full-panel mask bit
+local GLASS_HALF_BOX = {}                       -- "<face>_<half>" suffix → box
+
+for _, f in ipairs(GLASS_FACES) do
+    local fa = (f.dir.x ~= 0 and "x") or (f.dir.y ~= 0 and "y") or "z"
+    local fkey = fa .. (f.dir[fa] > 0 and "p" or "m")
+    GLASS_HALF_BIT[fkey] = f.bit
+    for _, ha in ipairs({"x", "y", "z"}) do
+        if ha ~= fa then
+            for _, hs in ipairs({-1, 1}) do
+                local box = {f.box[1], f.box[2], f.box[3], f.box[4], f.box[5], f.box[6]}
+                if hs > 0 then box[GLASS_AXIS_IDX[ha]] = 0
+                else box[GLASS_AXIS_IDX[ha] + 3] = 0 end
+                GLASS_HALF_BOX[fkey .. "_" .. ha .. (hs > 0 and "p" or "m")] = box
+            end
+        end
+    end
+end
+
+-- The pane goes on the face of the neighbour cell flush with the clicked
+-- surface (same convention as the full thin glass); the half is the in-plane
+-- side the click leans toward. Dead-centre clicks on a wall face default to
+-- the bottom half.
+local function glass_half_place(itemstack, placer, pointed)
+    if pointed.type ~= "node" then return itemstack end
+    local pname = placer and placer:is_player() and placer:get_player_name() or ""
+    local under, above = pointed.under, pointed.above
+    local un = minetest.get_node(under)
+
+    -- Standard courtesy: let the pointed node handle a rightclick (chests,
+    -- etc.) unless sneaking.
+    if placer and not placer:get_player_control().sneak then
+        local ndef = minetest.registered_nodes[un.name]
+        if ndef and ndef.on_rightclick then
+            return ndef.on_rightclick(under, un, placer, itemstack, pointed) or itemstack
+        end
+    end
+
+    local na, ns, inpl = face_click_info(placer, under, above)
+    if not na then return itemstack end
+    local fkey = na .. (ns > 0 and "m" or "p")
+    local ha, hv = nil, -1
+    for _, a in ipairs({"y", "x", "z"}) do
+        if inpl[a] and math.abs(inpl[a]) > hv then ha, hv = a, math.abs(inpl[a]) end
+    end
+    local hkey = ha .. (inpl[ha] > 0 and "p" or "m")
+    local target = "yaportal:thin_glass_half_" .. fkey .. "_" .. hkey
+    local comp   = "yaportal:thin_glass_half_" .. fkey .. "_" ..
+                   ha .. (inpl[ha] > 0 and "m" or "p")
+
+    if minetest.is_protected(above, pname) then
+        minetest.record_protection_violation(above, pname)
+        return itemstack
+    end
+    local tn = minetest.get_node(above)
+    if tn.name == target then
+        return itemstack                    -- that half is already there
+    elseif tn.name == comp then
+        -- Complementary half present → fuse into the full-face panel.
+        minetest.set_node(above, {name = "yaportal:thin_glass_" .. GLASS_HALF_BIT[fkey]})
+    else
+        local tdef = minetest.registered_nodes[tn.name]
+        if not (tdef and tdef.buildable_to) then return itemstack end
+        minetest.set_node(above, {name = target})
+    end
+    if placer and not minetest.is_creative_enabled(pname) then
+        itemstack:take_item()
+    end
+    return itemstack
+end
+
+for suffix, box in pairs(GLASS_HALF_BOX) do
+    minetest.register_node("yaportal:thin_glass_half_" .. suffix, {
+        description = "Thin Glass Half Panel",
+        drawtype = "nodebox",
+        paramtype = "light",
+        sunlight_propagates = true,
+        use_texture_alpha = "blend",
+        tiles = {"yaportal_thin_glass.png"},
+        node_box = {type = "fixed", fixed = box},
+        selection_box = {type = "fixed", fixed = box},
+        groups = {cracky = 3, oddly_breakable_by_hand = 1, not_in_creative_inventory = 1},
+        drop = "yaportal:thin_glass_half",
+        sounds = minetest.get_modpath("default") and default and default.node_sound_glass_defaults() or nil,
+        on_place = glass_half_place,
+    })
+end
+
+-- Creative / inventory item; placement resolves it into the right variant.
+minetest.register_node("yaportal:thin_glass_half", {
+    description = "Thin Glass Half Panel\n1/32-thick glass covering half of a face — aim toward an edge to pick " ..
+        "the half; add the missing half to fuse into a full pane",
+    drawtype = "nodebox",
+    paramtype = "light",
+    sunlight_propagates = true,
+    use_texture_alpha = "blend",
+    tiles = {"yaportal_thin_glass.png"},
+    node_box = {type = "fixed", fixed = GLASS_HALF_BOX["zm_ym"]},
+    selection_box = {type = "fixed", fixed = GLASS_HALF_BOX["zm_ym"]},
+    groups = {cracky = 3, oddly_breakable_by_hand = 1},
+    drop = "yaportal:thin_glass_half",
+    sounds = minetest.get_modpath("default") and default and default.node_sound_glass_defaults() or nil,
+    on_place = glass_half_place,
 })
 
 local function _in_any_pocket(pos)
@@ -3332,7 +3674,7 @@ minetest.register_lbm({
     end,
 })
 
--- ── vital apparatus vent (2x2x2 dispenser) + decorative tube ─────────────
+-- ── vital apparatus vent (2x2x2 dispenser) ─────────────
 
 -- Same corner scheme as the super button: each quarter is registered with its
 -- two outer walls toward -X/-Z and facedir param2 = BTN_P2 corner id; the
@@ -3449,13 +3791,6 @@ local function vent_place(itemstack, placer, pointed)
     return itemstack
 end
 
-local tube_walls = {
-    {-0.5,   -0.5, -0.5,   -0.375, 0.5,  0.5},
-    { 0.375, -0.5, -0.5,    0.5,   0.5,  0.5},
-    {-0.5,   -0.5, -0.5,    0.5,   0.5, -0.375},
-    {-0.5,   -0.5,  0.375,  0.5,   0.5,  0.5},
-}
-
 do
     -- Quarter walls toward -X/-Z (the outer faces of the anchor corner);
     -- facedir rotates them outward on the other three corners.
@@ -3503,20 +3838,6 @@ do
     minetest.register_node("yaportal:dispenser_top", top)
 end
 
-minetest.register_node("yaportal:tube", {
-    description = "Apparatus Tube\nDecorative tube segment, open at both ends",
-    drawtype = "nodebox",
-    paramtype = "light",
-    sunlight_propagates = true,
-    is_ground_content = false,
-    tiles = {"yaportal_tube_open.png", "yaportal_tube_open.png",
-             "yaportal_tube_side.png"},
-    node_box = {type = "fixed", fixed = tube_walls},
-    selection_box = {type = "fixed", fixed = {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5}},
-    groups = {cracky = 3, oddly_breakable_by_hand = 1},
-    sounds = block_sounds,
-})
-
 minetest.register_lbm({
     label = "Re-register vital apparatus vents",
     name = "yaportal:register_dispenser",
@@ -3548,6 +3869,31 @@ local DOOR_Q = {
     tl = {right = false, top = true},  tr = {right = true, top = true},
 }
 
+-- Per-door config lives in the bottom-left cell's node metadata: a display
+-- name, a "normally open" flag (the door's resting state is inverted), and the
+-- hash of an explicitly linked super button (empty = the auto rule).  door_set
+-- preserves this meta across the open/close name swap.
+local open_door_config  -- forward decl (defined after the craftitem)
+
+local function door_read_cfg(pos)
+    local meta   = minetest.get_meta(pos)
+    local button = meta:get_string("button")
+    return meta:get_string("name"),
+           meta:get_int("normally_open") == 1,
+           (button ~= "" and tonumber(button)) or nil
+end
+
+local function door_write_cfg(pos, name, normally_open, button)
+    local meta = minetest.get_meta(pos)
+    name = name or ""
+    meta:set_string("name", name)
+    meta:set_int("normally_open", normally_open and 1 or 0)
+    meta:set_string("button", button and tostring(button) or "")
+    meta:set_string("infotext",
+        (name ~= "" and ("Door: " .. name .. "\n") or "") ..
+        (normally_open and "Normally open" or "Normally closed"))
+end
+
 local function door_cells(bl, p2)
     local wd = DOOR_WDIR[p2 % 4]
     return {
@@ -3572,6 +3918,8 @@ end
 
 local function door_set(entry, open)
     local suffix = open and "_open" or ""
+    -- set_node wipes metadata; snapshot the bl cell's config and restore it.
+    local blmeta = minetest.get_meta(entry.pos):to_table().fields
     for _, c in ipairs(door_cells(entry.pos, entry.p2)) do
         local want = "yaportal:door_" .. c.q .. suffix
         local n = minetest.get_node(c.pos)
@@ -3579,6 +3927,7 @@ local function door_set(entry, open)
             minetest.set_node(c.pos, {name = want, param2 = entry.p2})
         end
     end
+    minetest.get_meta(entry.pos):from_table({fields = blmeta})
     entry.open = open
 end
 
@@ -3588,8 +3937,10 @@ local function door_power(pos, node, on)
     local h = hashpos(bl)
     local entry = doors[h]
     if not entry then
+        local nm, no, btn = door_read_cfg(bl)
         entry = {pos = bl, p2 = node.param2 % 4,
-                 open = node.name:find("_open") ~= nil, powered = false}
+                 open = node.name:find("_open") ~= nil, powered = false,
+                 name = nm, normally_open = no, button = btn}
         doors[h] = entry
     end
     entry.powered = on
@@ -3642,6 +3993,19 @@ do
             drop = "yaportal:door",
             after_dig_node = door_after_dig,
             mesecons = door_effector(),
+            on_rightclick = function(pos, node, clicker)
+                if not (clicker and clicker:is_player()) then return end
+                local bl = door_bl_from(pos, node.name, node.param2)
+                if not bl then return end
+                local pname = clicker:get_player_name()
+                if minetest.is_protected(bl, pname) then
+                    minetest.record_protection_violation(bl, pname)
+                    return
+                end
+                if open_door_config then
+                    open_door_config(clicker, bl, node.param2 % 4)
+                end
+            end,
         }
 
         local closed = table.copy(base)
@@ -3671,7 +4035,9 @@ end
 minetest.register_craftitem("yaportal:door", {
     description = "Aperture Automatic Door\n" ..
         "2 wide x 2 tall; opens on approach — or, with a super button within " ..
-        "8 nodes, only while that button is pressed",
+        "8 nodes, only while that button is pressed.\n" ..
+        "Right-click a placed door to name it, set normally open/closed, or " ..
+        "link an activation button.",
     inventory_image = "yaportal_door_inv.png",
     wield_image = "yaportal_door_inv.png",
     on_place = function(itemstack, placer, pointed)
@@ -3708,8 +4074,10 @@ minetest.register_craftitem("yaportal:door", {
         for _, c in ipairs(cells) do
             minetest.set_node(c.pos, {name = "yaportal:door_" .. c.q, param2 = p2})
         end
+        door_write_cfg(bl, "", false, nil)  -- defaults: unnamed, normally closed, auto
         doors[hashpos(bl)] = {pos = {x = bl.x, y = bl.y, z = bl.z},
-                              p2 = p2, open = false, powered = false}
+                              p2 = p2, open = false, powered = false,
+                              name = "", normally_open = false, button = nil}
         if placer and not minetest.is_creative_enabled(pname) then
             itemstack:take_item()
         end
@@ -3725,12 +4093,115 @@ minetest.register_lbm({
     action = function(pos, node)
         local h = hashpos(pos)
         if not doors[h] then
+            local nm, no, btn = door_read_cfg(pos)
             doors[h] = {pos = {x = pos.x, y = pos.y, z = pos.z},
                         p2 = node.param2 % 4,
-                        open = node.name:find("_open") ~= nil, powered = false}
+                        open = node.name:find("_open") ~= nil, powered = false,
+                        name = nm, normally_open = no, button = btn}
         end
     end,
 })
+
+-- ── door config menu ─────────────
+-- Right-clicking any door quarter opens this form: set a name, choose the
+-- resting state (normally open/closed), and link an activation super button
+-- (or leave it on Auto).  The dropdown lists nearby buttons; the session ctx
+-- maps the selected index back to the button's position hash.
+
+local door_form_ctx = {}  -- pname → {bl, p2, buttons = {hash, ...}}
+
+open_door_config = function(player, bl, p2)
+    local pname = player:get_player_name()
+    local name, normally_open, button = door_read_cfg(bl)
+
+    local wd     = DOOR_WDIR[p2] or DOOR_WDIR[0]
+    local center = {x = bl.x + wd.x * 0.5, y = bl.y + 0.5, z = bl.z + wd.z * 0.5}
+
+    -- Nearby super buttons, sorted by distance, for the link dropdown.
+    local nearby = {}
+    for h, b in pairs(superbuttons) do
+        local bc = {x = b.pos.x + 0.5, y = b.pos.y, z = b.pos.z + 0.5}
+        local d  = vector.distance(bc, center)
+        if d <= 24 then nearby[#nearby + 1] = {h = h, pos = b.pos, d = d} end
+    end
+    table.sort(nearby, function(a, b) return a.d < b.d end)
+
+    local items    = {"Auto (nearest button / approach)"}
+    local hashes   = {}
+    local selected = 1
+    for i, e in ipairs(nearby) do
+        items[#items + 1] = minetest.formspec_escape(string.format(
+            "Button (%d,%d,%d) — %.1fm", e.pos.x, e.pos.y, e.pos.z, e.d))
+        hashes[i] = e.h
+        if button and e.h == button then selected = i + 1 end
+    end
+
+    door_form_ctx[pname] = {bl = bl, p2 = p2, buttons = hashes,
+                            normally_open = normally_open}
+
+    minetest.show_formspec(pname, "yaportal:door_config",
+        "formspec_version[4]" ..
+        "size[9,6.6]" ..
+        "label[0.5,0.6;Configure Automatic Door]" ..
+        "field[0.5,1.3;8,0.8;door_name;Name;" ..
+            minetest.formspec_escape(name or "") .. "]" ..
+        "checkbox[0.5,2.7;normally_open;Normally open (open at rest, closes when activated);" ..
+            (normally_open and "true" or "false") .. "]" ..
+        "label[0.5,3.5;Activation button:]" ..
+        "dropdown[0.5,3.9;8,0.8;door_button;" ..
+            table.concat(items, ",") .. ";" .. selected .. ";true]" ..
+        "button_exit[0.5,5.3;3.5,0.8;save_door;Save]" ..
+        "button[4.5,5.3;4,0.8;delete_door;Remove door]"
+    )
+end
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    if formname ~= "yaportal:door_config" then return end
+    local pname = player:get_player_name()
+    local ctx   = door_form_ctx[pname]
+    if not ctx then return end
+    local bl = ctx.bl
+
+    if minetest.is_protected(bl, pname) then
+        door_form_ctx[pname] = nil
+        return
+    end
+
+    -- Track the checkbox from its own toggle events: the Save submit does not
+    -- reliably re-include an unchanged checkbox, so remember the last state.
+    if fields.normally_open ~= nil then
+        ctx.normally_open = (fields.normally_open == "true")
+    end
+
+    if fields.delete_door then
+        local p2 = minetest.get_node(bl).param2 % 4
+        doors[hashpos(bl)] = nil
+        for _, c in ipairs(door_cells(bl, p2)) do
+            if minetest.get_node(c.pos).name:find("^yaportal:door_") then
+                minetest.remove_node(c.pos)
+            end
+        end
+        minetest.add_item(bl, "yaportal:door")
+        door_form_ctx[pname] = nil
+        return
+    end
+
+    if fields.save_door then
+        local nm  = fields.door_name or ""
+        local no  = ctx.normally_open == true
+        local idx = tonumber(fields.door_button or "1") or 1
+        local btn = (idx >= 2) and ctx.buttons[idx - 1] or nil
+        door_write_cfg(bl, nm, no, btn)
+        local e = doors[hashpos(bl)]
+        if e then
+            e.name, e.normally_open, e.button = nm, no, btn
+        end
+        door_form_ctx[pname] = nil
+        return
+    end
+
+    if fields.quit then door_form_ctx[pname] = nil end
+end)
 
 -- ── combined stepper ─────────────
 -- tier 0 (every step): carried-cube positioning; tier 1 (0.2s): button and
@@ -3803,23 +4274,33 @@ minetest.register_globalstep(function(dtime)
                 local wd = DOOR_WDIR[e.p2]
                 local center = {x = e.pos.x + wd.x * 0.5, y = e.pos.y + 0.5,
                                 z = e.pos.z + wd.z * 0.5}
-                local controlled = false
-                local want = e.powered
-                for _, b in pairs(superbuttons) do
-                    local bc = {x = b.pos.x + 0.5, y = b.pos.y, z = b.pos.z + 0.5}
-                    if vector.distance(bc, center) <= 8 then
-                        controlled = true
-                        if b.pressed then want = true end
+                -- Resolve activation: an explicitly linked button, else the
+                -- auto rule (a super button within 8 while pressed, otherwise
+                -- proximity).  A mesecons signal always counts as activation.
+                local activated = e.powered
+                if e.button then
+                    local b = superbuttons[e.button]
+                    if b and b.pressed then activated = true end
+                else
+                    local controlled = false
+                    for _, b in pairs(superbuttons) do
+                        local bc = {x = b.pos.x + 0.5, y = b.pos.y, z = b.pos.z + 0.5}
+                        if vector.distance(bc, center) <= 8 then
+                            controlled = true
+                            if b.pressed then activated = true end
+                        end
                     end
-                end
-                if not controlled and not want then
-                    for _, pl in ipairs(minetest.get_connected_players()) do
-                        if vector.distance(pl:get_pos(), center) <= 2.5 then
-                            want = true
-                            break
+                    if not controlled and not activated then
+                        for _, pl in ipairs(minetest.get_connected_players()) do
+                            if vector.distance(pl:get_pos(), center) <= 2.5 then
+                                activated = true
+                                break
+                            end
                         end
                     end
                 end
+                -- Normally-open doors invert: activation closes them.
+                local want = (activated ~= (e.normally_open == true))
                 if want ~= e.open then
                     door_set(e, want)
                     door_sound(center, want)
@@ -3889,14 +4370,6 @@ do
     end
     if iron then
         minetest.register_craft({
-            output = "yaportal:tube 8",
-            recipe = {
-                {iron, iron, iron},
-                {iron, "",   iron},
-                {iron, iron, iron},
-            },
-        })
-        minetest.register_craft({
             output = "yaportal:door",
             recipe = {
                 {iron, iron},
@@ -3906,3 +4379,29 @@ do
         })
     end
 end
+
+-- Halves ↔ full conversions (mod-internal, no external items needed).
+for _, part in ipairs({"upper", "lower"}) do
+    minetest.register_craft({
+        output = "yaportal:wall_" .. part .. "_slab 2",
+        recipe = {{"yaportal:wall_" .. part}},
+    })
+    minetest.register_craft({
+        output = "yaportal:wall_" .. part,
+        recipe = {
+            {"yaportal:wall_" .. part .. "_slab"},
+            {"yaportal:wall_" .. part .. "_slab"},
+        },
+    })
+end
+minetest.register_craft({
+    output = "yaportal:thin_glass_half 2",
+    recipe = {{"yaportal:thin_glass"}},
+})
+minetest.register_craft({
+    output = "yaportal:thin_glass",
+    recipe = {
+        {"yaportal:thin_glass_half"},
+        {"yaportal:thin_glass_half"},
+    },
+})

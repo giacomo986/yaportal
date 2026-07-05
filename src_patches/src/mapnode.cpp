@@ -412,21 +412,26 @@ static inline bool is_portal_block(const ContentFeatures &f)
 	return itemgroup_get(f.groups, "portal_block") != 0;
 }
 
-// Outer wall panel (thin) on the given face, in BS-scaled node coords. Kept thin
-// so a stacked W×H portal leaves enough clear interior to walk through: vertical
-// clearance = h - 2t must exceed the player height (~1.8), so 2t must stay < 0.2.
-static aabb3f portal_block_panel(int face)
+// yaportal slab shell descriptor (group portal_slab = 1..6): the cell's solid
+// material fills only half of the cell — the half whose OUTER face index
+// (order 0=+Y 1=-Y 2=+X 3=-X 4=+Z 5=-Z) is the group value minus one. Shell
+// panels and carve geometry are confined to those bounds so a carved panel
+// slab keeps its slab silhouette instead of bulging to a full cube.
+static void portal_block_material_bounds(const ContentFeatures &f,
+	float mlo[3], float mhi[3])
 {
 	const float H = 0.5f * BS;
-	const float t = (1.0f / 32.0f) * BS;
-	switch (face) {
-	case 0:  return aabb3f(-H, H - t, -H,    H, H,     H); // +Y
-	case 1:  return aabb3f(-H, -H,    -H,    H, -H + t, H); // -Y
-	case 2:  return aabb3f(H - t, -H, -H,    H, H,     H); // +X
-	case 3:  return aabb3f(-H, -H,    -H, -H + t, H,    H); // -X
-	case 4:  return aabb3f(-H, -H, H - t,    H, H,     H); // +Z
-	default: return aabb3f(-H, -H,    -H,    H, H, -H + t); // -Z
-	}
+	mlo[0] = mlo[1] = mlo[2] = -H;
+	mhi[0] = mhi[1] = mhi[2] = H;
+	const int ps = itemgroup_get(f.groups, "portal_slab");
+	if (ps < 1 || ps > 6)
+		return;
+	const int face = ps - 1;
+	const int axis = (face < 2) ? 1 : (face < 4 ? 0 : 2);
+	if (face % 2 == 0)
+		mlo[axis] = 0.0f;   // occupies the + half
+	else
+		mhi[axis] = 0.0f;   // occupies the - half
 }
 
 // yaportal partial-carve descriptor, stored in the param2 bits above the
@@ -483,6 +488,35 @@ static inline void portal_box_set_axis(aabb3f &b, int axis, float lo, float hi)
 	}
 }
 
+// Outer wall panel (thin) on the given face, confined to the material bounds
+// (the full cell, or the slab half). Kept thin so a stacked W×H portal leaves
+// enough clear interior to walk through: vertical clearance = h - 2t must
+// exceed the player height (~1.8), so 2t must stay < 0.2.
+static aabb3f portal_block_panel(int face, const float mlo[3], const float mhi[3])
+{
+	const float t = (1.0f / 32.0f) * BS;
+	aabb3f b(mlo[0], mlo[1], mlo[2], mhi[0], mhi[1], mhi[2]);
+	const int axis = (face < 2) ? 1 : (face < 4 ? 0 : 2);
+	if (face % 2 == 0)
+		portal_box_set_axis(b, axis, mhi[axis] - t, mhi[axis]);
+	else
+		portal_box_set_axis(b, axis, mlo[axis], mlo[axis] + t);
+	return b;
+}
+
+// Clamp a box to the material bounds; false when nothing is left.
+static bool portal_box_clamp(aabb3f &b, const float mlo[3], const float mhi[3])
+{
+	b.MinEdge.X = std::max(b.MinEdge.X, mlo[0]);
+	b.MinEdge.Y = std::max(b.MinEdge.Y, mlo[1]);
+	b.MinEdge.Z = std::max(b.MinEdge.Z, mlo[2]);
+	b.MaxEdge.X = std::min(b.MaxEdge.X, mhi[0]);
+	b.MaxEdge.Y = std::min(b.MaxEdge.Y, mhi[1]);
+	b.MaxEdge.Z = std::min(b.MaxEdge.Z, mhi[2]);
+	return b.MinEdge.X < b.MaxEdge.X && b.MinEdge.Y < b.MaxEdge.Y &&
+			b.MinEdge.Z < b.MaxEdge.Z;
+}
+
 // Bitmask (1<<face) of the open faces of a portal_block. `neighbors` carries the
 // in-plane same-param2 neighbor bits computed by getNeighbors().
 static u8 portal_block_open_faces(const MapNode &n, const NodeDefManager *nodemgr,
@@ -506,13 +540,17 @@ static u8 portal_block_open_faces(const MapNode &n, const NodeDefManager *nodemg
 // Shared collision/selection box builder for portal_block nodes: one thin
 // panel per solid face, plus — for half-carved blocks — a partial front panel
 // over the closed half and a partition wall between cavity and dead half.
+// Everything is confined to the material bounds (slab shells, see
+// portal_block_material_bounds); boxes that end up empty are dropped.
 static void portal_block_push_boxes(const MapNode &n, const NodeDefManager *nodemgr,
 	u8 neighbors, std::vector<aabb3f> *boxes)
 {
+	float mlo[3], mhi[3];
+	portal_block_material_bounds(nodemgr->get(n), mlo, mhi);
 	u8 open = portal_block_open_faces(n, nodemgr, neighbors);
 	for (int face = 0; face < 6; face++)
 		if (!(open & (1 << face)))
-			boxes->push_back(portal_block_panel(face));
+			boxes->push_back(portal_block_panel(face, mlo, mhi));
 
 	int carve = portal_block_carve(n);
 	if (open == 0 || carve < 1 || carve > 8)
@@ -531,7 +569,7 @@ static void portal_block_push_boxes(const MapNode &n, const NodeDefManager *node
 		// Front panel over the closed part of the face along this cut; later
 		// panels are clipped to the open range of earlier cuts so quarter
 		// carves get a non-overlapping L shape.
-		aabb3f fp = portal_block_panel(front);
+		aabb3f fp = portal_block_panel(front, mlo, mhi);
 		if (open_pos[i])
 			portal_box_set_axis(fp, axes[i], -H, 0.0f);
 		else
@@ -542,7 +580,8 @@ static void portal_block_push_boxes(const MapNode &n, const NodeDefManager *node
 			else
 				portal_box_set_axis(fp, axes[j], -H, 0.0f);
 		}
-		boxes->push_back(fp);
+		if (portal_box_clamp(fp, mlo, mhi))
+			boxes->push_back(fp);
 		// Partition wall at the half plane, flush against the cavity on the
 		// dead side (cavity floor/ceiling/side wall).
 		aabb3f part(-H, -H, -H, H, H, H);
@@ -550,7 +589,8 @@ static void portal_block_push_boxes(const MapNode &n, const NodeDefManager *node
 			portal_box_set_axis(part, axes[i], -t, 0.0f);
 		else
 			portal_box_set_axis(part, axes[i], 0.0f, t);
-		boxes->push_back(part);
+		if (portal_box_clamp(part, mlo, mhi))
+			boxes->push_back(part);
 	}
 }
 
