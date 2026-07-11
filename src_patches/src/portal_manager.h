@@ -4,6 +4,7 @@
 
 #include "irr_v3d.h"
 #include "skyparams.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,12 @@ public:
 	void setClipPlanes(const PortalClipPlanes &cp) { m_clip_planes = cp; }
 	const PortalClipPlanes &getClipPlanes() const  { return m_clip_planes; }
 
+	// Hook invoked by ClientMap at the end of the main solid map pass.
+	// Draws the portal quads (opaque, z-writing) before the transparent pass
+	// so glass/water in front of a portal blends over the portal image.
+	void setQuadDrawHook(std::function<void()> hook) { m_quad_draw_hook = std::move(hook); }
+	void runQuadDrawHook() const { if (m_quad_draw_hook) m_quad_draw_hook(); }
+
 private:
 	PortalInfo m_portals[MAX_PORTALS];
 	struct CamHintSlot { v3f pos = {}; bool valid = false; };
@@ -88,4 +95,5 @@ private:
 	std::vector<PortalSkyType> m_sky_types;
 	std::vector<std::string>   m_sky_type_names;
 	PortalClipPlanes m_clip_planes;
+	std::function<void()> m_quad_draw_hook;
 };

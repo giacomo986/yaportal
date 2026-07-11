@@ -290,7 +290,8 @@ static void drawPortalFaces(
 	const PortalInfo &src,
 	float side_sign,
 	video::ITexture *tex,
-	scene::ICameraSceneNode *mainCam)
+	scene::ICameraSceneNode *mainCam,
+	video::E_COMPARISON_FUNC zfunc)
 {
 	v3f r = right_of(src);
 	v3f u = src.up;
@@ -316,7 +317,7 @@ static void drawPortalFaces(
 	// All 5 faces use the same RTT screen-space shader.
 	// gl_FragCoord gives per-fragment UV with zero distortion at any angle/depth.
 	video::SMaterial mat;
-	mat.ZBuffer         = video::ECFN_LESS;
+	mat.ZBuffer         = zfunc;
 	mat.ZWriteEnable    = video::EZW_ON;
 	mat.BackfaceCulling = false;
 	mat.setTexture(0, tex);
@@ -367,7 +368,7 @@ static void drawPortalFaces(
 }
 
 // -----------------------------------------------------------------------
-// RTT rendering helper (shared by PortalPrepareStep and PortalRenderStep)
+// RTT rendering helper (shared by PortalPrepareStep and PortalQuadStep)
 // -----------------------------------------------------------------------
 
 static void renderPortalRTTs(
@@ -624,7 +625,11 @@ static void renderPortalRTTs(
 		// Skip player-camera frustum culling so the virtual camera sees terrain
 		// outside the main camera's frustum (ClientMap::renderMap uses game Camera).
 		cmap.setBypassFrustumCulling(true);
+		// Transparent geometry must be depth-sorted for the virtual camera
+		// (glass writes depth: wrong order z-culls glass behind glass).
+		cmap.setPortalCamera(true, data.vcam[i]->getAbsolutePosition() + offset);
 		smgr->drawAll();
+		cmap.setPortalCamera(false);
 		cmap.setBypassFrustumCulling(false);
 		if (lp_cao)
 			lp_cao->setPortalRendering(false);
@@ -670,7 +675,8 @@ static void renderPortalRTTs(
 static void drawPortalQuads(
 	PortalRTTData &data,
 	video::IVideoDriver *driver,
-	scene::ICameraSceneNode *mainCam)
+	scene::ICameraSceneNode *mainCam,
+	video::E_COMPARISON_FUNC zfunc = video::ECFN_LESS)
 {
 	const PortalManager &pm = PortalManager::get();
 	v3f camPos = mainCam->getAbsolutePosition();
@@ -704,7 +710,7 @@ static void drawPortalQuads(
 		if (d <= d_min || dist < 0.001f * BS || (d > 0.0f && d / dist < 0.1f))
 			continue;
 
-		drawPortalFaces(driver, src, 1.0f, data.rtex[i], mainCam);
+		drawPortalFaces(driver, src, 1.0f, data.rtex[i], mainCam, zfunc);
 	}
 }
 
@@ -714,14 +720,18 @@ static void drawPortalQuads(
 
 void PortalPrepareStep::run(PipelineContext &ctx)
 {
-	const PortalManager &pm = PortalManager::get();
-	if (!pm.anyActive())
+	PortalManager &pm = PortalManager::get();
+	if (!pm.anyActive()) {
+		pm.setQuadDrawHook(nullptr);
 		return;
+	}
 
 	auto *smgr    = ctx.device->getSceneManager();
 	auto *mainCam = smgr->getActiveCamera();
-	if (!mainCam)
+	if (!mainCam) {
+		pm.setQuadDrawHook(nullptr);
 		return;
+	}
 
 	m_data->main_cam = mainCam;
 	m_data->sky = ctx.sky;
@@ -731,6 +741,17 @@ void PortalPrepareStep::run(PipelineContext &ctx)
 	renderPortalRTTs(*m_data, ctx, mainCam);
 	// Render target is now at FBO=0/screen. Draw3D's m_target->activate() will
 	// correctly re-bind the TextureBuffer FBO via Irrlicht's cache handler.
+
+	// Portal quads are drawn DURING Draw3D, at the end of ClientMap's solid
+	// pass (hook below), so the transparent pass afterwards blends glass/water
+	// in front of a portal over the portal image.  Drawing them after Draw3D
+	// fails: transparent geometry writes depth and z-culls the quads.
+	auto data = m_data;
+	auto *driver = ctx.device->getVideoDriver();
+	pm.setQuadDrawHook([data, driver]() {
+		if (data->main_cam)
+			drawPortalQuads(*data, driver, data->main_cam);
+	});
 }
 
 // -----------------------------------------------------------------------
@@ -753,6 +774,8 @@ void PortalQuadStep::run(PipelineContext &ctx)
 
 	// If the camera jumped ≥ 4 nodes since RTTs were rendered, re-render now so
 	// the portal texture shows the new view rather than a one-frame stale image.
+	// (In the normal case the quads were already drawn during Draw3D's solid
+	// pass via the PortalManager quad-draw hook — nothing to do here.)
 	if (m_data->rtt_cam_valid) {
 		float jump_sq = (camPos - m_data->rtt_cam_pos).getLengthSQ();
 		if (jump_sq > (4.0f * BS) * (4.0f * BS)) {
@@ -762,40 +785,12 @@ void PortalQuadStep::run(PipelineContext &ctx)
 			// into the correct buffer.
 			if (m_data->scene_rt)
 				m_data->scene_rt->activate(ctx);
+			// Redraw the quads with the fresh RTT.  LESSEQUAL so they overwrite
+			// the stale quad pixels already in the buffer (LESS would z-reject
+			// them at equal depth).  Glass in front of a portal loses its blend
+			// for this single teleport frame — acceptable.
+			drawPortalQuads(*m_data, driver, mainCam, video::ECFN_LESSEQUAL);
 		}
 	}
-
-	// Render target is still the TextureBuffer (set by Draw3D, or just restored).
-	drawPortalQuads(*m_data, driver, mainCam);
 }
 
-// -----------------------------------------------------------------------
-// PortalRenderStep — combined step for the non-post-processing pipeline
-// -----------------------------------------------------------------------
-
-PortalRenderStep::~PortalRenderStep()
-{
-	// m_data destructor handles vcam cleanup.
-}
-
-void PortalRenderStep::run(PipelineContext &ctx)
-{
-	const PortalManager &pm = PortalManager::get();
-	if (!pm.anyActive())
-		return;
-
-	auto *driver  = ctx.device->getVideoDriver();
-	auto *smgr    = ctx.device->getSceneManager();
-	auto *mainCam = smgr->getActiveCamera();
-	if (!mainCam)
-		return;
-
-	m_data.sky = ctx.sky;
-	m_data.sky_pool = ctx.sky_pool;
-	m_data.clouds_node = ctx.clouds_node;
-	// Render RTTs. Leaves render target at FBO=0 (screen) — correct for non-PP.
-	renderPortalRTTs(m_data, ctx, mainCam);
-
-	// Draw portal quads directly to the screen (FBO=0, no post-processing to worry about).
-	drawPortalQuads(m_data, driver, mainCam);
-}

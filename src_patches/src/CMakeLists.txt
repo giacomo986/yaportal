@@ -680,6 +680,16 @@ if(BUILD_CLIENT)
 		)
 	endif()
 
+	# Dev-only: the static freetype in /tmp/deps needs its transitive deps
+	# linked explicitly. In clean environments (e.g. flatpak sandbox) the
+	# shared system freetype already pulls these in — skip missing ones.
+	set(TMP_DEPS_LIBS "")
+	foreach(_lib libbrotlidec.so libbrotlicommon.so libbz2.so libGL.so)
+		if(EXISTS "/tmp/deps/usr/lib/x86_64-linux-gnu/${_lib}")
+			list(APPEND TMP_DEPS_LIBS "/tmp/deps/usr/lib/x86_64-linux-gnu/${_lib}")
+		endif()
+	endforeach()
+
 	list(SORT client_SRCS)
 	target_sources(${PROJECT_NAME} PRIVATE
 		$<TARGET_OBJECTS:EngineCommon>
@@ -701,10 +711,7 @@ if(BUILD_CLIENT)
 		lstrpack
 		sha256
 		${FREETYPE_LIBRARY}
-		/tmp/deps/usr/lib/x86_64-linux-gnu/libbrotlidec.so
-		/tmp/deps/usr/lib/x86_64-linux-gnu/libbrotlicommon.so
-		/tmp/deps/usr/lib/x86_64-linux-gnu/libbz2.so
-		/tmp/deps/usr/lib/x86_64-linux-gnu/libGL.so
+		${TMP_DEPS_LIBS}
 		${PLATFORM_LIBS}
 		# on Android, Luanti depends on SDL2 directly
 		# on other platforms, only IrrlichtMt depends on SDL2

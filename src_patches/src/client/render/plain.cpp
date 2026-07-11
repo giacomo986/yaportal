@@ -158,9 +158,19 @@ void populatePlainPipeline(RenderPipeline *pipeline, Client *client)
 {
 	auto downscale_factor = getDownscaleFactor();
 	auto step3D = pipeline->own(create3DStage(client, downscale_factor));
+	// Non-PP portals use the same prepare/quad split as the PP pipeline:
+	// RTTs BEFORE Draw3D (quads are drawn during Draw3D's solid map pass via
+	// the PortalManager hook); the quad step after only handles the
+	// intra-frame-teleport RTT re-render.
+	const bool pp_enabled = g_settings->getBool("enable_post_processing");
+	std::shared_ptr<PortalRTTData> portal_data;
+	if (!pp_enabled) {
+		portal_data = std::make_shared<PortalRTTData>();
+		pipeline->addStep(pipeline->own(std::make_unique<PortalPrepareStep>(portal_data)));
+	}
 	pipeline->addStep(step3D);
-	if (!g_settings->getBool("enable_post_processing"))
-		pipeline->addStep<PortalRenderStep>();
+	if (!pp_enabled)
+		pipeline->addStep(pipeline->own(std::make_unique<PortalQuadStep>(portal_data)));
 	pipeline->addStep<DrawWield>();
 	pipeline->addStep<MapPostFxStep>();
 

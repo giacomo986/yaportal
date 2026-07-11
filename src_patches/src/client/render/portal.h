@@ -66,15 +66,3 @@ private:
 	std::shared_ptr<PortalRTTData> m_data;
 };
 
-// Combined step for the non-post-processing pipeline (render target is screen FBO=0).
-// Renders RTTs and draws quads in one pass; no FBO cache issues at FBO=0.
-class PortalRenderStep : public RenderStep {
-public:
-	~PortalRenderStep() override;
-	void setRenderSource(RenderSource *) override {}
-	void setRenderTarget(RenderTarget *) override {}
-	void reset(PipelineContext &) override {}
-	void run(PipelineContext &ctx) override;
-private:
-	PortalRTTData m_data;
-};

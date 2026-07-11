@@ -118,6 +118,14 @@ public:
 	// virtual camera isn't restricted to the player camera's frustum.
 	void setBypassFrustumCulling(bool bypass) { m_bypass_frustum_culling = bypass; }
 
+	// Portal RTT pass: transparent geometry must be sorted back-to-front for
+	// the virtual camera, not the player camera. world_pos in raw BS coords.
+	void setPortalCamera(bool active, v3f world_pos = v3f(0, 0, 0))
+	{
+		m_portal_cam_active = active;
+		m_portal_cam_pos = world_pos;
+	}
+
 	void renderMapShadows(video::IVideoDriver *driver,
 			ModifyMaterialCallback cb, s32 pass, int frame, int total_frames);
 
@@ -200,4 +208,7 @@ private:
 	bool m_loops_occlusion_culler;
 	bool m_enable_raytraced_culling;
 	bool m_bypass_frustum_culling = false;
+	// Virtual camera for transparent sorting during a portal RTT pass.
+	bool m_portal_cam_active = false;
+	v3f m_portal_cam_pos;
 };

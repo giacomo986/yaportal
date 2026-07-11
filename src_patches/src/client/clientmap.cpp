@@ -21,7 +21,9 @@
 #include "util/basic_macros.h"
 #include "util/tracy_wrapper.h"
 #include "client/renderingengine.h"
+#include "portal_manager.h"
 
+#include <algorithm>
 #include <queue>
 
 namespace {
@@ -1191,6 +1193,23 @@ void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
 		}
 	}
 
+	// Portal RTT pass: draw_order was collected in m_drawlist order, which is
+	// back-to-front for the PLAYER camera.  Re-sort per block for the virtual
+	// camera or glass behind glass gets z-culled in the portal view (transparent
+	// materials write depth).  Stable sort keeps the intra-block order produced
+	// by updateTransparentMeshBuffers (already sorted for the virtual camera).
+	if (is_transparent_pass && m_portal_cam_active) {
+		const v3f cam_render_pos = m_portal_cam_pos
+				- intToFloat(m_camera_offset, BS);
+		const f32 half_extent = mesh_grid.cell_size * MAP_BLOCKSIZE * BS * 0.5f;
+		const v3f center_off(half_extent, half_extent, half_extent);
+		std::stable_sort(draw_order.begin(), draw_order.end(),
+			[&] (const DrawDescriptor &a, const DrawDescriptor &b) {
+				return (a.m_pos + center_off).getDistanceFromSQ(cam_render_pos)
+						> (b.m_pos + center_off).getDistanceFromSQ(cam_render_pos);
+			});
+	}
+
 	g_profiler->avg(prefix + "collecting [ms]", tt_collect.stop(true));
 
 	TimeTaker tt_draw("");
@@ -1243,6 +1262,13 @@ void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
 
 		vertex_count += descriptor.draw(driver);
 	}
+
+	// End of the main solid map pass: draw the portal quads now (opaque,
+	// z-writing) so the following transparent pass blends glass/water in front
+	// of a portal over the portal image.  Skipped during RTT passes
+	// (m_bypass_frustum_culling) — no portal-in-portal recursion.
+	if (pass == scene::ESNRP_SOLID && !m_bypass_frustum_culling)
+		PortalManager::get().runQuadDrawHook();
 
 	g_profiler->avg(prefix + "draw meshes [ms]", tt_draw.stop(true));
 
@@ -1714,14 +1740,18 @@ void ClientMap::updateTransparentMeshBuffers()
 	bool transparency_sorting_enabled = m_cache_transparency_sorting_distance > 0;
 	f32 sorting_distance = m_cache_transparency_sorting_distance * BS;
 
+	// During a portal RTT pass sort for the virtual camera; buffers are then
+	// left dirty so the main pass re-sorts them for the player camera.
+	const v3f camera_position = m_portal_cam_active
+			? m_portal_cam_pos : m_camera_position;
+
 	// Update the order of transparent mesh buffers in each mesh
-	for (auto it = m_drawlist.begin(); it != m_drawlist.end(); it++) {
-		MapBlock *block = it->second;
+	auto update_block = [&] (MapBlock *block) {
 		MapBlockMesh *blockmesh = block->mesh;
 		if (!blockmesh)
-			continue;
+			return;
 
-		if (m_needs_update_transparent_meshes ||
+		if (m_needs_update_transparent_meshes || m_portal_cam_active ||
 				blockmesh->getTransparentBuffers().size() == 0) {
 			bool do_sort_block = transparency_sorting_enabled;
 
@@ -1729,14 +1759,14 @@ void ClientMap::updateTransparentMeshBuffers()
 				v3f mesh_sphere_center = intToFloat(block->getPosRelative(), BS)
 						+ blockmesh->getBoundingSphereCenter();
 				f32 mesh_sphere_radius = blockmesh->getBoundingRadius();
-				f32 distance_sq = m_camera_position.getDistanceFromSQ(mesh_sphere_center);
+				f32 distance_sq = camera_position.getDistanceFromSQ(mesh_sphere_center);
 
 				if (distance_sq > std::pow(sorting_distance + mesh_sphere_radius, 2.0f))
 					do_sort_block = false;
 			}
 
 			if (do_sort_block) {
-				blockmesh->updateTransparentBuffers(m_camera_position, block->getPos(),
+				blockmesh->updateTransparentBuffers(camera_position, block->getPos(),
 						m_cache_transparency_sorting_group_by_buffers);
 				++sorted_blocks;
 			} else {
@@ -1744,11 +1774,21 @@ void ClientMap::updateTransparentMeshBuffers()
 				++unsorted_blocks;
 			}
 		}
-	}
+	};
+
+	for (auto it = m_drawlist.begin(); it != m_drawlist.end(); it++)
+		update_block(it->second);
+	// Blocks only reachable through a portal are not in m_drawlist; without
+	// this their transparent buffers are never built and glass never renders
+	// in the portal view.
+	for (auto it = m_portal_drawlist.begin(); it != m_portal_drawlist.end(); it++)
+		update_block(it->second);
 
 	g_profiler->avg("CM::Transparent Buffers - Sorted", sorted_blocks);
 	g_profiler->avg("CM::Transparent Buffers - Unsorted", unsorted_blocks);
-	m_needs_update_transparent_meshes = false;
+	// Portal pass left the ordering tuned to the virtual camera: keep the
+	// dirty flag set so the main pass re-sorts for the player camera.
+	m_needs_update_transparent_meshes = m_portal_cam_active;
 }
 
 video::SMaterial &DrawDescriptor::getMaterial()
