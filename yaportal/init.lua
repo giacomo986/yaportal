@@ -90,7 +90,8 @@ minetest.register_entity("yaportal:anchor", {
     on_rightclick = function(self, clicker)
         if self._portal_name and clicker and clicker:is_player()
            and not self._portal_name:match("^gun")
-           and not self._portal_name:match("^pocket_") then
+           and not self._portal_name:match("^pocket_")
+           and not self._portal_name:match("^clock_") then
             open_portal_config(clicker, self._portal_name)
         end
     end,
@@ -135,7 +136,8 @@ local function update_anchor(name, pp)
             end
             -- Only configurable portals open a menu; gun/pocket anchors would
             -- otherwise be invisible inert click-blockers, so make them un-pointable.
-            local pointable = not (name:match("^gun") or name:match("^pocket_"))
+            local pointable = not (name:match("^gun") or name:match("^pocket_")
+                                   or name:match("^clock_"))
             anchors[name]:set_properties({selectionbox = sb, pointable = pointable})
         end
     end
@@ -248,7 +250,8 @@ minetest.register_globalstep(function(dtime)
     if _anchor_reensure_t < 2 then return end
     _anchor_reensure_t = 0
     for name, pp in pairs(portals) do
-        if not name:match("^gun") and not name:match("^pocket_") then
+        if not name:match("^gun") and not name:match("^pocket_")
+           and not name:match("^clock_") then
             local ent = anchors[name] and anchors[name]:get_luaentity()
             if not ent and minetest.get_node(inner_center(pp)).name ~= "ignore" then
                 update_anchor(name, pp)
@@ -732,7 +735,7 @@ end
 -- to in the config menu).
 local function is_user_frame_portal(name)
     return not (name:match("^gun_") or name:match("^gun%d_")
-             or name:match("^pocket_"))
+             or name:match("^pocket_") or name:match("^clock_"))
 end
 
 local frame_check_accum = 0
@@ -1724,6 +1727,21 @@ minetest.register_node("yaportal:frame_orange", {
     diggable = false,
 })
 
+-- Gun tools override on_place, so the engine's default dispatch to the
+-- pointed node's on_rightclick never runs for them: right-clicking a
+-- pedestal would fire the orange portal instead of storing the gun.
+-- Forward pedestal clicks explicitly (yaportal:pedestal is registered
+-- later; the lookup happens at click time).
+local function gun_place_on_pedestal(itemstack, placer, pointed)
+    if not (pointed and pointed.type == "node") then return nil end
+    local n = minetest.get_node(pointed.under)
+    if n.name ~= "yaportal:pedestal" then return nil end
+    local ndef = minetest.registered_nodes[n.name]
+    if not (ndef and ndef.on_rightclick) then return nil end
+    return ndef.on_rightclick(pointed.under, n, placer, itemstack, pointed)
+        or itemstack
+end
+
 minetest.register_tool("yaportal:portal_gun", {
     description = "Portal Gun\nLeft click: blue portal\nRight click: orange portal",
     inventory_image = "yaportal_gun.png",
@@ -1732,6 +1750,8 @@ minetest.register_tool("yaportal:portal_gun", {
         return itemstack
     end,
     on_place = function(itemstack, placer, pointed_thing)
+        local st = gun_place_on_pedestal(itemstack, placer, pointed_thing)
+        if st then return st end
         portal_gun_shoot(placer, pointed_thing, "orange")
         return itemstack
     end,
@@ -1941,6 +1961,8 @@ minetest.register_tool("yaportal:portal_gun3", {
         return itemstack
     end,
     on_place = function(itemstack, placer, pointed_thing)
+        local st = gun_place_on_pedestal(itemstack, placer, pointed_thing)
+        if st then return st end
         portal_gun3_shoot(placer, pointed_thing, "orange")
         return itemstack
     end,
@@ -2048,7 +2070,7 @@ local function pgun4_shell_mat(name)
     return ""
 end
 
-local function pgun4_register_block(color, frametex)
+local function pgun4_register_block(color, frametex, pbval)
     local Color = color:gsub("^%l", string.upper)
     for mat, tex in pairs(PGUN4_MAT_TILES) do
         local base = {
@@ -2061,9 +2083,8 @@ local function pgun4_register_block(color, frametex)
             node_box = {type = "fixed", fixed = {-0.5,-0.5,-0.5, 0.5,0.5,0.5}},
             diggable = false,
         }
-        -- portal_block VALUE = portal family/colour: engine merge key (cells
-        -- of one portal are different node ids across shell materials).
-        local pbval = (color == "blue") and 3 or 4
+        -- portal_block VALUE (pbval) = portal family/colour: engine merge key
+        -- (cells of one portal are different node ids across shell materials).
         -- Open variant: linked portal. Front face is carved away.
         local open = table.copy(base)
         open.description = Color .. " Wall Portal Block (type 2, unbreakable)"
@@ -2096,8 +2117,12 @@ local function pgun4_register_block(color, frametex)
         end
     end
 end
-pgun4_register_block("blue",   "yaportal_blue.png")
-pgun4_register_block("orange", "yaportal_orange.png")
+pgun4_register_block("blue",   "yaportal_blue.png",   3)
+pgun4_register_block("orange", "yaportal_orange.png", 4)
+-- Clock-fired portal pair: same machinery, distinct frame colours so they
+-- can't be mistaken for the player's gun4 portals (same alpha as the pngs).
+pgun4_register_block("purple", "[fill:16x16:#aa00ff96", 5)
+pgun4_register_block("yellow", "[fill:16x16:#ffdc0096", 6)
 
 -- Swap a gun4 portal's blocks between the open (linked, see-through) and closed
 -- (unlinked, solid + frame) variants to match its current link state.
@@ -2158,7 +2183,7 @@ end
 local function pgun4_apply_state(portal_name)
     local pp = portals[portal_name]
     if not pp then return end
-    local color = portal_name:match("^gun4_(%w+)_")
+    local color = pp.color or portal_name:match("^gun4_(%w+)_")
     if not color then return end
     local base   = "yaportal:portal_wallblock_" .. color
     local linked = pp.link ~= nil and portals[pp.link] ~= nil
@@ -2549,6 +2574,8 @@ minetest.register_tool("yaportal:portal_gun4", {
         return itemstack
     end,
     on_place = function(itemstack, placer, pointed_thing)
+        local st = gun_place_on_pedestal(itemstack, placer, pointed_thing)
+        if st then return st end
         portal_gun4_shoot(placer, pointed_thing, "orange")
         return itemstack
     end,
@@ -3236,6 +3263,8 @@ minetest.register_tool("yaportal:pocket_gun", {
         return itemstack
     end,
     on_place = function(itemstack, placer, pointed_thing)
+        local st = gun_place_on_pedestal(itemstack, placer, pointed_thing)
+        if st then return st end
         local pname = placer:get_player_name()
         pocket_remove_world(pname)
         if portals["pocket_in_" .. pname] then
@@ -3731,6 +3760,100 @@ minetest.register_lbm({
     end,
 })
 
+-- ── push button (momentary trigger) ─────────────
+-- A small wall/floor/ceiling button: punching or right-clicking it pulses
+-- its trigger active for ~1s.  Bindable from the vent/door/clock config
+-- forms (binding kind "push"), e.g. vent start / stop / dispense.
+
+local pushbuttons = {}  -- hash → {pos, until_t (us; pulse active while now < until_t)}
+
+do
+    local function push_entry(pos)
+        local h = hashpos(pos)
+        local e = pushbuttons[h]
+        if not e then
+            e = {pos = {x = pos.x, y = pos.y, z = pos.z}}
+            pushbuttons[h] = e
+        end
+        return e
+    end
+
+    local function push_press(pos, node)
+        push_entry(pos).until_t = minetest.get_us_time() + 1e6
+        if node.name == "yaportal:pushbutton" then
+            minetest.swap_node(pos,
+                {name = "yaportal:pushbutton_pressed", param2 = node.param2})
+        end
+        minetest.after(1.0, function()
+            local n = minetest.get_node(pos)
+            if n.name == "yaportal:pushbutton_pressed" then
+                minetest.swap_node(pos,
+                    {name = "yaportal:pushbutton", param2 = n.param2})
+            end
+        end)
+    end
+
+    local base = {
+        drawtype = "nodebox",
+        paramtype = "light",
+        paramtype2 = "wallmounted",
+        sunlight_propagates = true,
+        is_ground_content = false,
+        walkable = false,
+        selection_box = {type = "wallmounted",
+            wall_side   = {-0.5, -0.1875, -0.1875, -0.3125, 0.1875, 0.1875},
+            wall_bottom = {-0.1875, -0.5, -0.1875, 0.1875, -0.3125, 0.1875},
+            wall_top    = {-0.1875, 0.3125, -0.1875, 0.1875, 0.5, 0.1875}},
+        groups = {cracky = 3, oddly_breakable_by_hand = 1},
+        sounds = block_sounds,
+        drop = "yaportal:pushbutton",
+        on_punch = function(pos, node) push_press(pos, node) end,
+        on_rightclick = function(pos, node) push_press(pos, node) end,
+        on_construct = function(pos) push_entry(pos) end,
+        after_dig_node = function(pos) pushbuttons[hashpos(pos)] = nil end,
+    }
+
+    local up = table.copy(base)
+    up.description = "Push Button\n" ..
+        "Momentary trigger (~1s pulse on punch/right-click); link it in a " ..
+        "vent, door or clock config, e.g. as start / stop / dispense"
+    up.tiles = {"[fill:16x16:#c8c8cc^[fill:8x8:4,4:#c03434"}
+    up.node_box = {type = "wallmounted",
+        wall_side   = {-0.5, -0.1875, -0.1875, -0.375, 0.1875, 0.1875},
+        wall_bottom = {-0.1875, -0.5, -0.1875, 0.1875, -0.375, 0.1875},
+        wall_top    = {-0.1875, 0.375, -0.1875, 0.1875, 0.5, 0.1875}}
+    minetest.register_node("yaportal:pushbutton", up)
+
+    local dn = table.copy(base)
+    dn.description = "Push Button (pressed)"
+    dn.tiles = {"[fill:16x16:#a8a8ac^[fill:8x8:4,4:#701c1c"}
+    dn.node_box = {type = "wallmounted",
+        wall_side   = {-0.5, -0.1875, -0.1875, -0.4375, 0.1875, 0.1875},
+        wall_bottom = {-0.1875, -0.5, -0.1875, 0.1875, -0.4375, 0.1875},
+        wall_top    = {-0.1875, 0.4375, -0.1875, 0.1875, 0.5, 0.1875}}
+    dn.groups = {cracky = 3, oddly_breakable_by_hand = 1,
+                 not_in_creative_inventory = 1}
+    minetest.register_node("yaportal:pushbutton_pressed", dn)
+end
+
+minetest.register_lbm({
+    label = "Re-register push buttons",
+    name = "yaportal:register_pushbutton",
+    nodenames = {"yaportal:pushbutton", "yaportal:pushbutton_pressed"},
+    run_at_every_load = true,
+    action = function(pos, node)
+        local h = hashpos(pos)
+        if not pushbuttons[h] then
+            pushbuttons[h] = {pos = {x = pos.x, y = pos.y, z = pos.z}}
+        end
+        -- A pressed button reloaded mid-pulse resets to idle.
+        if node.name == "yaportal:pushbutton_pressed" then
+            minetest.swap_node(pos,
+                {name = "yaportal:pushbutton", param2 = node.param2})
+        end
+    end,
+})
+
 -- ── vital apparatus vent (2x2x2 dispenser) ─────────────
 
 -- Same corner scheme as the super button: each quarter is registered with its
@@ -3762,6 +3885,37 @@ local function vent_cells(anchor)
     return out
 end
 
+-- Destroy a cube with a Portal-style fizzle: a burst of cube-texture crumbs
+-- plus a brief glowing flash at its position.
+local function cube_fizzle(obj)
+    local p = obj:get_pos()
+    if p then
+        minetest.add_particlespawner({
+            amount = 36,
+            time = 0.05,
+            minpos = {x = p.x - 0.35, y = p.y - 0.35, z = p.z - 0.35},
+            maxpos = {x = p.x + 0.35, y = p.y + 0.35, z = p.z + 0.35},
+            minvel = {x = -1.5, y = 0.5, z = -1.5},
+            maxvel = {x = 1.5, y = 2.5, z = 1.5},
+            minacc = {x = 0, y = -6, z = 0},
+            maxacc = {x = 0, y = -6, z = 0},
+            minexptime = 0.35,
+            maxexptime = 0.9,
+            minsize = 1.2,
+            maxsize = 2.6,
+            texture = "yaportal_cube.png",
+        })
+        minetest.add_particle({
+            pos = p,
+            expirationtime = 0.25,
+            size = 9,
+            texture = "yaportal_cube.png^[colorize:#aef1ff:200",
+            glow = 14,
+        })
+    end
+    obj:remove()
+end
+
 local function dispense(anchor, h)
     -- The cube drops out of the open 2x2 bottom: all 4 cells below must be
     -- clear of walkable nodes.
@@ -3773,29 +3927,35 @@ local function dispense(anchor, h)
         end
     end
     local center = {x = anchor.x + 0.5, y = anchor.y + 0.6, z = anchor.z + 0.5}
-    -- Re-home rule: orphan any previous cube of this vent so only the newest
-    -- one counts — right-clicking cannot create runaway auto-respawn loops.
-    for _, obj in ipairs(minetest.get_objects_inside_radius(center, 16)) do
+    -- The vent tracks its own cube: dispensing destroys the previous one so
+    -- only the newest exists — no orphans, no runaway auto-respawn loops.
+    -- (A previous cube beyond the scan radius or in an unloaded mapblock
+    -- survives; same accepted edge case as the lost-cube detection.)
+    local d = dispensers[h]
+    if d and d.cube and d.cube:get_pos() then cube_fizzle(d.cube) end
+    local scan = ((d and d.max_dist) or 16) + 16
+    for _, obj in ipairs(minetest.get_objects_inside_radius(center, scan)) do
         local ent = obj:get_luaentity()
         if ent and ent.name == CUBE_ENTITY and ent._home == h then
-            ent._home = nil
+            cube_fizzle(obj)
         end
     end
     local obj = minetest.add_entity(center, CUBE_ENTITY)
     if obj then
         local ent = obj:get_luaentity()
         if ent then ent._home = h end
+        if d then d.cube = obj end
         return true
     end
     return false
 end
 
-local function vent_rightclick(pos, node)
+local vent_open_config  -- forward decl (assigned in the vent-config closure)
+
+local function vent_rightclick(pos, node, clicker)
+    if not (clicker and clicker:is_player()) then return end
     local anchor = vent_anchor(pos, node.name, node.param2)
-    local h = hashpos(anchor)
-    dispense(anchor, h)
-    local entry = dispensers[h]
-    if entry then entry.empty_ticks = 0 end
+    if vent_open_config then vent_open_config(clicker, anchor) end
 end
 
 local function vent_after_dig(pos, oldnode)
@@ -3841,7 +4001,9 @@ local function vent_place(itemstack, placer, pointed)
     for _, c in ipairs(cells) do
         minetest.set_node(c.pos, {name = c.name, param2 = c.param2})
     end
-    dispensers[hashpos(anchor)] = {pos = anchor, empty_ticks = 0}
+    dispensers[hashpos(anchor)] =
+        {pos = anchor, empty_ticks = 0, enabled = true, bindings = {},
+         max_dist = 16}
     if placer and not minetest.is_creative_enabled(pname) then
         itemstack:take_item()
     end
@@ -3877,8 +4039,9 @@ do
     bottom.description = "Vital Apparatus Vent\n" ..
         "2x2x2 cube dispenser, open at the bottom (expands +X/+Z and " ..
         "upward from the clicked cell; hangs downward from a ceiling).\n" ..
-        "Right-click: dispense a Weighted Storage Cube; automatically " ..
-        "replaces its cube when lost"
+        "While enabled it automatically replaces its cube when lost; " ..
+        "dispensing destroys the previous cube.\n" ..
+        "Right-click: settings (start/stop/dispense triggers, manual dispense)"
     bottom.inventory_image = "yaportal_tube_open.png"
     bottom.wield_image = "yaportal_tube_open.png"
     bottom.node_box = {type = "fixed", fixed = vent_walls}
@@ -3895,6 +4058,218 @@ do
     minetest.register_node("yaportal:dispenser_top", top)
 end
 
+-- ── vent config (triggers + enable/disable) ──
+-- Right-clicking any vent cell opens a settings form: an Enabled switch
+-- (gates the lost-cube auto-respawn), a manual dispense button, and trigger
+-- bindings à la door — "start"/"stop" flip the Enabled switch on the
+-- trigger's rising edge, "dispense" drops a fresh cube (destroying the
+-- previous one).  Config persists in the anchor node's meta ("disabled" int
+-- + "triggers" JSON, so legacy vents without meta default to enabled).
+-- Wrapped in a closure: the main chunk is near Lua's 200-local limit.
+;(function()
+
+local VENT_TRIG_MODES  = {"start", "stop", "dispense"}
+local VENT_TRIG_LABELS = {"Start — enable the vent",
+                          "Stop — disable the vent",
+                          "Dispense — new cube on activation"}
+
+local function vent_read_cfg(anchor)
+    local meta = minetest.get_meta(anchor)
+    local bindings = {}
+    local raw  = meta:get_string("triggers")
+    local list = raw ~= "" and minetest.parse_json(raw)
+    if type(list) == "table" then
+        for _, b in ipairs(list) do
+            local m = (b.m == "stop" or b.m == "dispense") and b.m or "start"
+            if (b.k == "button" or b.k == "push") and b.pos then
+                bindings[#bindings + 1] = {k = b.k, m = m,
+                    pos = {x = b.pos.x, y = b.pos.y, z = b.pos.z}}
+            elseif b.k == "space" and b.id then
+                bindings[#bindings + 1] = {k = "space", m = m, id = b.id}
+            end
+        end
+    end
+    local maxd = meta:get_int("max_dist")
+    if maxd <= 0 then maxd = 16 end
+    return meta:get_int("disabled") ~= 1, bindings, maxd
+end
+
+local function vent_write_cfg(anchor, enabled, bindings, maxd)
+    local meta = minetest.get_meta(anchor)
+    meta:set_int("disabled", enabled and 0 or 1)
+    meta:set_int("max_dist", maxd or 16)
+    local list = {}
+    for _, b in ipairs(bindings or {}) do
+        list[#list + 1] = {k = b.k, m = b.m, pos = b.pos, id = b.id}
+    end
+    meta:set_string("triggers", #list > 0 and minetest.write_json(list) or "")
+    meta:set_string("infotext",
+        "Vital Apparatus Vent" .. (enabled and "" or " (disabled)"))
+end
+
+local vent_form_ctx = {}  -- pname → {anchor, enabled, bindings, choices, sel}
+
+local function vent_form_show(pname)
+    local ctx = vent_form_ctx[pname]
+    if not ctx then return end
+    local T = rawget(_G, "yaportal") and yaportal.triggers
+
+    local rows = {}
+    for _, b in ipairs(ctx.bindings) do
+        rows[#rows + 1] = minetest.formspec_escape(
+            ((T and T.label(b)) or "?") .. " — " .. b.m)
+    end
+    local add_items = {"— add trigger —"}
+    for _, c in ipairs(ctx.choices) do
+        add_items[#add_items + 1] = minetest.formspec_escape(c.label)
+    end
+
+    minetest.show_formspec(pname, "yaportal:vent_config",
+        "formspec_version[4]" ..
+        "size[10,9.4]" ..
+        "label[0.5,0.6;Configure Vital Apparatus Vent]" ..
+        "label[0.5,1.25;Status: " ..
+            (ctx.enabled and "ENABLED — auto-replaces its cube when lost"
+                          or "DISABLED") .. "]" ..
+        "button[0.5,1.6;2.5,0.8;enable_now;Enable]" ..
+        "button[3.2,1.6;2.5,0.8;disable_now;Disable]" ..
+        "button[5.9,1.6;3.6,0.8;dispense_now;Dispense cube now]" ..
+        "label[0.5,2.9;Triggers (start / stop flip the status, dispense drops a cube):]" ..
+        "textlist[0.5,3.2;9,2.2;trig_list;" ..
+            table.concat(rows, ",") .. ";" .. (ctx.sel or 1) .. ";false]" ..
+        "button[0.5,5.55;3,0.7;remove_trig;Remove selected]" ..
+        "dropdown[0.5,6.55;5.1,0.8;trig_new;" ..
+            table.concat(add_items, ",") .. ";1;true]" ..
+        "dropdown[5.8,6.55;2.6,0.8;trig_mode;" ..
+            table.concat(VENT_TRIG_LABELS, ",") .. ";1;true]" ..
+        "button[8.6,6.55;0.9,0.8;add_trig;+]" ..
+        "field[0.5,8.15;3,0.8;max_dist;Max cube distance (nodes);" ..
+            tostring(ctx.max_dist or 16) .. "]" ..
+        "field_close_on_enter[max_dist;false]" ..
+        "button_exit[6,8.15;3.5,0.8;save_vent;Save]"
+    )
+end
+
+vent_open_config = function(player, anchor)
+    local pname = player:get_player_name()
+    local d = dispensers[hashpos(anchor)]
+    local enabled, bindings, maxd
+    if d and d.bindings then
+        enabled, bindings, maxd = d.enabled ~= false, d.bindings,
+            d.max_dist or 16
+    else
+        enabled, bindings, maxd = vent_read_cfg(anchor)
+    end
+    -- Working copies: Add/Remove round-trips don't touch the vent until Save.
+    local tb = {}
+    for _, b in ipairs(bindings) do
+        tb[#tb + 1] = {k = b.k, m = b.m, pos = b.pos, id = b.id}
+    end
+    local T = rawget(_G, "yaportal") and yaportal.triggers
+    local center = {x = anchor.x + 0.5, y = anchor.y + 1, z = anchor.z + 0.5}
+    vent_form_ctx[pname] = {anchor = anchor, enabled = enabled,
+        bindings = tb, sel = 1, max_dist = maxd,
+        choices = (T and T.list_near(center, 48)) or {}}
+    vent_form_show(pname)
+end
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    if formname ~= "yaportal:vent_config" then return end
+    local pname = player:get_player_name()
+    local ctx = vent_form_ctx[pname]
+    if not ctx then return end
+    local anchor = ctx.anchor
+
+    if minetest.is_protected(anchor, pname) then
+        vent_form_ctx[pname] = nil
+        return
+    end
+
+    -- Button re-renders resubmit the distance field: keep the latest valid
+    -- value in the ctx.
+    if fields.max_dist ~= nil then
+        local n = tonumber(fields.max_dist)
+        if n then ctx.max_dist = math.max(4, math.min(64, math.floor(n))) end
+    end
+
+    -- Enable/Disable apply immediately (runtime + meta), no Save needed.
+    if fields.enable_now or fields.disable_now then
+        local en = fields.enable_now ~= nil
+        ctx.enabled = en
+        local d = dispensers[hashpos(anchor)]
+        local bnd = d and d.bindings
+        local maxd = d and d.max_dist
+        if not bnd then
+            local _
+            _, bnd, maxd = vent_read_cfg(anchor)
+        end
+        if d then d.enabled = en end
+        vent_write_cfg(anchor, en, bnd, maxd or 16)
+        vent_form_show(pname)
+        return
+    end
+
+    if fields.trig_list then
+        local ev = minetest.explode_textlist_event(fields.trig_list)
+        if ev.type == "CHG" or ev.type == "DCL" then ctx.sel = ev.index end
+    end
+
+    if fields.add_trig then
+        local idx  = tonumber(fields.trig_new or "1") or 1
+        local midx = tonumber(fields.trig_mode or "1") or 1
+        local c = (idx >= 2) and ctx.choices[idx - 1]
+        if c then
+            ctx.bindings[#ctx.bindings + 1] =
+                {k = c.k, m = VENT_TRIG_MODES[midx] or "start",
+                 pos = c.pos, id = c.id}
+            ctx.sel = #ctx.bindings
+        end
+        vent_form_show(pname)
+        return
+    end
+
+    if fields.remove_trig then
+        if ctx.bindings[ctx.sel or 0] then
+            table.remove(ctx.bindings, ctx.sel)
+            if ctx.sel > #ctx.bindings then ctx.sel = math.max(#ctx.bindings, 1) end
+        end
+        vent_form_show(pname)
+        return
+    end
+
+    if fields.dispense_now then
+        if minetest.get_node(anchor).name == "yaportal:dispenser" then
+            local h = hashpos(anchor)
+            if dispense(anchor, h) then
+                local d = dispensers[h]
+                if d then d.empty_ticks = 0 end
+            end
+        end
+        vent_form_show(pname)
+        return
+    end
+
+    if fields.save_vent then
+        vent_write_cfg(anchor, ctx.enabled == true, ctx.bindings,
+            ctx.max_dist or 16)
+        local d = dispensers[hashpos(anchor)]
+        if d then
+            d.enabled  = ctx.enabled == true
+            d.max_dist = ctx.max_dist or 16
+            -- Fresh copies: drop per-binding edge state.
+            local tb = {}
+            for _, b in ipairs(ctx.bindings) do
+                tb[#tb + 1] = {k = b.k, m = b.m, pos = b.pos, id = b.id}
+            end
+            d.bindings = tb
+        end
+        vent_form_ctx[pname] = nil
+        return
+    end
+
+    if fields.quit then vent_form_ctx[pname] = nil end
+end)
+
 minetest.register_lbm({
     label = "Re-register vital apparatus vents",
     name = "yaportal:register_dispenser",
@@ -3904,10 +4279,49 @@ minetest.register_lbm({
         local anchor = vent_anchor(pos, node.name, node.param2)
         local h = hashpos(anchor)
         if not dispensers[h] then
-            dispensers[h] = {pos = anchor, empty_ticks = 0}
+            local enabled, bindings, maxd = vent_read_cfg(anchor)
+            dispensers[h] = {pos = anchor, empty_ticks = 0,
+                             enabled = enabled, bindings = bindings,
+                             max_dist = maxd}
         end
     end,
 })
+
+-- Trigger polling (0.2s, matching the door cadence so space/button edges
+-- aren't missed by the slow 2s dispenser tick).
+local vent_trig_accum = 0
+minetest.register_globalstep(function(dtime)
+    vent_trig_accum = vent_trig_accum + dtime
+    if vent_trig_accum < 0.2 then return end
+    vent_trig_accum = 0
+    local T = rawget(_G, "yaportal") and yaportal.triggers
+    if not T then return end
+    for h, d in pairs(dispensers) do
+        if d.bindings and #d.bindings > 0 then
+            for _, b in ipairs(d.bindings) do
+                local act = T.active(b)
+                if act and not b.prev then
+                    if b.m == "dispense" then
+                        if minetest.get_node(d.pos).name == "yaportal:dispenser"
+                           and dispense(d.pos, h) then
+                            d.empty_ticks = 0
+                        end
+                    else
+                        local en = (b.m == "start")
+                        if d.enabled ~= en then
+                            d.enabled = en
+                            vent_write_cfg(d.pos, en, d.bindings,
+                                d.max_dist or 16)
+                        end
+                    end
+                end
+                b.prev = act
+            end
+        end
+    end
+end)
+
+end)()  -- end vent-config closure
 
 -- ── automatic door (2x2, Aperture style) ─────────────
 
@@ -3932,20 +4346,54 @@ local DOOR_Q = {
 -- preserves this meta across the open/close name swap.
 local open_door_config  -- forward decl (defined after the craftitem)
 
+-- Door activation is a LIST of trigger bindings, meta "triggers" (JSON):
+-- each {k = "button"|"space", m = "hold"|"open"|"close", pos = {x,y,z} (button)
+-- | id = n (space)}.  hold = door activated while the trigger is active;
+-- open/close = latch set/cleared on the trigger's rising edge (so a door can
+-- open on space entry and close only from a button, ignoring the exit).
+-- Empty list = auto rule.  Legacy single-trigger meta "button" (numeric hash
+-- or "space:<id>") is migrated to one hold binding on read.
 local function door_read_cfg(pos)
-    local meta   = minetest.get_meta(pos)
-    local button = meta:get_string("button")
+    local meta = minetest.get_meta(pos)
+    local bindings = {}
+    local raw  = meta:get_string("triggers")
+    local list = raw ~= "" and minetest.parse_json(raw)
+    if type(list) == "table" then
+        for _, b in ipairs(list) do
+            local m = (b.m == "open" or b.m == "close") and b.m or "hold"
+            if (b.k == "button" or b.k == "push") and b.pos then
+                bindings[#bindings + 1] = {k = b.k, m = m,
+                    pos = {x = b.pos.x, y = b.pos.y, z = b.pos.z}}
+            elseif b.k == "space" and b.id then
+                bindings[#bindings + 1] = {k = "space", m = m, id = b.id}
+            end
+        end
+    else
+        local trig = meta:get_string("button")
+        local sid  = trig:match("^space:(%d+)")
+        if sid then
+            bindings[1] = {k = "space", m = "hold", id = tonumber(sid)}
+        elseif trig ~= "" and tonumber(trig) then
+            bindings[1] = {k = "button", m = "hold",
+                pos = minetest.get_position_from_hash(tonumber(trig))}
+        end
+    end
     return meta:get_string("name"),
            meta:get_int("normally_open") == 1,
-           (button ~= "" and tonumber(button)) or nil
+           bindings
 end
 
-local function door_write_cfg(pos, name, normally_open, button)
+local function door_write_cfg(pos, name, normally_open, bindings)
     local meta = minetest.get_meta(pos)
     name = name or ""
     meta:set_string("name", name)
     meta:set_int("normally_open", normally_open and 1 or 0)
-    meta:set_string("button", button and tostring(button) or "")
+    local list = {}
+    for _, b in ipairs(bindings or {}) do
+        list[#list + 1] = {k = b.k, m = b.m, pos = b.pos, id = b.id}
+    end
+    meta:set_string("triggers", #list > 0 and minetest.write_json(list) or "")
+    meta:set_string("button", "")  -- clear the legacy single-trigger slot
     meta:set_string("infotext",
         (name ~= "" and ("Door: " .. name .. "\n") or "") ..
         (normally_open and "Normally open" or "Normally closed"))
@@ -3994,10 +4442,10 @@ local function door_power(pos, node, on)
     local h = hashpos(bl)
     local entry = doors[h]
     if not entry then
-        local nm, no, btn = door_read_cfg(bl)
+        local nm, no, tb = door_read_cfg(bl)
         entry = {pos = bl, p2 = node.param2 % 4,
                  open = node.name:find("_open") ~= nil, powered = false,
-                 name = nm, normally_open = no, button = btn}
+                 name = nm, normally_open = no, bindings = tb, latch = false}
         doors[h] = entry
     end
     entry.powered = on
@@ -4094,7 +4542,8 @@ minetest.register_craftitem("yaportal:door", {
         "2 wide x 2 tall; opens on approach — or, with a super button within " ..
         "8 nodes, only while that button is pressed.\n" ..
         "Right-click a placed door to name it, set normally open/closed, or " ..
-        "link an activation button.",
+        "link activation triggers (buttons / trigger spaces, hold or " ..
+        "open/close on edge).",
     inventory_image = "yaportal_door_inv.png",
     wield_image = "yaportal_door_inv.png",
     on_place = function(itemstack, placer, pointed)
@@ -4134,7 +4583,8 @@ minetest.register_craftitem("yaportal:door", {
         door_write_cfg(bl, "", false, nil)  -- defaults: unnamed, normally closed, auto
         doors[hashpos(bl)] = {pos = {x = bl.x, y = bl.y, z = bl.z},
                               p2 = p2, open = false, powered = false,
-                              name = "", normally_open = false, button = nil}
+                              name = "", normally_open = false,
+                              bindings = {}, latch = false}
         if placer and not minetest.is_creative_enabled(pname) then
             itemstack:take_item()
         end
@@ -4150,11 +4600,15 @@ minetest.register_lbm({
     action = function(pos, node)
         local h = hashpos(pos)
         if not doors[h] then
-            local nm, no, btn = door_read_cfg(pos)
+            local nm, no, tb = door_read_cfg(pos)
+            local fm = minetest.get_meta(pos):get_int("forced")
+            local forced
+            if fm == 1 then forced = true elseif fm == 2 then forced = false end
             doors[h] = {pos = {x = pos.x, y = pos.y, z = pos.z},
                         p2 = node.param2 % 4,
                         open = node.name:find("_open") ~= nil, powered = false,
-                        name = nm, normally_open = no, button = btn}
+                        name = nm, normally_open = no,
+                        bindings = tb, latch = false, forced = forced}
         end
     end,
 })
@@ -4165,51 +4619,82 @@ minetest.register_lbm({
 -- (or leave it on Auto).  The dropdown lists nearby buttons; the session ctx
 -- maps the selected index back to the button's position hash.
 
-local door_form_ctx = {}  -- pname → {bl, p2, buttons = {hash, ...}}
+local door_form_ctx = {}  -- pname → {bl, p2, name, normally_open, bindings, choices, sel}
 
-open_door_config = function(player, bl, p2)
-    local pname = player:get_player_name()
-    local name, normally_open, button = door_read_cfg(bl)
+local DOOR_TRIG_MODES  = {"hold", "open", "close"}
+local DOOR_TRIG_LABELS = {"Hold — open while active",
+                          "Open — on activation",
+                          "Close — on activation"}
 
-    local wd     = DOOR_WDIR[p2] or DOOR_WDIR[0]
-    local center = {x = bl.x + wd.x * 0.5, y = bl.y + 0.5, z = bl.z + wd.z * 0.5}
+-- Render the form from the session ctx (working copy of the bindings, so
+-- Add/Remove round-trips don't touch the door until Save).
+local function door_form_show(pname)
+    local ctx = door_form_ctx[pname]
+    if not ctx then return end
+    local T = rawget(_G, "yaportal") and yaportal.triggers
 
-    -- Nearby super buttons, sorted by distance, for the link dropdown.
-    local nearby = {}
-    for h, b in pairs(superbuttons) do
-        local bc = {x = b.pos.x + 0.5, y = b.pos.y, z = b.pos.z + 0.5}
-        local d  = vector.distance(bc, center)
-        if d <= 24 then nearby[#nearby + 1] = {h = h, pos = b.pos, d = d} end
+    local rows = {}
+    for _, b in ipairs(ctx.bindings) do
+        local lbl = (T and T.label(b)) or "?"
+        rows[#rows + 1] = minetest.formspec_escape(lbl .. " — " .. b.m)
     end
-    table.sort(nearby, function(a, b) return a.d < b.d end)
-
-    local items    = {"Auto (nearest button / approach)"}
-    local hashes   = {}
-    local selected = 1
-    for i, e in ipairs(nearby) do
-        items[#items + 1] = minetest.formspec_escape(string.format(
-            "Button (%d,%d,%d) — %.1fm", e.pos.x, e.pos.y, e.pos.z, e.d))
-        hashes[i] = e.h
-        if button and e.h == button then selected = i + 1 end
+    local add_items = {"— add trigger —"}
+    for _, c in ipairs(ctx.choices) do
+        add_items[#add_items + 1] = minetest.formspec_escape(c.label)
     end
 
-    door_form_ctx[pname] = {bl = bl, p2 = p2, buttons = hashes,
-                            normally_open = normally_open}
+    local fstate = "Auto (triggers / approach)"
+    if ctx.forced == true then fstate = "FORCED OPEN"
+    elseif ctx.forced == false then fstate = "FORCED CLOSED" end
 
     minetest.show_formspec(pname, "yaportal:door_config",
         "formspec_version[4]" ..
-        "size[9,6.6]" ..
+        "size[10,10.9]" ..
         "label[0.5,0.6;Configure Automatic Door]" ..
-        "field[0.5,1.3;8,0.8;door_name;Name;" ..
-            minetest.formspec_escape(name or "") .. "]" ..
-        "checkbox[0.5,2.7;normally_open;Normally open (open at rest, closes when activated);" ..
-            (normally_open and "true" or "false") .. "]" ..
-        "label[0.5,3.5;Activation button:]" ..
-        "dropdown[0.5,3.9;8,0.8;door_button;" ..
-            table.concat(items, ",") .. ";" .. selected .. ";true]" ..
-        "button_exit[0.5,5.3;3.5,0.8;save_door;Save]" ..
-        "button[4.5,5.3;4,0.8;delete_door;Remove door]"
+        "field[0.5,1.2;9,0.8;door_name;Name;" ..
+            minetest.formspec_escape(ctx.name or "") .. "]" ..
+        "checkbox[0.5,2.5;normally_open;Normally open (open at rest, activation closes);" ..
+            (ctx.normally_open and "true" or "false") .. "]" ..
+        "label[0.5,3.15;State: " .. fstate .. "]" ..
+        "button[0.5,3.5;2.5,0.7;force_open;Open]" ..
+        "button[3.2,3.5;2.5,0.7;force_close;Close]" ..
+        "button[5.9,3.5;2.5,0.7;force_auto;Auto]" ..
+        "label[0.5,4.55;Triggers (empty = auto: nearby button / approach):]" ..
+        "textlist[0.5,4.85;9,2.2;trig_list;" ..
+            table.concat(rows, ",") .. ";" .. (ctx.sel or 1) .. ";false]" ..
+        "button[0.5,7.2;3,0.7;remove_trig;Remove selected]" ..
+        "dropdown[0.5,8.2;5.1,0.8;trig_new;" ..
+            table.concat(add_items, ",") .. ";1;true]" ..
+        "dropdown[5.8,8.2;2.6,0.8;trig_mode;" ..
+            table.concat(DOOR_TRIG_LABELS, ",") .. ";1;true]" ..
+        "button[8.6,8.2;0.9,0.8;add_trig;+]" ..
+        "button_exit[0.5,9.7;3.5,0.8;save_door;Save]" ..
+        "button[4.5,9.7;4,0.8;delete_door;Remove door]"
     )
+end
+
+open_door_config = function(player, bl, p2)
+    local pname = player:get_player_name()
+    local name, normally_open, bindings = door_read_cfg(bl)
+
+    local wd     = DOOR_WDIR[p2] or DOOR_WDIR[0]
+    local center = {x = bl.x + wd.x * 0.5, y = bl.y + 0.5, z = bl.z + wd.z * 0.5}
+    local T = rawget(_G, "yaportal") and yaportal.triggers
+
+    local e = doors[hashpos(bl)]
+    local forced
+    if e then
+        forced = e.forced
+    else
+        local fm = minetest.get_meta(bl):get_int("forced")
+        if fm == 1 then forced = true elseif fm == 2 then forced = false end
+    end
+    door_form_ctx[pname] = {
+        bl = bl, p2 = p2, name = name, normally_open = normally_open,
+        bindings = bindings, sel = 1, forced = forced,
+        choices = (T and T.list_near(center, 48)) or {},
+    }
+    door_form_show(pname)
 end
 
 minetest.register_on_player_receive_fields(function(player, formname, fields)
@@ -4229,6 +4714,52 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     if fields.normally_open ~= nil then
         ctx.normally_open = (fields.normally_open == "true")
     end
+    -- Same for the name field: Add/Remove re-render the form, so keep the
+    -- latest typed value in the ctx.
+    if fields.door_name ~= nil then ctx.name = fields.door_name end
+
+    if fields.trig_list then
+        local ev = minetest.explode_textlist_event(fields.trig_list)
+        if ev.type == "CHG" or ev.type == "DCL" then ctx.sel = ev.index end
+    end
+
+    -- Open/Close/Auto apply immediately (runtime + meta), no Save needed;
+    -- the 0.2s poll performs the actual node swap.
+    if fields.force_open or fields.force_close or fields.force_auto then
+        local forced
+        if fields.force_open then forced = true
+        elseif fields.force_close then forced = false end
+        ctx.forced = forced
+        local e = doors[hashpos(bl)]
+        if e then e.forced = forced end
+        minetest.get_meta(bl):set_int("forced",
+            forced == true and 1 or forced == false and 2 or 0)
+        door_form_show(pname)
+        return
+    end
+
+    if fields.add_trig then
+        local idx  = tonumber(fields.trig_new or "1") or 1
+        local midx = tonumber(fields.trig_mode or "1") or 1
+        local c = (idx >= 2) and ctx.choices[idx - 1]
+        if c then
+            ctx.bindings[#ctx.bindings + 1] =
+                {k = c.k, m = DOOR_TRIG_MODES[midx] or "hold",
+                 pos = c.pos, id = c.id}
+            ctx.sel = #ctx.bindings
+        end
+        door_form_show(pname)
+        return
+    end
+
+    if fields.remove_trig then
+        if ctx.bindings[ctx.sel or 0] then
+            table.remove(ctx.bindings, ctx.sel)
+            if ctx.sel > #ctx.bindings then ctx.sel = math.max(#ctx.bindings, 1) end
+        end
+        door_form_show(pname)
+        return
+    end
 
     if fields.delete_door then
         local p2 = minetest.get_node(bl).param2 % 4
@@ -4244,14 +4775,18 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
     end
 
     if fields.save_door then
-        local nm  = fields.door_name or ""
-        local no  = ctx.normally_open == true
-        local idx = tonumber(fields.door_button or "1") or 1
-        local btn = (idx >= 2) and ctx.buttons[idx - 1] or nil
-        door_write_cfg(bl, nm, no, btn)
+        local nm = fields.door_name or ctx.name or ""
+        local no = ctx.normally_open == true
+        door_write_cfg(bl, nm, no, ctx.bindings)
         local e = doors[hashpos(bl)]
         if e then
-            e.name, e.normally_open, e.button = nm, no, btn
+            e.name, e.normally_open = nm, no
+            -- Fresh copies: drop per-binding edge state and reset the latch.
+            local tb = {}
+            for _, b in ipairs(ctx.bindings) do
+                tb[#tb + 1] = {k = b.k, m = b.m, pos = b.pos, id = b.id}
+            end
+            e.bindings, e.latch = tb, false
         end
         door_form_ctx[pname] = nil
         return
@@ -4259,6 +4794,1292 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 
     if fields.quit then door_form_ctx[pname] = nil end
 end)
+
+-- ── countdown clock ──────────────
+-- A Portal-1 style timer block: half a cube tall, spanning 2 cells (its solid
+-- body is inset, so it reads narrower than the full 2-wide footprint).  A
+-- billboard display in front shows HH:MM:SS.CC on a 7-segment LCD.  Right-click
+-- opens a menu to set the countdown and two portal effects (blue + orange,
+-- each an absolute cell + face).  A mesecons signal starts the countdown; when
+-- it reaches zero the linked gun4 portal pair is carved into the target walls,
+-- exactly as if fired by the Portal Gun (Wall).
+
+-- Wrapped in an immediately-invoked function so its many locals belong to this
+-- closure, not the main chunk (which is near Lua's 200-local limit).
+;(function()
+
+local clocks_disp = {}   -- node hash → display objref (rebuilt on load, dig)
+local clock_trig_open    -- forward decl (assigned in the trigger-space section)
+
+-- Portal-name pair for a clock. The hash must be formatted as an integer:
+-- plain concat prints it as a 14-digit float ("1.40743…e+14"), which both
+-- truncates (nearby clocks could collide) and is unreadable in logs.
+local function clock_portal_names(pos)
+    local h = string.format("%.0f", hashpos(pos))
+    return "clock_blue_" .. h, "clock_orange_" .. h
+end
+
+-- Face dropdown value → (axis, ns), matching portal_gun4_shoot's normal scheme
+-- (axis 0 = ±Z faces, axis 1 = ±X faces, axis 2 = ±Y floor/ceiling).
+local CLOCK_FACES = {"+Z", "-Z", "+X", "-X", "+Y", "-Y"}
+local CLOCK_FACE  = {
+    ["+Z"] = {axis = 0, ns =  1}, ["-Z"] = {axis = 0, ns = -1},
+    ["+X"] = {axis = 1, ns =  1}, ["-X"] = {axis = 1, ns = -1},
+    ["+Y"] = {axis = 2, ns =  1}, ["-Y"] = {axis = 2, ns = -1},
+}
+
+-- Front (display) direction per facedir, and the 2nd-cell (width) offset which
+-- reuses DOOR_WDIR: p2 0 → +X width / +Z front, etc.
+local CLOCK_FRONT = {
+    [0] = {x = 0, y = 0, z = 1}, [1] = {x = 1, y = 0, z = 0},
+    [2] = {x = 0, y = 0, z = -1}, [3] = {x = -1, y = 0, z = 0},
+}
+
+-- ── 7-segment display texture ──
+-- Each glyph is drawn as filled rects composited with [combine.  Segment rects
+-- (a,b,c,d,e,f,g) live in a 12×25 cell; colon/dot glyphs are 6 wide.
+local CLOCK_SEG = {
+    a = {3, 1, 6, 2}, b = {9, 2, 2, 9}, c = {9, 13, 2, 9}, d = {3, 22, 6, 2},
+    e = {1, 13, 2, 9}, f = {1, 2, 2, 9}, g = {3, 11, 6, 2},
+}
+local CLOCK_DIG = {
+    [0] = "abcdef", [1] = "bc", [2] = "abged", [3] = "abgcd", [4] = "fgbc",
+    [5] = "afgcd", [6] = "afgecd", [7] = "abc", [8] = "abcdefg", [9] = "abcdfg",
+}
+local CLOCK_W, CLOCK_H = 114, 25
+local CLOCK_LIT, CLOCK_OFF, CLOCK_BG = "#63d6e6", "#0d2a30", "#08171b"
+
+local function clock_fill(L, x, y, w, h, color)
+    L[#L + 1] = string.format("%d,%d=[fill\\:%dx%d\\:%s", x, y, w, h, color)
+end
+
+local function clock_glyph_digit(L, ox, dg)
+    local on = CLOCK_DIG[dg] or ""
+    for name, r in pairs(CLOCK_SEG) do
+        local lit = on:find(name) ~= nil
+        clock_fill(L, ox + r[1], r[2], r[3], r[4], lit and CLOCK_LIT or CLOCK_OFF)
+    end
+end
+
+local function clock_glyph_colon(L, ox)
+    clock_fill(L, ox + 2, 8, 3, 3, CLOCK_LIT)
+    clock_fill(L, ox + 2, 16, 3, 3, CLOCK_LIT)
+end
+
+local function clock_glyph_dot(L, ox)
+    clock_fill(L, ox + 2, 20, 3, 3, CLOCK_LIT)
+end
+
+-- total centiseconds → h,m,s,cs (hours capped at 99 for the 2-digit field)
+local function clock_split(totalcs)
+    totalcs = math.max(0, math.floor(totalcs))
+    local cs = totalcs % 100; local t = math.floor(totalcs / 100)
+    local s = t % 60; t = math.floor(t / 60)
+    local m = t % 60; local h = math.floor(t / 60)
+    if h > 99 then h = 99 end
+    return h, m, s, cs
+end
+
+local function clock_texture(totalcs)
+    local h, m, s, cs = clock_split(totalcs)
+    local L = {}
+    clock_fill(L, 0, 0, CLOCK_W, CLOCK_H, CLOCK_BG)
+    local x = 0
+    clock_glyph_digit(L, x, math.floor(h / 10)); x = x + 12
+    clock_glyph_digit(L, x, h % 10);             x = x + 12
+    clock_glyph_colon(L, x);                     x = x + 6
+    clock_glyph_digit(L, x, math.floor(m / 10)); x = x + 12
+    clock_glyph_digit(L, x, m % 10);             x = x + 12
+    clock_glyph_colon(L, x);                     x = x + 6
+    clock_glyph_digit(L, x, math.floor(s / 10)); x = x + 12
+    clock_glyph_digit(L, x, s % 10);             x = x + 12
+    clock_glyph_dot(L, x);                       x = x + 6
+    clock_glyph_digit(L, x, math.floor(cs / 10)); x = x + 12
+    clock_glyph_digit(L, x, cs % 10)
+    return "[combine:" .. CLOCK_W .. "x" .. CLOCK_H .. ":" .. table.concat(L, ":")
+end
+
+-- ── portal effect (reuses the gun4 carve machinery) ──
+-- Spec from a target cell + face: walls carve a 1×2 opening, floor/ceiling a
+-- 2×1 opening along X.  A grid-aligned wall opening is tried first; when the
+-- target wall is made of panel slabs the aligned footprint isn't carveable, so
+-- the gun's half-offset variants (ou/ov = 0.5, opening shifted half a cell)
+-- are probed as fallbacks — same pgun4_probe_ok gate as the gun (footprint
+-- carveable + space in front of the opening clear).
+-- Coordinates may carry a .5 fraction (half-block portal positions, wall
+-- portals only): the fraction becomes the spec's ou/ov offset directly.
+local function clock_portal_probe(x, y, z, face)
+    local f = CLOCK_FACE[face]
+    if not f then return nil end
+    local function split_half(v)
+        local b = math.floor(v)
+        return b, (v - b >= 0.25) and 0.5 or 0
+    end
+    if f.axis == 2 then
+        -- Floor/ceiling portals have no in-plane offsets: whole cells only.
+        local spec = {cx = math.floor(x + 0.5), cy = math.floor(y + 0.5),
+                      cz = math.floor(z + 0.5), axis = 2, ns = f.ns,
+                      w = 2, h = 1, ou = 0, ov = 0, rot = 3}
+        return pgun4_probe_ok(spec) and spec or nil
+    end
+    -- Wall: in-plane horizontal coord is X for axis 0, Z for axis 1; the
+    -- perpendicular coord has no half-cell meaning and is rounded.
+    local u0, uf = split_half((f.axis == 0) and x or z)
+    local y0, vf = split_half(y)
+    local wc = math.floor(((f.axis == 0) and z or x) + 0.5)
+    local function mk(uc, ou, vc, ov)
+        local spec = {cy = vc, axis = f.axis, ns = f.ns,
+                      w = PGUN4_W, h = PGUN4_H, ou = ou, ov = ov, rot = 0}
+        if f.axis == 0 then spec.cx, spec.cz = uc, wc
+        else spec.cx, spec.cz = wc, uc end
+        return spec
+    end
+    local cands
+    if uf ~= 0 or vf ~= 0 then
+        -- Explicit half-block position: carve exactly there, no fallbacks.
+        cands = {mk(u0, uf, y0, vf)}
+    else
+        -- Preference order: aligned, vertical half-offset (opening starting at
+        -- the target cell's mid, then half a cell below it), horizontal
+        -- half-offset, then both offsets (quarter-carved corner cells).
+        cands = {
+            mk(u0, 0, y0, 0),
+            mk(u0, 0, y0, 0.5),       mk(u0, 0, y0 - 1, 0.5),
+            mk(u0, 0.5, y0, 0),       mk(u0 - 1, 0.5, y0, 0),
+            mk(u0, 0.5, y0, 0.5),     mk(u0 - 1, 0.5, y0, 0.5),
+            mk(u0, 0.5, y0 - 1, 0.5), mk(u0 - 1, 0.5, y0 - 1, 0.5),
+        }
+    end
+    for _, spec in ipairs(cands) do
+        if pgun4_probe_ok(spec) then return spec end
+    end
+    return nil
+end
+
+local function clock_portal_remove(portal_name)
+    local pp = portals[portal_name]
+    if not pp then return end
+    local color = pp.color or "blue"
+    local bnode = "yaportal:portal_wallblock_" .. color
+    for i, c in ipairs(pgun4_cells(pp)) do
+        local nn = minetest.get_node(c.pos).name
+        if nn:sub(1, #bnode) == bnode then
+            minetest.set_node(c.pos,
+                {name = pp.saved and pp.saved[i] or PGUN4_WALL,
+                 param2 = pp.saved_p2 and pp.saved_p2[i] or 0})
+        end
+    end
+    local partner = pp.link
+    portals[portal_name] = nil
+    update_anchor(portal_name, nil)
+    if partner and portals[partner] then
+        portals[partner].link = nil
+        pgun4_apply_state(partner)
+    end
+end
+
+local function clock_portal_build(portal_name, color, spec)
+    local bnode = "yaportal:portal_wallblock_" .. color
+    local cells = pgun4_cells(spec)
+    local saved, saved_p2 = {}, {}
+    for i, c in ipairs(cells) do
+        local node = minetest.get_node(c.pos)
+        if not pgun4_cell_carveable(node, spec.axis, spec.ns, c.carve) then
+            return false
+        end
+        saved[i] = node.name
+        saved_p2[i] = node.param2
+    end
+    for i, c in ipairs(cells) do
+        minetest.set_node(c.pos,
+            {name = bnode .. pgun4_shell_mat(saved[i]) .. "_off", param2 = c.param2})
+    end
+    portals[portal_name] = {
+        cx = spec.cx, cy = spec.cy, cz = spec.cz,
+        axis = spec.axis, ns = spec.ns,
+        w = spec.w, h = spec.h, rot = spec.rot or 0,
+        ou = spec.ou or 0, ov = spec.ov or 0,
+        kind = "block", color = color,
+        node_name = bnode .. "_off", saved = saved, saved_p2 = saved_p2,
+    }
+    return true
+end
+
+-- Close (un-carve) this clock's portal pair, restoring the saved wall nodes.
+local function clock_portals_close(pos)
+    local bn, on = clock_portal_names(pos)
+    clock_portal_remove(bn)
+    clock_portal_remove(on)
+    save_portals()
+    sync_portals()
+end
+
+-- Fire the configured effect: carve the purple+yellow pair and link them.  Any
+-- previously spawned pair for this clock is removed first.  (Clock portals use
+-- their own frame colours so they read apart from the gun4 blue/orange pair.)
+local function clock_fire(pos, pname)
+    local meta = minetest.get_meta(pos)
+    local bn, on = clock_portal_names(pos)
+    clock_portal_remove(bn)
+    clock_portal_remove(on)
+
+    local bx, by, bz = meta:get_float("bx"), meta:get_float("by"), meta:get_float("bz")
+    local ox, oy, oz = meta:get_float("ox"), meta:get_float("oy"), meta:get_float("oz")
+    local bface = meta:get_string("bface")
+    local oface = meta:get_string("oface")
+    local bspec = bface ~= "" and clock_portal_probe(bx, by, bz, bface)
+    local ospec = oface ~= "" and clock_portal_probe(ox, oy, oz, oface)
+
+    local okb = bspec and clock_portal_build(bn, "purple", bspec)
+    local oko = ospec and clock_portal_build(on, "yellow", ospec)
+    if okb and oko then
+        portals[bn].link = on
+        portals[on].link = bn
+    end
+    if okb then pgun4_apply_state(bn); update_anchor(bn, portals[bn]) end
+    if oko then pgun4_apply_state(on); update_anchor(on, portals[on]) end
+    save_portals()
+    sync_portals()
+
+    -- Feedback: the "not carveable" cause is otherwise silent (mesecons trigger
+    -- has no player), so report to the caller when we have one (Fire-now button).
+    local function report(color, ok, x, y, z, face)
+        if face == "" then return end
+        if ok then
+            if pname then minetest.chat_send_player(pname, string.format(
+                "[clock] %s portal created at (%g,%g,%g) face %s", color, x, y, z, face)) end
+        else
+            local msg = string.format("[yaportal] clock %s portal: no room at " ..
+                "(%g,%g,%g) face %s — needs carveable wall (a wall opening is " ..
+                "1x2: that cell AND the one above it) with clear space in front",
+                color, x, y, z, face)
+            minetest.log("warning", msg)
+            if pname then minetest.chat_send_player(pname, msg) end
+        end
+    end
+    report("purple", okb, bx, by, bz, bface)
+    report("yellow", oko, ox, oy, oz, oface)
+    if okb and oko and pname then
+        minetest.chat_send_player(pname, "[clock] purple+yellow linked.")
+    end
+end
+
+-- ── display entity ──
+-- A thin cube sprite fixed to the clock face (yaw set from the block's facedir,
+-- NOT a billboard) so the digits stay parallel to the panel.  Owns the
+-- countdown runtime (self._remcs / self._running).  static_save=false:
+-- respawned + re-oriented by the LBM.
+local CLOCK_TRANSP = "[fill:1x1:#00000000"
+local function clock_faces(tex)
+    -- node/entity face order {+Y,-Y,+X,-X,+Z,-Z}: put the display on the +Z
+    -- (front) and -Z faces; the back copy is mirrored so it reads correctly.
+    return {CLOCK_TRANSP, CLOCK_TRANSP, CLOCK_TRANSP, CLOCK_TRANSP,
+            tex, tex .. "^[transformFX"}
+end
+minetest.register_entity("yaportal:clock_display", {
+    initial_properties = {
+        visual = "cube",
+        visual_size = {x = 2.0, y = 2.0 * CLOCK_H / CLOCK_W, z = 0.05},
+        textures = clock_faces(clock_texture(0)),
+        physical = false, collide_with_objects = false,
+        pointable = false, is_visible = true, static_save = false,
+        glow = 14,
+    },
+    on_activate = function(self)
+        self.object:set_armor_groups({immortal = 1})
+        self._acc, self._chk = 0, 0
+    end,
+    _refresh = function(self, totalcs)
+        local tex = clock_texture(totalcs)
+        if tex ~= self._lasttex then
+            self._lasttex = tex
+            self.object:set_properties({textures = clock_faces(tex)})
+        end
+    end,
+    on_step = function(self, dtime)
+        -- die if the owning node is gone
+        self._chk = self._chk + dtime
+        if self._chk >= 1.0 then
+            self._chk = 0
+            if self._pos and minetest.get_node(self._pos).name ~= "yaportal:clock" then
+                if self._chash then clocks_disp[self._chash] = nil end
+                self.object:remove()
+                return
+            end
+        end
+        if self._running then
+            self._remcs = (self._remcs or 0) - dtime * 100
+            if self._remcs <= 0 then
+                self._remcs = 0
+                self._running = false
+                self:_refresh(0)
+                if self._pos then clock_fire(self._pos) end
+                return
+            end
+            self._acc = self._acc + dtime
+            if self._acc >= 0.03 then
+                self._acc = 0
+                self:_refresh(self._remcs)
+            end
+            return
+        end
+        -- idle: show the configured countdown, refreshed lazily
+        self._acc = self._acc + dtime
+        if self._acc >= 0.25 and self._pos then
+            self._acc = 0
+            self:_refresh(minetest.get_meta(self._pos):get_int("cd_cs"))
+        end
+    end,
+})
+
+-- Display world position: centred across the 2 cells, just in front of the
+-- panel face (local z = -0.3), on the room side.
+local function clock_disp_pos(pos, p2)
+    local wd = DOOR_WDIR[p2] or DOOR_WDIR[0]
+    local fr = CLOCK_FRONT[p2] or CLOCK_FRONT[0]
+    return {x = pos.x + wd.x * 0.5 + fr.x * -0.27,
+            y = pos.y,
+            z = pos.z + wd.z * 0.5 + fr.z * -0.27}
+end
+
+local function clock_spawn_disp(pos)
+    local h = hashpos(pos)
+    local cur = clocks_disp[h]
+    if cur and cur:get_luaentity() then return cur end
+    local node = minetest.get_node(pos)
+    local p2   = node.param2 % 4
+    local obj  = minetest.add_entity(clock_disp_pos(pos, p2), "yaportal:clock_display")
+    if obj then
+        -- Fix yaw so the sprite's +Z face points along the block's front (N),
+        -- keeping the digits parallel to the panel instead of billboarding.
+        -- yaw_to_dir(θ) = (-sinθ, cosθ): +X front needs -π/2, -X front +π/2.
+        local yaw = ({[0] = 0, [1] = -math.pi / 2,
+                      [2] = math.pi, [3] = math.pi / 2})[p2] or 0
+        obj:set_rotation({x = 0, y = yaw, z = 0})
+        local ent = obj:get_luaentity()
+        if ent then
+            ent._pos = {x = pos.x, y = pos.y, z = pos.z}
+            ent._chash = h
+            ent:_refresh(minetest.get_meta(pos):get_int("cd_cs"))
+        end
+        clocks_disp[h] = obj
+    end
+    return obj
+end
+
+local function clock_start(pos)
+    local obj = clock_spawn_disp(pos)
+    local ent = obj and obj:get_luaentity()
+    if not ent then return end
+    ent._remcs = minetest.get_meta(pos):get_int("cd_cs")
+    ent._running = ent._remcs > 0
+    ent:_refresh(ent._remcs)
+end
+
+local function clock_stop(pos)
+    local obj = clocks_disp[hashpos(pos)]
+    local ent = obj and obj:get_luaentity()
+    if not ent then return end
+    ent._running = false
+    ent:_refresh(minetest.get_meta(pos):get_int("cd_cs"))
+end
+
+-- ── node geometry / registration ──
+local function clock_cells(pos, p2)
+    local wd = DOOR_WDIR[p2] or DOOR_WDIR[0]
+    return {{x = pos.x, y = pos.y, z = pos.z},
+            {x = pos.x + wd.x, y = pos.y, z = pos.z + wd.z}}
+end
+
+local clock_open_config  -- forward decl
+
+-- Left/body node box: extends toward the shared edge; right node mirrors it, so
+-- the pair reads as one ~1.7-wide, half-tall inset panel.
+-- Thin panel hugging the wall: back at local -Z (=-0.5, flush on the wall the
+-- clock is mounted on), front face at -0.3 (protrudes 0.2 into the room).
+local CLOCK_BOX_L = {-0.35, -0.25, -0.5, 0.5, 0.25, -0.3}
+local CLOCK_BOX_R = {-0.5, -0.25, -0.5, 0.35, 0.25, -0.3}
+local CLOCK_BODY  = "[fill:16x16:#20292c"
+local CLOCK_BEZEL = "[fill:16x16:#0a1519"
+
+local function clock_after_dig(pos, oldnode)
+    local p2 = oldnode.param2 % 4
+    local h  = hashpos(pos)
+    if clocks_disp[h] then
+        if clocks_disp[h]:get_luaentity() then clocks_disp[h]:remove() end
+        clocks_disp[h] = nil
+    end
+    local bn, on = clock_portal_names(pos)
+    clock_portal_remove(bn)
+    clock_portal_remove(on)
+    for _, c in ipairs(clock_cells(pos, p2)) do
+        if not (c.x == pos.x and c.z == pos.z)
+           and minetest.get_node(c).name == "yaportal:clock_r" then
+            minetest.remove_node(c)
+        end
+    end
+end
+
+local clock_base = {
+    drawtype = "nodebox",
+    paramtype = "light",
+    paramtype2 = "facedir",
+    sunlight_propagates = true,
+    is_ground_content = false,
+    light_source = 6,
+    tiles = {CLOCK_BODY, CLOCK_BODY, CLOCK_BODY, CLOCK_BODY, CLOCK_BEZEL, CLOCK_BEZEL},
+    sounds = block_sounds,
+    groups = {cracky = 2, oddly_breakable_by_hand = 1},
+}
+
+do
+    local left = table.copy(clock_base)
+    left.description = "Countdown Clock\n" ..
+        "2 wide x 1/2 tall.  Right-click to set the countdown and portal " ..
+        "effects; a mesecons signal or a linked trigger space starts the timer."
+    left.node_box = {type = "fixed", fixed = CLOCK_BOX_L}
+    left.selection_box = {type = "fixed", fixed = CLOCK_BOX_L}
+    left.drop = "yaportal:clock_item"
+    left.after_dig_node = clock_after_dig
+    left.on_rightclick = function(pos, node, clicker)
+        if not (clicker and clicker:is_player()) then return end
+        local pname = clicker:get_player_name()
+        if minetest.is_protected(pos, pname) then
+            minetest.record_protection_violation(pos, pname)
+            return
+        end
+        if clock_open_config then clock_open_config(clicker, pos) end
+    end
+    if HAVE_MESECON then
+        left.mesecons = {effector = {
+            action_on  = function(pos) clock_start(pos) end,
+            action_off = function(pos) clock_stop(pos) end,
+            rules = mesecon.rules.default,
+        }}
+    end
+    minetest.register_node("yaportal:clock", left)
+
+    local right = table.copy(clock_base)
+    right.description = "Countdown Clock (segment)"
+    right.node_box = {type = "fixed", fixed = CLOCK_BOX_R}
+    right.selection_box = {type = "fixed", fixed = CLOCK_BOX_R}
+    right.drop = ""   -- the item is dropped by after_dig below
+    right.groups = {cracky = 2, oddly_breakable_by_hand = 1,
+                    not_in_creative_inventory = 1}
+    right.after_dig_node = function(pos, oldnode)
+        -- digging the right half: remove the left half and drop one item
+        local wd = DOOR_WDIR[oldnode.param2 % 4]
+        local bl = {x = pos.x - wd.x, y = pos.y, z = pos.z - wd.z}
+        if minetest.get_node(bl).name == "yaportal:clock" then
+            minetest.remove_node(bl)
+            clock_after_dig(bl, {name = "yaportal:clock", param2 = oldnode.param2})
+        end
+        minetest.add_item(pos, "yaportal:clock_item")
+    end
+    minetest.register_node("yaportal:clock_r", right)
+end
+
+minetest.register_node("yaportal:clock_item", {
+    -- inventory item; on_place lays down the clock + clock_r pair
+    description = "Countdown Clock",
+    drawtype = "nodebox",
+    paramtype = "light",
+    paramtype2 = "facedir",
+    tiles = {CLOCK_BODY, CLOCK_BODY, CLOCK_BODY, CLOCK_BODY, CLOCK_BEZEL, CLOCK_BEZEL},
+    node_box = {type = "fixed", fixed = {-0.5, -0.25, -0.12, 0.5, 0.25, 0.12}},
+    groups = {not_in_creative_inventory = 0},
+    on_place = function(itemstack, placer, pointed)
+        if pointed.type ~= "node" then return itemstack end
+        local pname = placer and placer:is_player() and placer:get_player_name() or ""
+        if placer and not placer:get_player_control().sneak then
+            local un = minetest.get_node(pointed.under)
+            local ndef = minetest.registered_nodes[un.name]
+            if ndef and ndef.on_rightclick then
+                return ndef.on_rightclick(pointed.under, un, placer, itemstack, pointed)
+                    or itemstack
+            end
+        end
+        -- Wall-mount: the front (display) faces out of the clicked wall into
+        -- the room, so the panel sits flush against that wall; its width runs
+        -- horizontally along the wall.  A floor/ceiling click falls back to
+        -- facing the placer.
+        local nx = pointed.above.x - pointed.under.x
+        local nz = pointed.above.z - pointed.under.z
+        local p2
+        if nx ~= 0 or nz ~= 0 then
+            if nz > 0 then p2 = 0            -- front +Z
+            elseif nz < 0 then p2 = 2        -- front -Z
+            elseif nx > 0 then p2 = 1        -- front +X
+            else p2 = 3 end                  -- front -X
+        else
+            p2 = 0
+            if placer then
+                local ld = placer:get_look_dir()
+                if math.abs(ld.x) > math.abs(ld.z) then
+                    p2 = (ld.x > 0) and 3 or 1
+                else
+                    p2 = (ld.z > 0) and 2 or 0
+                end
+            end
+        end
+        local bl = pointed.above
+        local cells = clock_cells(bl, p2)
+        for _, c in ipairs(cells) do
+            local cdef = minetest.registered_nodes[minetest.get_node(c).name]
+            if not (cdef and cdef.buildable_to) then
+                minetest.chat_send_player(pname,
+                    "The clock needs a free 2-wide space.")
+                return itemstack
+            end
+            if minetest.is_protected(c, pname) then
+                minetest.record_protection_violation(c, pname)
+                return itemstack
+            end
+        end
+        minetest.set_node(cells[1], {name = "yaportal:clock", param2 = p2})
+        minetest.set_node(cells[2], {name = "yaportal:clock_r", param2 = p2})
+        clock_spawn_disp(cells[1])
+        if placer and not minetest.is_creative_enabled(pname) then
+            itemstack:take_item()
+        end
+        return itemstack
+    end,
+})
+
+minetest.register_lbm({
+    label = "Respawn countdown clock displays",
+    name = "yaportal:clock_disp",
+    nodenames = {"yaportal:clock"},
+    run_at_every_load = true,
+    action = function(pos) clock_spawn_disp(pos) end,
+})
+
+-- ── config menu ──
+local clock_ctx = {}  -- pname → {pos, [trigger sub-form: bindings, choices, sel]}
+
+clock_open_config = function(player, pos)
+    local pname = player:get_player_name()
+    local meta = minetest.get_meta(pos)
+    local h, m, s, cs = clock_split(meta:get_int("cd_cs"))
+    clock_ctx[pname] = {pos = {x = pos.x, y = pos.y, z = pos.z}}
+
+    local function fsel(cur)
+        for i, f in ipairs(CLOCK_FACES) do
+            if f == cur then return i end
+        end
+        return 1
+    end
+    local faces = table.concat(CLOCK_FACES, ",")
+    local bx, by, bz = meta:get_float("bx"), meta:get_float("by"), meta:get_float("bz")
+    local ox, oy, oz = meta:get_float("ox"), meta:get_float("oy"), meta:get_float("oz")
+    local bface = meta:get_string("bface"); if bface == "" then bface = "+Z" end
+    local oface = meta:get_string("oface"); if oface == "" then oface = "+Z" end
+
+    minetest.show_formspec(pname, "yaportal:clock_config",
+        "formspec_version[4]" ..
+        "size[11,9.2]" ..
+        "label[0.5,0.6;Countdown Clock]" ..
+        "label[0.5,1.2;Countdown  (H : M : S . CC)]" ..
+        "field[0.5,1.5;1.6,0.8;cd_h;;" .. h .. "]" ..
+        "field[2.3,1.5;1.6,0.8;cd_m;;" .. m .. "]" ..
+        "field[4.1,1.5;1.6,0.8;cd_s;;" .. s .. "]" ..
+        "field[5.9,1.5;1.6,0.8;cd_cs;;" .. cs .. "]" ..
+        "button[7.7,1.5;2.8,0.8;trig;Triggers...]" ..
+        "box[0.5,3.0;10,0.05;#4488aa]" ..
+        "label[0.5,3.4;Purple portal  (bottom cell X / Y / Z + face\\; .5 = half-block offset\\; target must be Portal Wall Block)]" ..
+        "field[0.5,3.7;2,0.8;bx;;" .. bx .. "]" ..
+        "field[2.7,3.7;2,0.8;by;;" .. by .. "]" ..
+        "field[4.9,3.7;2,0.8;bz;;" .. bz .. "]" ..
+        "dropdown[7.1,3.7;2,0.8;bface;" .. faces .. ";" .. fsel(bface) .. "]" ..
+        "label[0.5,5.0;Yellow portal  (bottom cell X / Y / Z + face\\; .5 = half-block offset\\; target must be Portal Wall Block)]" ..
+        "field[0.5,5.3;2,0.8;ox;;" .. ox .. "]" ..
+        "field[2.7,5.3;2,0.8;oy;;" .. oy .. "]" ..
+        "field[4.9,5.3;2,0.8;oz;;" .. oz .. "]" ..
+        "dropdown[7.1,5.3;2,0.8;oface;" .. faces .. ";" .. fsel(oface) .. "]" ..
+        "box[0.5,6.6;10,0.05;#4488aa]" ..
+        "button_exit[0.5,7.0;2.4,0.8;save;Save]" ..
+        "button[3.1,7.0;2.4,0.8;start;Start]" ..
+        "button[5.7,7.0;2.4,0.8;stop;Stop / Reset]" ..
+        "button[8.3,7.0;2.2,0.8;fire;Fire now]" ..
+        "button[0.5,8.0;3,0.8;close;Close portals]"
+    )
+end
+
+local function clock_field_int(fields, key, fallback)
+    local v = fields[key]
+    return v and math.floor(tonumber(v) or fallback) or fallback
+end
+
+-- Portal coordinates accept half-block positions: snap to the nearest 0.5.
+local function clock_field_coord(fields, key, fallback)
+    local v = tonumber(fields[key] or "")
+    if not v then return fallback end
+    return math.floor(v * 2 + 0.5) / 2
+end
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    if formname ~= "yaportal:clock_config" then return end
+    local pname = player:get_player_name()
+    local ctx   = clock_ctx[pname]
+    if not ctx then return end
+    local pos = ctx.pos
+    if minetest.is_protected(pos, pname) then clock_ctx[pname] = nil; return end
+    local meta = minetest.get_meta(pos)
+
+    -- Persist config on any submit that carries the fields (Save/Start/Fire).
+    if fields.save or fields.start or fields.fire then
+        local h  = math.max(0, clock_field_int(fields, "cd_h", 0))
+        local m  = math.max(0, clock_field_int(fields, "cd_m", 0))
+        local s  = math.max(0, clock_field_int(fields, "cd_s", 0))
+        local cs = math.max(0, clock_field_int(fields, "cd_cs", 0))
+        local total = ((h * 60 + m) * 60 + s) * 100 + cs
+        meta:set_int("cd_cs", total)
+
+        local function face(key)
+            local v = fields[key]
+            return (v and CLOCK_FACE[v]) and v or "+Z"
+        end
+        meta:set_float("bx", clock_field_coord(fields, "bx", 0))
+        meta:set_float("by", clock_field_coord(fields, "by", 0))
+        meta:set_float("bz", clock_field_coord(fields, "bz", 0))
+        meta:set_string("bface", face("bface"))
+        meta:set_float("ox", clock_field_coord(fields, "ox", 0))
+        meta:set_float("oy", clock_field_coord(fields, "oy", 0))
+        meta:set_float("oz", clock_field_coord(fields, "oz", 0))
+        meta:set_string("oface", face("oface"))
+        meta:set_string("infotext",
+            string.format("Countdown %02d:%02d:%02d.%02d", h, m, s, cs))
+        clock_stop(pos)  -- refresh idle display to the new value
+    end
+
+    if fields.trig then
+        if clock_trig_open then clock_trig_open(player, pos) end
+        return
+    end
+    if fields.start then clock_start(pos) end
+    if fields.stop then clock_stop(pos) end
+    if fields.fire then clock_fire(pos, pname) end
+    if fields.close then
+        clock_portals_close(pos)
+        minetest.chat_send_player(pname, "[clock] portals closed.")
+    end
+    if fields.quit or fields.save then clock_ctx[pname] = nil end
+end)
+
+-- ── trigger spaces ───────────────
+-- A wand defines named cuboid volumes ("trigger spaces") from two corner
+-- nodes.  A space holds no behaviour of its own: objects use spaces as
+-- activation triggers — an automatic door lists nearby spaces in its config
+-- next to the super buttons (activated while someone is inside), and a clock
+-- can start its countdown on space entry.  Punch a node to pick corners or to
+-- edit the space containing it; click into the air for the wand menu
+-- (outline visibility, cancel a pending corner, list/edit/delete spaces).
+--
+-- This section lives inside the clock closure on purpose: it needs
+-- clock_start / clocks_disp (closure locals), and the main chunk is at Lua's
+-- 200-local limit so nothing new can be exported through it.  Consumers
+-- outside the closure (door config + stepper) reach the registry through the
+-- yaportal.tspaces global API below.
+
+local spaces = {}          -- id → {id, name, min, max, occupied}
+local ts_next_id = 1
+local ts_visible = storage:get_int("ts_visible") == 1
+local ts_corner = {}       -- pname → first-corner node pos
+local ts_form_ctx = {}     -- pname → {id} (space form) | {ids, sel} (wand form)
+
+local function ts_save()
+    local list = {}
+    for _, sp in pairs(spaces) do
+        list[#list + 1] = {id = sp.id, name = sp.name,
+                           min = sp.min, max = sp.max}
+    end
+    storage:set_string("trigger_spaces", minetest.write_json(list))
+end
+
+do
+    local raw = storage:get_string("trigger_spaces")
+    local list = raw ~= "" and minetest.parse_json(raw)
+    if type(list) == "table" then
+        for _, sp in ipairs(list) do
+            if sp.id and sp.min and sp.max then
+                spaces[sp.id] = {id = sp.id, name = sp.name,
+                                 min = sp.min, max = sp.max}
+                if sp.id >= ts_next_id then ts_next_id = sp.id + 1 end
+            end
+        end
+    end
+end
+
+local function ts_center(sp)
+    return {x = (sp.min.x + sp.max.x) / 2, y = (sp.min.y + sp.max.y) / 2,
+            z = (sp.min.z + sp.max.z) / 2}
+end
+
+-- Point (e.g. player feet) inside the space's world box: node coords span
+-- their full cell, so the box extends 0.5 past the corner node centers.
+local function ts_contains(sp, p)
+    return p.x >= sp.min.x - 0.5 and p.x <= sp.max.x + 0.5
+       and p.y >= sp.min.y - 0.5 and p.y <= sp.max.y + 0.5
+       and p.z >= sp.min.z - 0.5 and p.z <= sp.max.z + 0.5
+end
+
+-- Public API for trigger consumers outside this closure (door config and
+-- stepper).  rawset/rawget bypass the engine's strict-mode global warning.
+do
+    local api = {
+        get = function(id) return spaces[id] end,
+        occupied = function(id)
+            local sp = spaces[id]
+            return sp ~= nil and sp.occupied == true
+        end,
+        -- Spaces within `r` of `center`, sorted by distance:
+        -- {id, name, center, d} each.
+        list_near = function(center, r)
+            local out = {}
+            for _, sp in pairs(spaces) do
+                local c = ts_center(sp)
+                local d = vector.distance(c, center)
+                if d <= r then
+                    out[#out + 1] = {id = sp.id, name = sp.name or "?",
+                                     center = c, d = d}
+                end
+            end
+            table.sort(out, function(a, b) return a.d < b.d end)
+            return out
+        end,
+    }
+    -- Trigger bindings: the shared {k = "button"|"space", pos|id} shape used
+    -- by doors and clocks.  active() = current level (pressed / occupied);
+    -- consumers derive edges themselves.
+    local trig = {
+        active = function(b)
+            if b.k == "button" and b.pos then
+                local sb = superbuttons[hashpos(b.pos)]
+                return sb ~= nil and sb.pressed == true
+            elseif b.k == "push" and b.pos then
+                local pb = pushbuttons[hashpos(b.pos)]
+                return pb ~= nil and pb.until_t ~= nil
+                   and minetest.get_us_time() < pb.until_t
+            elseif b.k == "space" and b.id then
+                local sp = spaces[b.id]
+                return sp ~= nil and sp.occupied == true
+            end
+            return false
+        end,
+        label = function(b)
+            if b.k == "button" and b.pos then
+                return string.format("Button (%d,%d,%d)",
+                    b.pos.x, b.pos.y, b.pos.z)
+            elseif b.k == "push" and b.pos then
+                return string.format("Push button (%d,%d,%d)",
+                    b.pos.x, b.pos.y, b.pos.z)
+            elseif b.k == "space" and b.id then
+                local sp = spaces[b.id]
+                return sp and ("Space '" .. (sp.name or "?") .. "'")
+                          or ("Space #" .. b.id .. " (deleted)")
+            end
+            return "?"
+        end,
+        -- Buttons and spaces within `r` of `center`, sorted by distance:
+        -- {k, pos|id, d, label} each — ready to become bindings.
+        list_near = function(center, r)
+            local out = {}
+            for _, sb in pairs(superbuttons) do
+                local c = {x = sb.pos.x + 0.5, y = sb.pos.y, z = sb.pos.z + 0.5}
+                local d = vector.distance(c, center)
+                if d <= r then
+                    out[#out + 1] = {k = "button", d = d,
+                        pos = {x = sb.pos.x, y = sb.pos.y, z = sb.pos.z},
+                        label = string.format("Button (%d,%d,%d) — %.1fm",
+                            sb.pos.x, sb.pos.y, sb.pos.z, d)}
+                end
+            end
+            for _, pb in pairs(pushbuttons) do
+                local d = vector.distance(pb.pos, center)
+                if d <= r then
+                    out[#out + 1] = {k = "push", d = d,
+                        pos = {x = pb.pos.x, y = pb.pos.y, z = pb.pos.z},
+                        label = string.format("Push button (%d,%d,%d) — %.1fm",
+                            pb.pos.x, pb.pos.y, pb.pos.z, d)}
+                end
+            end
+            for _, sp in pairs(spaces) do
+                local d = vector.distance(ts_center(sp), center)
+                if d <= r then
+                    out[#out + 1] = {k = "space", id = sp.id, d = d,
+                        label = string.format("Space '%s' — %.1fm",
+                            sp.name or "?", d)}
+                end
+            end
+            table.sort(out, function(a, b) return a.d < b.d end)
+            return out
+        end,
+    }
+    local ns = rawget(_G, "yaportal") or {}
+    ns.tspaces = api
+    ns.triggers = trig
+    rawset(_G, "yaportal", ns)
+end
+
+-- Smallest space whose box contains the node — punching a node inside nested
+-- spaces edits the most specific one.
+local function ts_find_at(npos)
+    local best, bestvol
+    for _, sp in pairs(spaces) do
+        if npos.x >= sp.min.x and npos.x <= sp.max.x
+           and npos.y >= sp.min.y and npos.y <= sp.max.y
+           and npos.z >= sp.min.z and npos.z <= sp.max.z then
+            local vol = (sp.max.x - sp.min.x + 1) * (sp.max.y - sp.min.y + 1)
+                      * (sp.max.z - sp.min.z + 1)
+            if not best or vol < bestvol then best, bestvol = sp, vol end
+        end
+    end
+    return best
+end
+
+-- ── outline particles ──
+local function ts_box_particles(minp, maxp, color, pstep)
+    local lo = {x = minp.x - 0.5, y = minp.y - 0.5, z = minp.z - 0.5}
+    local hi = {x = maxp.x + 0.5, y = maxp.y + 0.5, z = maxp.z + 0.5}
+    local function line(from, axis, len)
+        local n = math.max(1, math.ceil(len / pstep))
+        for i = 0, n do
+            local p = {x = from.x, y = from.y, z = from.z}
+            p[axis] = p[axis] + len * i / n
+            minetest.add_particle({
+                pos = p, expirationtime = 1.2, size = 1.5,
+                texture = "[fill:8x8:" .. color, glow = 14,
+            })
+        end
+    end
+    for _, y in ipairs({lo.y, hi.y}) do
+        for _, z in ipairs({lo.z, hi.z}) do
+            line({x = lo.x, y = y, z = z}, "x", hi.x - lo.x)
+        end
+        for _, x in ipairs({lo.x, hi.x}) do
+            line({x = x, y = y, z = lo.z}, "z", hi.z - lo.z)
+        end
+    end
+    for _, x in ipairs({lo.x, hi.x}) do
+        for _, z in ipairs({lo.z, hi.z}) do
+            line({x = x, y = lo.y, z = z}, "y", hi.y - lo.y)
+        end
+    end
+end
+
+local function ts_player_near(center, dist)
+    for _, pl in ipairs(minetest.get_connected_players()) do
+        if vector.distance(pl:get_pos(), center) <= dist then return true end
+    end
+    return false
+end
+
+local function ts_draw_outlines()
+    if ts_visible then
+        for _, sp in pairs(spaces) do
+            local c = ts_center(sp)
+            if ts_player_near(c, 96) then
+                local maxdim = math.max(sp.max.x - sp.min.x,
+                                        sp.max.y - sp.min.y,
+                                        sp.max.z - sp.min.z) + 1
+                local pstep = math.max(0.75, maxdim / 24)
+                ts_box_particles(sp.min, sp.max,
+                    sp.occupied and "#ff5533" or "#00ff88", pstep)
+            end
+        end
+    end
+    -- Pending first corners always show, so the builder can see the pick.
+    for _, c in pairs(ts_corner) do
+        ts_box_particles(c, c, "#ffaa00", 0.5)
+    end
+end
+
+-- ── formspecs ──
+local function ts_open_space_form(player, sp)
+    local pname = player:get_player_name()
+    ts_form_ctx[pname] = {id = sp.id}
+    minetest.show_formspec(pname, "yaportal:ts_space",
+        "formspec_version[4]" ..
+        "size[10,5.4]" ..
+        "label[0.5,0.6;Trigger Space]" ..
+        "label[0.5,1.15;" .. minetest.formspec_escape(string.format(
+            "From (%d,%d,%d) to (%d,%d,%d)",
+            sp.min.x, sp.min.y, sp.min.z, sp.max.x, sp.max.y, sp.max.z)) .. "]" ..
+        "field[0.5,1.8;9,0.8;sp_name;Name;" ..
+            minetest.formspec_escape(sp.name or "") .. "]" ..
+        "label[0.5,3.2;Link it from an object's config (door\\, clock): the]" ..
+        "label[0.5,3.6;space appears there as a trigger\\, like a button.]" ..
+        "button_exit[0.5,4.2;3.5,0.8;save_sp;Save]" ..
+        "button_exit[4.5,4.2;4,0.8;delete_sp;Delete space]"
+    )
+end
+
+local function ts_open_wand_form(player)
+    local pname = player:get_player_name()
+    local ids, rows = {}, {}
+    for id, sp in pairs(spaces) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+        local sp = spaces[id]
+        rows[#rows + 1] = minetest.formspec_escape(string.format(
+            "%s  (%d,%d,%d)..(%d,%d,%d)", sp.name or "?",
+            sp.min.x, sp.min.y, sp.min.z, sp.max.x, sp.max.y, sp.max.z))
+    end
+    local ctx = ts_form_ctx[pname]
+    local sel = (ctx and ctx.ids and ctx.sel) or 1
+    if sel > #ids then sel = #ids end
+    ts_form_ctx[pname] = {ids = ids, sel = sel}
+
+    local pending = ts_corner[pname]
+    local fs =
+        "formspec_version[4]" ..
+        "size[11,8.6]" ..
+        "label[0.5,0.6;Trigger Spaces]" ..
+        "checkbox[0.5,1.3;ts_show;Show space outlines;" ..
+            (ts_visible and "true" or "false") .. "]"
+    if pending then
+        fs = fs ..
+            "label[0.5,2.0;" .. minetest.formspec_escape(string.format(
+                "Creating: first corner at (%d,%d,%d) — punch the opposite corner",
+                pending.x, pending.y, pending.z)) .. "]" ..
+            "button[0.5,2.35;4.5,0.7;ts_cancel;Cancel space creation]"
+    else
+        fs = fs .. "label[0.5,2.2;Punch two corner nodes to create a space.]"
+    end
+    fs = fs ..
+        "label[0.5,3.4;Spaces:]" ..
+        "textlist[0.5,3.7;10,3.2;ts_list;" ..
+            (#rows > 0 and table.concat(rows, ",") or "") .. ";" ..
+            math.max(sel, 1) .. ";false]" ..
+        "button[0.5,7.3;3,0.8;ts_edit;Edit selected]" ..
+        "button[3.8,7.3;3,0.8;ts_delete;Delete selected]" ..
+        "button_exit[7.5,7.3;3,0.8;ts_close;Close]"
+    minetest.show_formspec(pname, "yaportal:ts_wand", fs)
+end
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    local pname = player:get_player_name()
+
+    if formname == "yaportal:ts_space" then
+        local ctx = ts_form_ctx[pname]
+        if not ctx or not ctx.id then return end
+        local sp = spaces[ctx.id]
+        if not sp then ts_form_ctx[pname] = nil; return end
+
+        if fields.delete_sp then
+            spaces[ctx.id] = nil
+            ts_save()
+            minetest.chat_send_player(pname,
+                "[wand] space '" .. (sp.name or "?") .. "' deleted.")
+            ts_form_ctx[pname] = nil
+            return
+        end
+        if fields.save_sp then
+            if fields.sp_name and fields.sp_name ~= "" then
+                sp.name = fields.sp_name
+            end
+            ts_save()
+            minetest.chat_send_player(pname,
+                "[wand] space '" .. sp.name .. "' saved.")
+            ts_form_ctx[pname] = nil
+            return
+        end
+        if fields.quit then ts_form_ctx[pname] = nil end
+        return
+    end
+
+    if formname ~= "yaportal:ts_wand" then return end
+    local ctx = ts_form_ctx[pname]
+
+    if fields.ts_show ~= nil then
+        ts_visible = (fields.ts_show == "true")
+        storage:set_int("ts_visible", ts_visible and 1 or 0)
+    end
+    if fields.ts_cancel then
+        ts_corner[pname] = nil
+        ts_open_wand_form(player)
+        return
+    end
+    if fields.ts_list and ctx then
+        local ev = minetest.explode_textlist_event(fields.ts_list)
+        if ev.type == "CHG" or ev.type == "DCL" then
+            ctx.sel = ev.index
+            if ev.type == "DCL" then
+                local sp = ctx.ids and spaces[ctx.ids[ev.index]]
+                if sp then ts_open_space_form(player, sp) end
+                return
+            end
+        end
+    end
+    if fields.ts_edit and ctx and ctx.ids then
+        local sp = spaces[ctx.ids[ctx.sel or 1]]
+        if sp then ts_open_space_form(player, sp) end
+        return
+    end
+    if fields.ts_delete and ctx and ctx.ids then
+        local id = ctx.ids[ctx.sel or 1]
+        if id and spaces[id] then
+            minetest.chat_send_player(pname,
+                "[wand] space '" .. (spaces[id].name or "?") .. "' deleted.")
+            spaces[id] = nil
+            ts_save()
+        end
+        ts_open_wand_form(player)
+        return
+    end
+    if fields.quit or fields.ts_close then
+        ts_form_ctx[pname] = nil
+    end
+end)
+
+-- ── wand tool ──
+local function ts_punch_node(player, npos)
+    local pname = player:get_player_name()
+    local c1 = ts_corner[pname]
+    if c1 then
+        ts_corner[pname] = nil
+        local sp = {
+            id = ts_next_id,
+            name = "Space " .. ts_next_id,
+            min = {x = math.min(c1.x, npos.x), y = math.min(c1.y, npos.y),
+                   z = math.min(c1.z, npos.z)},
+            max = {x = math.max(c1.x, npos.x), y = math.max(c1.y, npos.y),
+                   z = math.max(c1.z, npos.z)},
+        }
+        ts_next_id = ts_next_id + 1
+        spaces[sp.id] = sp
+        ts_save()
+        ts_open_space_form(player, sp)
+        return
+    end
+    -- No pending corner: a punch inside an existing space edits it; sneak
+    -- forces corner picking (to start a space nested in another).
+    local sp = not player:get_player_control().sneak and ts_find_at(npos)
+    if sp then
+        ts_open_space_form(player, sp)
+        return
+    end
+    ts_corner[pname] = {x = npos.x, y = npos.y, z = npos.z}
+    ts_box_particles(npos, npos, "#ffaa00", 0.5)
+    minetest.chat_send_player(pname, string.format(
+        "[wand] first corner (%d,%d,%d) — punch the opposite corner.",
+        npos.x, npos.y, npos.z))
+end
+
+minetest.register_tool("yaportal:trigger_wand", {
+    description = "Trigger Space Wand\n" ..
+        "Punch two nodes to define a named cuboid trigger space.  Objects " ..
+        "use spaces like buttons: a door or clock config lists nearby " ..
+        "spaces as activation triggers.\n" ..
+        "Punch a node inside a space to edit it (sneak-punch to start a new " ..
+        "corner instead); click into the air for the menu (outlines, cancel, " ..
+        "space list).",
+    inventory_image = "yaportal_gun.png^[colorize:#ffcc00:140",
+    range = 20,
+    on_use = function(itemstack, user, pointed)
+        if not (user and user:is_player()) then return itemstack end
+        if pointed and pointed.type == "node" then
+            ts_punch_node(user, pointed.under)
+        elseif not pointed or pointed.type == "nothing" then
+            ts_open_wand_form(user)
+        end
+        return itemstack
+    end,
+    on_secondary_use = function(itemstack, user)
+        if user and user:is_player() then ts_open_wand_form(user) end
+        return itemstack
+    end,
+    on_place = function(itemstack, placer, pointed)
+        if placer and placer:is_player() then ts_open_wand_form(placer) end
+        return itemstack
+    end,
+})
+
+-- ── clock trigger bindings ──
+-- Meta "triggers" (JSON list of {k, pos|id, m = "start"|"stop"|"close"}):
+-- each fires on its trigger's rising edge — start begins the countdown (if
+-- idle), stop resets it, close removes the clock's carved portal pair.
+-- Legacy single-space meta "tspace" is migrated on read.
+local function clock_read_trig(pos)
+    local meta = minetest.get_meta(pos)
+    local out = {}
+    local raw  = meta:get_string("triggers")
+    local list = raw ~= "" and minetest.parse_json(raw)
+    if type(list) == "table" then
+        for _, b in ipairs(list) do
+            local m = (b.m == "stop" or b.m == "close") and b.m or "start"
+            if (b.k == "button" or b.k == "push") and b.pos then
+                out[#out + 1] = {k = b.k, m = m,
+                    pos = {x = b.pos.x, y = b.pos.y, z = b.pos.z}}
+            elseif b.k == "space" and b.id then
+                out[#out + 1] = {k = "space", m = m, id = b.id}
+            end
+        end
+    elseif meta:get_int("tspace") > 0 then
+        out[1] = {k = "space", m = "start", id = meta:get_int("tspace")}
+    end
+    return out
+end
+
+local function clock_write_trig(pos, bindings)
+    local meta = minetest.get_meta(pos)
+    local list = {}
+    for _, b in ipairs(bindings or {}) do
+        list[#list + 1] = {k = b.k, m = b.m, pos = b.pos, id = b.id}
+    end
+    meta:set_string("triggers", #list > 0 and minetest.write_json(list) or "")
+    meta:set_int("tspace", 0)  -- clear the legacy slot
+end
+
+-- Trigger sub-form for the clock config ("Triggers..." button): same list UI
+-- as the door's, with start/stop modes.
+local CLOCK_TRIG_MODES  = {"start", "stop", "close"}
+local CLOCK_TRIG_LABELS = {"Start countdown", "Stop countdown", "Close portals"}
+
+local function clock_trig_show(pname)
+    local ctx = clock_ctx[pname]
+    if not (ctx and ctx.bindings) then return end
+    local T = yaportal.triggers
+    local rows = {}
+    for _, b in ipairs(ctx.bindings) do
+        rows[#rows + 1] = minetest.formspec_escape(T.label(b) .. " — " .. b.m)
+    end
+    local add_items = {"— add trigger —"}
+    for _, c in ipairs(ctx.choices) do
+        add_items[#add_items + 1] = minetest.formspec_escape(c.label)
+    end
+    minetest.show_formspec(pname, "yaportal:clock_trig",
+        "formspec_version[4]" ..
+        "size[10,7.4]" ..
+        "label[0.5,0.6;Clock Triggers  (fire on activation edge)]" ..
+        "textlist[0.5,1.0;9,2.2;trig_list;" ..
+            table.concat(rows, ",") .. ";" .. (ctx.sel or 1) .. ";false]" ..
+        "button[0.5,3.35;3,0.7;remove_trig;Remove selected]" ..
+        "dropdown[0.5,4.4;5.1,0.8;trig_new;" ..
+            table.concat(add_items, ",") .. ";1;true]" ..
+        "dropdown[5.8,4.4;2.6,0.8;trig_mode;" ..
+            table.concat(CLOCK_TRIG_LABELS, ",") .. ";1;true]" ..
+        "button[8.6,4.4;0.9,0.8;add_trig;+]" ..
+        "button[0.5,6.1;3.5,0.8;save_trig;Save]" ..
+        "button[4.5,6.1;3,0.8;back;Back]"
+    )
+end
+
+clock_trig_open = function(player, pos)
+    local pname = player:get_player_name()
+    clock_ctx[pname] = {
+        pos = {x = pos.x, y = pos.y, z = pos.z},
+        bindings = clock_read_trig(pos), sel = 1,
+        choices = yaportal.triggers.list_near(pos, 48),
+    }
+    clock_trig_show(pname)
+end
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    if formname ~= "yaportal:clock_trig" then return end
+    local pname = player:get_player_name()
+    local ctx = clock_ctx[pname]
+    if not (ctx and ctx.bindings) then return end
+    local pos = ctx.pos
+    if minetest.is_protected(pos, pname) then clock_ctx[pname] = nil; return end
+
+    if fields.trig_list then
+        local ev = minetest.explode_textlist_event(fields.trig_list)
+        if ev.type == "CHG" or ev.type == "DCL" then ctx.sel = ev.index end
+    end
+    if fields.add_trig then
+        local idx  = tonumber(fields.trig_new or "1") or 1
+        local midx = tonumber(fields.trig_mode or "1") or 1
+        local c = (idx >= 2) and ctx.choices[idx - 1]
+        if c then
+            ctx.bindings[#ctx.bindings + 1] =
+                {k = c.k, m = CLOCK_TRIG_MODES[midx] or "start",
+                 pos = c.pos, id = c.id}
+            ctx.sel = #ctx.bindings
+        end
+        clock_trig_show(pname)
+        return
+    end
+    if fields.remove_trig then
+        if ctx.bindings[ctx.sel or 0] then
+            table.remove(ctx.bindings, ctx.sel)
+            if ctx.sel > #ctx.bindings then ctx.sel = math.max(#ctx.bindings, 1) end
+        end
+        clock_trig_show(pname)
+        return
+    end
+    if fields.save_trig or fields.back then
+        if fields.save_trig then clock_write_trig(pos, ctx.bindings) end
+        -- Return to the main clock config either way.
+        clock_open_config(player, pos)
+        return
+    end
+    if fields.quit then clock_ctx[pname] = nil end
+end)
+
+-- ── trigger stepper ──
+-- 0.2s: occupancy update (doors poll it through yaportal.triggers.active in
+-- the combined stepper), then clock bindings: each fires on its rising edge —
+-- start begins the countdown if idle, stop resets it.  Parsed bindings are
+-- cached on the display entity, invalidated when the meta string changes.
+local ts_step_accum, ts_viz_accum = 0, 0
+
+minetest.register_globalstep(function(dtime)
+    ts_step_accum = ts_step_accum + dtime
+    if ts_step_accum >= 0.2 then
+        ts_step_accum = 0
+        local players = minetest.get_connected_players()
+        for _, sp in pairs(spaces) do
+            sp.occupied = false
+            for _, pl in ipairs(players) do
+                if ts_contains(sp, pl:get_pos()) then
+                    sp.occupied = true
+                    break
+                end
+            end
+        end
+        local T = yaportal.triggers
+        for _, obj in pairs(clocks_disp) do
+            local ent = obj:get_luaentity()
+            if ent and ent._pos then
+                local meta = minetest.get_meta(ent._pos)
+                local key = meta:get_string("triggers")
+                    .. "|" .. meta:get_int("tspace")
+                if key ~= ent._trig_key then
+                    ent._trig_key = key
+                    ent._trig = clock_read_trig(ent._pos)
+                end
+                for _, b in ipairs(ent._trig or {}) do
+                    local act = T.active(b)
+                    if act and not b.prev then
+                        if b.m == "start" then
+                            if not ent._running then clock_start(ent._pos) end
+                        elseif b.m == "close" then
+                            clock_portals_close(ent._pos)
+                        else
+                            clock_stop(ent._pos)
+                        end
+                    end
+                    b.prev = act
+                end
+            end
+        end
+    end
+
+    ts_viz_accum = ts_viz_accum + dtime
+    if ts_viz_accum >= 1.0 then
+        ts_viz_accum = 0
+        if ts_visible or next(ts_corner) then ts_draw_outlines() end
+    end
+end)
+
+minetest.register_on_leaveplayer(function(player)
+    local pname = player:get_player_name()
+    ts_corner[pname] = nil
+    ts_form_ctx[pname] = nil
+end)
+
+end)()  -- end clock closure
 
 -- ── combined stepper ─────────────
 -- tier 0 (every step): carried-cube positioning; tier 1 (0.2s): button and
@@ -4331,13 +6152,28 @@ minetest.register_globalstep(function(dtime)
                 local wd = DOOR_WDIR[e.p2]
                 local center = {x = e.pos.x + wd.x * 0.5, y = e.pos.y + 0.5,
                                 z = e.pos.z + wd.z * 0.5}
-                -- Resolve activation: an explicitly linked button, else the
-                -- auto rule (a super button within 8 while pressed, otherwise
-                -- proximity).  A mesecons signal always counts as activation.
+                -- Resolve activation from the trigger bindings: "hold" ones
+                -- activate while their trigger is active; "open"/"close" ones
+                -- set/clear a latch on the trigger's rising edge (a door can
+                -- open on space entry yet close only from a button).  With no
+                -- bindings the auto rule applies (a super button within 8
+                -- while pressed, otherwise proximity).  Mesecons always
+                -- counts as activation.
                 local activated = e.powered
-                if e.button then
-                    local b = superbuttons[e.button]
-                    if b and b.pressed then activated = true end
+                if e.bindings and #e.bindings > 0 then
+                    local T = rawget(_G, "yaportal") and yaportal.triggers
+                    if T then
+                        for _, b in ipairs(e.bindings) do
+                            local act = T.active(b)
+                            if b.m == "hold" then
+                                if act then activated = true end
+                            elseif act and not b.prev then
+                                e.latch = (b.m == "open")
+                            end
+                            b.prev = act
+                        end
+                    end
+                    if e.latch then activated = true end
                 else
                     local controlled = false
                     for _, b in pairs(superbuttons) do
@@ -4356,8 +6192,14 @@ minetest.register_globalstep(function(dtime)
                         end
                     end
                 end
-                -- Normally-open doors invert: activation closes them.
-                local want = (activated ~= (e.normally_open == true))
+                -- Manual override from the config form wins; otherwise
+                -- normally-open doors invert: activation closes them.
+                local want
+                if e.forced ~= nil then
+                    want = e.forced
+                else
+                    want = (activated ~= (e.normally_open == true))
+                end
                 if want ~= e.open then
                     door_set(e, want)
                     door_sound(center, want)
@@ -4372,26 +6214,270 @@ minetest.register_globalstep(function(dtime)
         for h, d in pairs(dispensers) do
             if minetest.get_node(d.pos).name ~= "yaportal:dispenser" then
                 dispensers[h] = nil
+            elseif d.enabled == false then
+                d.empty_ticks = 0  -- consistent delay on re-enable
             else
+                local maxd = d.max_dist or 16
+                -- A home cube within max_dist counts as alive (and refreshes
+                -- the tracked ref); one that strayed past the limit is
+                -- destroyed and respawns via the lost-cube path below.
                 local found = false
-                for _, obj in ipairs(minetest.get_objects_inside_radius(d.pos, 16)) do
+                for _, obj in ipairs(minetest.get_objects_inside_radius(
+                        d.pos, maxd + 16)) do
                     local ent = obj:get_luaentity()
                     if ent and ent.name == CUBE_ENTITY and ent._home == h then
-                        found = true
-                        break
+                        if vector.distance(obj:get_pos(), d.pos) <= maxd then
+                            found = true
+                            d.cube = obj
+                        else
+                            cube_fizzle(obj)
+                        end
+                    end
+                end
+                -- Tracked ref may reach a loaded cube beyond the scan radius
+                -- (active near another player): apply the limit there too.
+                if not found and d.cube then
+                    local cp = d.cube:get_pos()
+                    if cp and vector.distance(cp, d.pos) > maxd then
+                        cube_fizzle(d.cube)
                     end
                 end
                 if found then
                     d.empty_ticks = 0
                 else
-                    -- Accepted edge case: a home cube beyond 16 nodes (walked
-                    -- off, portal-teleported) or in an unloaded mapblock counts
-                    -- as lost and gets replaced — a duplicate may appear.
+                    -- Accepted edge case: a home cube in an unloaded mapblock
+                    -- counts as lost and gets replaced — a duplicate may
+                    -- appear (the scan destroys it once it reloads nearby).
                     d.empty_ticks = d.empty_ticks + 1
                     if d.empty_ticks >= 2 then  -- ~4s, Portal-like delay
                         if dispense(d.pos, h) then d.empty_ticks = 0 end
                     end
                 end
+            end
+        end
+    end
+end)
+
+-- ── portal gun pedestal ─────────────
+-- 2x2 stand holding a portal gun on display (Portal-1 style).  Right-click
+-- with a gun to put it on the pedestal; a player walking up to it receives
+-- the gun.  Pickup is edge-triggered on entering the radius, so whoever just
+-- stored a gun does not instantly grab it back.  Same corner scheme as the
+-- super button (facedir param2 = corner id, anchor = min X/Z quarter); the
+-- "gun" meta lives on the anchor node.
+
+local pedestals = {}  -- hash(anchor) → {pos = anchor, inside = {pname = true}}
+
+local PEDESTAL_GUNS = {
+    ["yaportal:portal_gun"]  = true,
+    ["yaportal:portal_gun3"] = true,
+    ["yaportal:portal_gun4"] = true,
+    ["yaportal:pocket_gun"]  = true,
+}
+local PEDESTAL_RADIUS = 1.9  -- from the 2x2 center, per horizontal axis
+
+local function pedestal_display_pos(anchor)
+    return {x = anchor.x + 0.5, y = anchor.y + 0.75, z = anchor.z + 0.5}
+end
+
+minetest.register_entity("yaportal:pedestal_gun", {
+    initial_properties = {
+        visual = "wielditem",
+        wield_item = "yaportal:portal_gun4",
+        visual_size = {x = 0.30, y = 0.30},
+        physical = false,
+        pointable = false,
+        static_save = false,      -- LBM respawns it on mapblock load
+        automatic_rotate = 1.2,
+        glow = 4,
+    },
+    on_activate = function(self)
+        self.object:set_armor_groups({immortal = 1})
+    end,
+})
+
+local function pedestal_find_display(anchor)
+    local dp = pedestal_display_pos(anchor)
+    for _, obj in ipairs(minetest.get_objects_inside_radius(dp, 0.5)) do
+        local ent = obj:get_luaentity()
+        if ent and ent.name == "yaportal:pedestal_gun" then return obj end
+    end
+end
+
+local function pedestal_update_display(anchor)
+    local gun = minetest.get_meta(anchor):get_string("gun")
+    local obj = pedestal_find_display(anchor)
+    if gun == "" then
+        if obj then obj:remove() end
+        return
+    end
+    if not obj then
+        obj = minetest.add_entity(pedestal_display_pos(anchor),
+            "yaportal:pedestal_gun")
+    end
+    if obj then
+        obj:set_properties({wield_item = ItemStack(gun):get_name()})
+    end
+end
+
+local function pedestal_rightclick(pos, node, clicker, itemstack)
+    if not (clicker and clicker:is_player()) then return itemstack end
+    local anchor = button_anchor(pos, node.param2)
+    local meta = minetest.get_meta(anchor)
+    if meta:get_string("gun") ~= "" then return itemstack end
+    if not PEDESTAL_GUNS[itemstack:get_name()] then return itemstack end
+    local one = itemstack:take_item(1)
+    meta:set_string("gun", one:to_string())
+    local entry = pedestals[hashpos(anchor)]
+    if entry then entry.inside[clicker:get_player_name()] = true end
+    pedestal_update_display(anchor)
+    return itemstack
+end
+
+local function pedestal_place(itemstack, placer, pointed)
+    if pointed.type ~= "node" then return itemstack end
+    local pname = placer and placer:is_player() and placer:get_player_name() or ""
+    local un = minetest.get_node(pointed.under)
+    if placer and not placer:get_player_control().sneak then
+        local ndef = minetest.registered_nodes[un.name]
+        if ndef and ndef.on_rightclick then
+            return ndef.on_rightclick(pointed.under, un, placer, itemstack,
+                pointed) or itemstack
+        end
+    end
+    local anchor = pointed.above
+    for dx = 0, 1 do
+        for dz = 0, 1 do
+            local cell = {x = anchor.x + dx, y = anchor.y, z = anchor.z + dz}
+            local cdef = minetest.registered_nodes[minetest.get_node(cell).name]
+            local below = {x = cell.x, y = cell.y - 1, z = cell.z}
+            local bdef = minetest.registered_nodes[minetest.get_node(below).name]
+            if not (cdef and cdef.buildable_to) or not (bdef and bdef.walkable) then
+                minetest.chat_send_player(pname,
+                    "The pedestal needs a free 2x2 area on solid ground " ..
+                    "(expands +X/+Z from the clicked cell).")
+                return itemstack
+            end
+            if minetest.is_protected(cell, pname) then
+                minetest.record_protection_violation(cell, pname)
+                return itemstack
+            end
+        end
+    end
+    for _, q in ipairs(button_quarters(anchor)) do
+        minetest.set_node(q.pos, {name = "yaportal:pedestal", param2 = q.param2})
+    end
+    pedestals[hashpos(anchor)] =
+        {pos = {x = anchor.x, y = anchor.y, z = anchor.z}, inside = {}}
+    if placer and not minetest.is_creative_enabled(pname) then
+        itemstack:take_item()
+    end
+    return itemstack
+end
+
+local function pedestal_after_dig(pos, oldnode, oldmetadata)
+    local anchor = button_anchor(pos, oldnode.param2)
+    pedestals[hashpos(anchor)] = nil
+    local obj = pedestal_find_display(anchor)
+    if obj then obj:remove() end
+    -- Read the stored gun before removing the other quarters (removing the
+    -- anchor wipes its meta); the dug node's own meta arrives in oldmetadata.
+    local gun
+    if pos.x == anchor.x and pos.z == anchor.z then
+        gun = oldmetadata and oldmetadata.fields and oldmetadata.fields.gun
+    else
+        gun = minetest.get_meta(anchor):get_string("gun")
+    end
+    for _, q in ipairs(button_quarters(anchor)) do
+        if not (q.pos.x == pos.x and q.pos.y == pos.y and q.pos.z == pos.z) then
+            if minetest.get_node(q.pos).name == "yaportal:pedestal" then
+                minetest.remove_node(q.pos)
+            end
+        end
+    end
+    if gun and gun ~= "" then
+        minetest.add_item(pedestal_display_pos(anchor), gun)
+    end
+end
+
+do
+    -- Quarter boxes for corner param2 = 0 (anchor, min X/Z): geometry leans
+    -- toward the 2x2 center at the node's +X/+Z corner; facedir rotates the
+    -- other three corners (same convention as the super button caps).
+    local quarter = {
+        {-0.5,   -0.5,    -0.5,   0.5, -0.3125, 0.5},  -- base slab (full 2x2)
+        { 0.25,  -0.3125,  0.25,  0.5,  0.125,  0.5},  -- column
+        {-0.125,  0.125,  -0.125, 0.5,  0.3125, 0.5},  -- head
+    }
+    minetest.register_node("yaportal:pedestal", {
+        description = "Portal Gun Pedestal\n" ..
+            "2x2 stand (expands +X/+Z from the clicked cell). Right-click " ..
+            "with a portal gun to put it on display; walking up to the " ..
+            "pedestal hands the gun to the player",
+        drawtype = "nodebox",
+        paramtype = "light",
+        paramtype2 = "facedir",
+        sunlight_propagates = true,
+        is_ground_content = false,
+        tiles = {"[fill:16x16:#d6d6da", "[fill:16x16:#87878d",
+                 "[fill:16x16:#b4b4ba^[fill:16x3:0,13:#87878d"},
+        node_box = {type = "fixed", fixed = quarter},
+        selection_box = {type = "fixed",
+            fixed = {-0.5, -0.5, -0.5, 0.5, 0.3125, 0.5}},
+        groups = {cracky = 3, oddly_breakable_by_hand = 1},
+        sounds = block_sounds,
+        on_place = pedestal_place,
+        on_rightclick = pedestal_rightclick,
+        after_dig_node = pedestal_after_dig,
+    })
+end
+
+minetest.register_lbm({
+    label = "Re-register portal gun pedestals",
+    name = "yaportal:register_pedestal",
+    nodenames = {"yaportal:pedestal"},
+    run_at_every_load = true,
+    action = function(pos, node)
+        local anchor = button_anchor(pos, node.param2)
+        local h = hashpos(anchor)
+        if not pedestals[h] then
+            pedestals[h] = {pos = anchor, inside = {}}
+        end
+        pedestal_update_display(anchor)
+    end,
+})
+
+local pedestal_accum = 0
+minetest.register_globalstep(function(dtime)
+    pedestal_accum = pedestal_accum + dtime
+    if pedestal_accum < 0.3 then return end
+    pedestal_accum = 0
+    if not next(pedestals) then return end
+    local players = minetest.get_connected_players()
+    for h, e in pairs(pedestals) do
+        if minetest.get_node(e.pos).name ~= "yaportal:pedestal" then
+            pedestals[h] = nil
+        else
+            local cx, cz = e.pos.x + 0.5, e.pos.z + 0.5
+            for _, pl in ipairs(players) do
+                local pname = pl:get_player_name()
+                local ppos = pl:get_pos()
+                local near = math.abs(ppos.x - cx) <= PEDESTAL_RADIUS
+                    and math.abs(ppos.z - cz) <= PEDESTAL_RADIUS
+                    and ppos.y >= e.pos.y - 1.2 and ppos.y <= e.pos.y + 1.5
+                if near and not e.inside[pname] then
+                    local meta = minetest.get_meta(e.pos)
+                    local gun = meta:get_string("gun")
+                    if gun ~= "" then
+                        local left = pl:get_inventory()
+                            :add_item("main", ItemStack(gun))
+                        if left:is_empty() then
+                            meta:set_string("gun", "")
+                            pedestal_update_display(e.pos)
+                        end
+                    end
+                end
+                e.inside[pname] = near or nil
             end
         end
     end
@@ -4432,6 +6518,46 @@ do
                 {iron, iron},
                 {iron, iron},
                 {iron, iron},
+            },
+        })
+    end
+    if iron and glass then
+        minetest.register_craft({
+            output = "yaportal:clock_item",
+            recipe = {
+                {iron,  glass, iron},
+                {iron,  iron,  iron},
+            },
+        })
+    end
+    if iron and stone then
+        minetest.register_craft({
+            output = "yaportal:pushbutton 4",
+            recipe = {
+                {iron},
+                {stone},
+            },
+        })
+    end
+    if iron and stone then
+        minetest.register_craft({
+            output = "yaportal:pedestal",
+            recipe = {
+                {"",    iron,  ""   },
+                {"",    stone, ""   },
+                {stone, stone, stone},
+            },
+        })
+    end
+    local stick = (minetest.get_modpath("mcl_core") and "mcl_core:stick")
+               or (minetest.get_modpath("default")  and "default:stick")
+    if iron and stick then
+        minetest.register_craft({
+            output = "yaportal:trigger_wand",
+            recipe = {
+                {"",    "",    iron},
+                {"",    stick, ""},
+                {stick, "",    ""},
             },
         })
     end

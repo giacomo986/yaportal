@@ -40,7 +40,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/LuaJIT/LuaJIT.git
-        branch: v2.1
         commit: a2bde60819d83e6f75130ac2c93ee4b3c7615800
 
   - name: openal-soft

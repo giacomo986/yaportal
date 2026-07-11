@@ -48,6 +48,16 @@ Funzioni aggiunte non previste in questa lista, già operative:
 - **Camera roll/pitch** animati con API debug (`/roll`, `/upright`).
 - **Colori cielo accurati** attraverso il portale (tramonto/notte/void).
 - **Stivali antifall** (slot armor VoxeLibre).
+- **Blocchi interattivi Portal-1** (tutto Lua 🟢): cubo trasportabile,
+  superbutton 2x2, vent dispenser 2x2x2 con form impostazioni (Enable/Disable/
+  Dispense, trigger start/stop/dispense, distanza max cubo, fizzle di
+  distruzione del cubo precedente/vagante), porta automatica 2x2 con override
+  manuale Open/Close/Auto, clock countdown 7-segmenti che spara coppia di
+  portali, push button a impulso (~1s) come trigger generico, trigger spaces
+  (volumi disegnati con la Trigger Wand), piedistallo portal gun 2x2 con
+  raccolta a prossimità. Sistema di binding trigger condiviso
+  (`yaportal.triggers`: button/push/space) tra porta, vent e clock.
+  Copre di fatto l'item 14 per i sistemi interni alla mod.
 
 ---
 
@@ -123,12 +133,15 @@ Geometria non-euclidea, percorsi complessi.
 **Fattibilità:** molto alta complessità (rendering ricorsivo/multi-pass). Bassa
 priorità — feature da fine progetto.
 
-### ❌ 14. Integrazione con altri sistemi Minetest (doors, pressure plates)  · 🟢 Media
+### 🟡 14. Integrazione con altri sistemi Minetest (doors, pressure plates)  · 🟢 Media
 Aprire portali solo quando attivati elementi esterni (porte, pulsanti, leve) sul
 lato corretto.
+**Stato:** i sistemi *interni* alla mod sono fatti (trigger condivisi
+button/push/space tra porta, vent e clock; il clock apre coppie di portali;
+mesecons receptor/effector su superbutton e porta). Manca il gating dei
+*portali* stessi da trigger esterni di terze parti.
 **Fattibilità:** media, Lua puro. API per attivazione/disattivazione portale
-esiste (`close_portal`/`deactivate_if_frame`). Serve hook ai sistemi esterni
-(mesecons/doors) — dipende dalle mod di terze parti installate.
+esiste (`close_portal`/`deactivate_if_frame`).
 
 ---
 

@@ -8,8 +8,11 @@ Requires a custom build of Luanti 5.16.1 with the C++ patches included in this r
 
 ## Download
 
-Pre-built AppImage for Linux x86\_64:
-**[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.3.0-alpha/Luanti-portal-x86_64.AppImage)**
+Pre-built packages for Linux x86\_64:
+
+- **[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.4.0-alpha/Luanti-portal-x86_64.AppImage)**
+- **[Luanti-portal-x86\_64.flatpak](https://github.com/giacomo986/yaportal/releases/download/v0.4.0-alpha/Luanti-portal-x86_64.flatpak)** — install with `flatpak install --user Luanti-portal-x86_64.flatpak`
+
 (or browse all releases on [GitHub](https://github.com/giacomo986/yaportal/releases))
 
 ---
@@ -83,6 +86,23 @@ Creates a private pocket dimension for the player.
 | Right click | Close and destroy the pocket dimension |
 
 The pocket dimension is a 32×32 platform in an isolated space. Each player has their own.
+
+### Portal-1 interactive blocks
+
+A set of Aperture-style puzzle blocks, all linkable through a shared trigger
+system (super buttons, push buttons, and *trigger spaces* — invisible volumes
+drawn with the Trigger Wand):
+
+| Block | Description |
+|-------|-------------|
+| **Weighted Storage Cube** | Carryable cube entity (right-click to pick up / drop). Presses super buttons. |
+| **Super Button** (`yaportal:superbutton`) | 2x2 floor button, pressed by players and cubes. Mesecons receptor. |
+| **Push Button** (`yaportal:pushbutton`) | Small wall/floor/ceiling button; punch or right-click for a ~1s trigger pulse. Generic trigger for vents, doors and clocks. |
+| **Vital Apparatus Vent** (`yaportal:dispenser`) | 2x2x2 cube dispenser, open at the bottom. Right-click opens its settings: Enable/Disable/Dispense buttons, start/stop/dispense trigger bindings, and a max cube distance. The vent tracks its own cube: dispensing (or straying past the distance limit) destroys the previous cube with a fizzle effect, and a lost cube is automatically replaced while the vent is enabled. |
+| **Automatic Door** (`yaportal:door`) | 2x2 door. Config form: name, normally-open, trigger bindings (hold/open/close), and Open/Close/Auto buttons for an immediate manual override that wins over every trigger. With no bindings it works automatically (nearby super button, else proximity). |
+| **Countdown Clock** (`yaportal:clock`) | 2-wide 7-segment timer; on zero it fires a linked blue+orange wall-portal pair. Startable from triggers or mesecons. |
+| **Portal Gun Pedestal** (`yaportal:pedestal`) | 2x2 stand displaying a portal gun. Right-click with a gun to put it on display; walking up to the pedestal hands the gun to the player. |
+| **Trigger Wand** (`yaportal:trigger_wand`) | Draws and manages trigger spaces (pure volumes usable as bindings by doors, vents and clocks). |
 
 ---
 
