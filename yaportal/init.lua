@@ -1140,6 +1140,15 @@ do
         end,
         basis = function(pp) return portal_basis(pp) end,
         inner_center = function(pp) return inner_center(pp) end,
+        -- Engine PortalManager slot (0-based) of a named portal, or nil.
+        engine_slot = function(name) return portal_index[name] end,
+        -- Full RTT geometry of a portal def (works on remote endpoint defs
+        -- too: same {cx,cy,cz,axis,ns,w,h,rot} shape as local records).
+        portal_geom = function(def)
+            local _, _, up = portal_basis(def)
+            return {pos = inner_center(def),
+                normal = portal_normal(def.axis, def.ns), up = up}
+        end,
         -- Programmatic portal creation (mirror portals, tests).
         -- def = {cx,cy,cz,axis,ns,w,h,node_name[,link]}
         add_portal = function(name, def)

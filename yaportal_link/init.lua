@@ -1019,11 +1019,53 @@ minetest.register_globalstep(function(dtime)
             write_spool(mine.ep, my_endpoints[mine.ep])
             -- reader: the other side, if online
             local other_ep = eps[other.world .. "/" .. other.ep]
+            local slot = yaportal.xworld.engine_slot(my_endpoints[mine.ep].portal)
             if other_ep and other_ep.online then
                 apply_spool(fn, mine, other, other_ep)
+                -- Dual-client live view: my portal's RTT renders the real
+                -- world B from the paired destination portal's frame.
+                if slot and other_ep.def and core.set_portal_xworld_dest then
+                    local g = yaportal.xworld.portal_geom(other_ep.def)
+                    core.set_portal_xworld_dest(slot, g.pos, g.normal, g.up)
+                end
+            elseif slot and core.clear_portal_xworld_dest then
+                -- Other side offline: fall back to the mirror snapshot view.
+                core.clear_portal_xworld_dest(slot)
             end
         end
     end
+end)
+
+-- Dual-client live view: the passive ghost (<player>_pv) joins to make this
+-- server stream the paired portal's region. Park it in front of my endpoint
+-- portal of the first confirmed pair so the destination zone loads.
+minetest.register_on_joinplayer(function(player)
+    local pname = player:get_player_name()
+    if not pname:find("_pv$") then return end
+    minetest.after(1, function()
+        local p = minetest.get_player_by_name(pname)
+        if not p then return end
+        for _, rec in pairs(scan_pairs()) do
+            local other, mine = pair_other_side(rec)
+            if other and rec.status == "confirmed" and my_endpoints[mine.ep] then
+                local pp = yaportal.xworld.get_portal(my_endpoints[mine.ep].portal)
+                if pp then
+                    local g = yaportal.xworld.portal_geom(pp)
+                    -- Park beside the portal (not in front: it would sit in
+                    -- the middle of the RTT view) and hide the avatar.
+                    local r = vector.cross(g.up, g.normal)
+                    p:set_properties({is_visible = false, pointable = false,
+                        collide_with_objects = false})
+                    p:set_pos({x = g.pos.x + g.normal.x * 2 + r.x * 4,
+                        y = g.pos.y - 1,
+                        z = g.pos.z + g.normal.z * 2 + r.z * 4})
+                    minetest.log("action", "[yaportal_link] ghost " .. pname ..
+                        " parked at endpoint '" .. my_endpoints[mine.ep].portal .. "'")
+                    return
+                end
+            end
+        end
+    end)
 end)
 
 -- Double-open guard: opening a world that already runs as a server (e.g. from
