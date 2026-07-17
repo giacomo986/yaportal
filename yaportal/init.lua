@@ -1100,6 +1100,103 @@ minetest.register_on_leaveplayer(function(player)
     -- gun portal cleanup is done by a second register_on_leaveplayer in the portal gun section
 end)
 
+-- Cross-world portals (yaportal_link): a portal with pp.xworld set and no
+-- local link fires yaportal.xworld.handler on crossing instead of teleporting.
+do
+    local ns = rawget(_G, "yaportal") or {}
+    ns.xworld = {
+        handler = nil,  -- set by yaportal_link: function(pname, portal_name, pp)
+        -- Attach/detach the cross-world destination of a named portal.
+        set_link = function(portal_name, info)
+            local pp = portals[portal_name]
+            if not pp then return false end
+            pp.xworld = info  -- {world=, ep=, addr=, port=, pos=, facing=} or nil
+            return true
+        end,
+        get_portal = function(portal_name)
+            return portals[portal_name]
+        end,
+        list_portals = function()
+            local out = {}
+            for name, pp in pairs(portals) do
+                out[#out + 1] = {name = name, pos = inner_center(pp),
+                    axis = pp.axis, linked = pp.link ~= nil,
+                    xworld = pp.xworld, node_name = pp.node_name}
+            end
+            table.sort(out, function(a, b) return a.name < b.name end)
+            return out
+        end,
+        -- Let other mods register a frame material and drive activation, so a
+        -- dedicated cross-world frame builds a real portal through the normal
+        -- yaportal path.
+        register_frame_material = function(node_name)
+            ALL_FRAME_NODES[node_name] = true
+        end,
+        activate_frame = function(pos, frame_node, placer)
+            try_activate_near(pos, frame_node, placer)
+        end,
+        deactivate_frame = function(pos)
+            deactivate_if_frame(pos)
+        end,
+        basis = function(pp) return portal_basis(pp) end,
+        inner_center = function(pp) return inner_center(pp) end,
+        -- Programmatic portal creation (mirror portals, tests).
+        -- def = {cx,cy,cz,axis,ns,w,h,node_name[,link]}
+        add_portal = function(name, def)
+            if portals[name] then return false end
+            portals[name] = def
+            save_portals()
+            sync_portals()
+            update_anchor(name, def)
+            return true
+        end,
+        close_portal = function(name)
+            close_portal(name)
+        end,
+        -- Re-seed a player's trigger state at a position: any portal they are
+        -- inside is marked pre-consumed, so being placed on/near an exit portal
+        -- (arrival after a hop) doesn't immediately re-fire it.
+        reset_trigger_state = function(pname, pos)
+            local st = {}
+            for portal_name, pp in pairs(portals) do
+                if in_portal_bounds(pos, pp) then
+                    st[portal_name] = {in_bounds = true,
+                        entered_from_front = false, triggered = true}
+                end
+            end
+            player_states[pname] = st
+        end,
+        -- One-way local link (RTT view of a cross-world portal into its
+        -- mirror region). Does not touch the destination portal's link.
+        set_link_local = function(name, dst_name)
+            local pp = portals[name]
+            if not pp then return false end
+            pp.link = dst_name
+            save_portals()
+            sync_portals()
+            return true
+        end,
+    }
+    rawset(_G, "yaportal", ns)
+end
+
+-- A player who spawns already inside a portal (e.g. arriving right on the exit
+-- portal, or logging back in on top of one) must NOT be teleported until they
+-- step out and back in. Otherwise a cross-world exit portal re-fires on every
+-- join, looping the player between servers. Mark such portals pre-consumed.
+minetest.register_on_joinplayer(function(player)
+    local pname = player:get_player_name()
+    local ppos  = player:get_pos()
+    local st = {}
+    for portal_name, pp in pairs(portals) do
+        if in_portal_bounds(ppos, pp) then
+            st[portal_name] = {in_bounds = true, entered_from_front = false,
+                triggered = true}
+        end
+    end
+    player_states[pname] = st
+end)
+
 minetest.register_globalstep(function(dtime)
     for _, player in ipairs(minetest.get_connected_players()) do
         local pname = player:get_player_name()
@@ -1128,6 +1225,11 @@ minetest.register_globalstep(function(dtime)
             local s        = state[portal_name]
             local dst_name = pp.link
             local dst      = dst_name and portals[dst_name]
+            -- Mirror portals (gun9_xmir_*) exist only to feed the RTT view of a
+            -- cross-world portal; they must NEVER be a local teleport target,
+            -- or an offline cross-world portal would drop the player into the
+            -- hidden mirror region.
+            local dst_is_mirror = dst_name and dst_name:match("^gun9_xmir_") ~= nil
 
             if in_portal_bounds(ppos, pp) then
                 local just_entered = not s.in_bounds
@@ -1144,13 +1246,34 @@ minetest.register_globalstep(function(dtime)
                 end
 
                 local border_entry = just_entered and portal_depth(cpos, pp) < (0.5 - TRIGGER_DEPTH)
-                if s.entered_from_front and not s.triggered and dst
+                if s.entered_from_front and not s.triggered
+                   and pp.xworld and not teleport_src
+                   and (past_trigger(cpos, pp) or border_entry)
+                then
+                    -- Cross-world portal: any local link is only the mirror
+                    -- region shown by the RTT view; the actual crossing is a
+                    -- server hop handled by yaportal_link (handoff + redirect).
+                    s.triggered = true
+                    local ns = rawget(_G, "yaportal")
+                    local h = ns and ns.xworld and ns.xworld.handler
+                    if h then h(pname, portal_name, pp) end
+                elseif s.entered_from_front and not s.triggered and dst
+                   and not dst_is_mirror
                    and not teleport_src
                    and (past_trigger(cpos, pp) or border_entry)
                 then
                     s.triggered  = true
                     teleport_src = portal_name
                     teleport_dst = dst_name
+                elseif s.entered_from_front and not s.triggered
+                   and dst_is_mirror and not pp.xworld
+                   and (past_trigger(cpos, pp) or border_entry)
+                then
+                    -- Cross-world portal whose remote side is offline: don't
+                    -- teleport anywhere, just tell the player.
+                    s.triggered = true
+                    minetest.chat_send_player(pname, minetest.colorize("#FFAA55",
+                        "[portale] destinazione intermondo non disponibile (mondo remoto offline)."))
                 end
             else
                 if s.in_bounds then

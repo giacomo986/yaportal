@@ -28,3 +28,13 @@ done
 
 cd "$PROJ/luanti_src/build"
 "$NINJA" -j$(nproc)
+
+# The build bakes /tmp/deps and /tmp/luajit-extract (volatile symlinks) into the
+# binary's RUNPATH, so it fails to find libluajit after a reboot clears /tmp.
+# Repoint RUNPATH at the real in-repo lib dirs so the binary runs standalone.
+BIN="$PROJ/luanti_src/bin/luanti"
+if command -v patchelf >/dev/null 2>&1 && [ -f "$BIN" ]; then
+    patchelf --set-rpath \
+        "$PROJ/tmp/deps/usr/lib/x86_64-linux-gnu:$PROJ/tmp/luajit-extract/usr/lib/x86_64-linux-gnu" \
+        "$BIN"
+fi
