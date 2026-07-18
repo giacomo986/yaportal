@@ -447,10 +447,30 @@ end
 
 -- ── arrival: apply handoff on join ──────────────────────────────────────────
 
+-- A player is "singleplayer" in a local game and their configured name
+-- everywhere else, so a handoff written by the world they left may be filed
+-- under either. write_handoff writes both for the same reason.
+local function handoff_names(pname)
+    local names = {pname}
+    if pname == "singleplayer" then
+        local n = minetest.settings:get("name")
+        if n and n ~= "" and n ~= pname then names[#names + 1] = n end
+    end
+    return names
+end
+
+local function read_handoff(pname)
+    for _, n in ipairs(handoff_names(pname)) do
+        local path = DIR .. "/handoff/" .. n .. ".json"
+        local rec = read_json(path)
+        if rec and rec.to_world == world_id then return rec, path end
+    end
+    return nil
+end
+
 apply_handoff = function(pname)
-    local path = DIR .. "/handoff/" .. pname .. ".json"
-    local rec = read_json(path)
-    if not rec or rec.to_world ~= world_id then return end
+    local rec, path = read_handoff(pname)
+    if not rec then return end
     remove_file(path)
     if (now() - (rec.ts or 0)) > T_HANDOFF then return end
 
@@ -499,9 +519,8 @@ minetest.register_on_joinplayer(function(player)
     local pname = player:get_player_name()
     park(player)
 
-    local rec = read_json(DIR .. "/handoff/" .. pname .. ".json")
-    local arriving = rec and rec.to_world == world_id and
-        (now() - (rec.ts or 0)) <= T_HANDOFF
+    local rec = read_handoff(pname)
+    local arriving = rec and (now() - (rec.ts or 0)) <= T_HANDOFF
 
     if arriving then
         -- Redirect hop: this connection is the player. Place and release.
