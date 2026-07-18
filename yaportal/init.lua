@@ -356,28 +356,6 @@ local function past_trigger(ppos, pp)
     return portal_depth(ppos, pp) < (0.5 - TRIGGER_DEPTH)
 end
 
--- Crossing into another world is not instantaneous: the server decides at its
--- own step rate and the client only swaps when the packet arrives. Walking at
--- normal speed that is enough time to pass the portal surface and see the room
--- behind it for a frame or two. So for cross-world portals the trigger fires
--- when the player is ABOUT to reach the surface, by their current speed.
-local XWORLD_LEAD = 0.12  -- s of travel to anticipate (one server step + a frame)
-
-local function approaching_trigger(ppos, pp, vel)
-    local ns = pp.ns or 1
-    local approach
-    if pp.axis == 0 then
-        approach = -vel.z * ns
-    elseif pp.axis == 1 then
-        approach = -vel.x * ns
-    else
-        approach = -vel.y * ns
-    end
-    -- Only anticipate for someone actually moving into it.
-    if approach <= 0.5 then return false end
-    return (portal_depth(ppos, pp) - approach * XWORLD_LEAD) < (0.5 - TRIGGER_DEPTH)
-end
-
 -- Lateral (XZ) test for a floor portal (axis==2, ns==1): is the player
 -- horizontally over the opening hole?  Shrunk by 0.15 so standing on the
 -- surrounding frame (or, for type-2 block portals, the block's solid rim) does
@@ -1296,8 +1274,7 @@ minetest.register_globalstep(function(dtime)
                 local border_entry = just_entered and portal_depth(cpos, pp) < (0.5 - TRIGGER_DEPTH)
                 if s.entered_from_front and not s.triggered
                    and pp.xworld and not teleport_src
-                   and (past_trigger(cpos, pp) or border_entry
-                        or approaching_trigger(cpos, pp, vel))
+                   and (past_trigger(cpos, pp) or border_entry)
                 then
                     -- Cross-world portal: any local link is only the mirror
                     -- region shown by the RTT view; the actual crossing is a
