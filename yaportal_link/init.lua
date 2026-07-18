@@ -36,7 +36,11 @@ local XFRAME        = "yaportal_link:frame"
 
 local worldpath  = minetest.get_worldpath()
 local world_id   = worldpath:match("([^/]+)$")
-local my_port    = tonumber(minetest.settings:get("port")) or 30000
+-- The bound port, not the "port" setting: a singleplayer server takes a free
+-- port and --port overrides the setting, so advertising the setting sends
+-- cross-world hops to a server that isn't there.
+local my_port    = (core.get_bind_port and core.get_bind_port())
+                   or tonumber(minetest.settings:get("port")) or 30000
 local my_addr    = minetest.settings:get("yaportal_link_addr") or "127.0.0.1"
 local HOME       = ie.os.getenv("HOME") or "/tmp"
 local DIR        = minetest.settings:get("yaportal_link_dir")
@@ -1012,6 +1016,9 @@ minetest.register_globalstep(function(dtime)
     if sync_timer < S_SYNC then return end
     sync_timer = 0
     local eps = scan_endpoints()
+    -- Server the client's passive second session should connect to. Only the
+    -- registry knows which port the paired world currently listens on.
+    local xtarget = nil
     for fn, rec in pairs(scan_pairs()) do
         local other, mine = pair_other_side(rec)
         if other and rec.status == "confirmed" and my_endpoints[mine.ep] then
@@ -1028,10 +1035,21 @@ minetest.register_globalstep(function(dtime)
                     local g = yaportal.xworld.portal_geom(other_ep.def)
                     core.set_portal_xworld_dest(slot, g.pos, g.normal, g.up)
                 end
+                if not xtarget and other_ep.addr and other_ep.port then
+                    xtarget = {addr = other_ep.addr, port = other_ep.port,
+                        world = other.world}
+                end
             elseif slot and core.clear_portal_xworld_dest then
                 -- Other side offline: fall back to the mirror snapshot view.
                 core.clear_portal_xworld_dest(slot)
             end
+        end
+    end
+    if core.set_xworld_target then
+        if xtarget then
+            core.set_xworld_target(xtarget.addr, xtarget.port, xtarget.world)
+        else
+            core.clear_xworld_target()
         end
     end
 end)
