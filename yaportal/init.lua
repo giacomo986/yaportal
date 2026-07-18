@@ -1140,6 +1140,23 @@ do
         end,
         basis = function(pp) return portal_basis(pp) end,
         inner_center = function(pp) return inner_center(pp) end,
+        -- Cross-world traversal happens in two halves on two servers, so the
+        -- portal transform is split: the entrance server decomposes vectors
+        -- into its portal's basis, the exit server composes them onto its own.
+        -- Same mirror convention as the in-world teleport, including the
+        -- horizontal-portal exception (rotation semantics, not mirror).
+        decompose = function(pp, v)
+            local n, r, u = portal_basis(pp)
+            return {r = dot(v, r), u = dot(v, u), n = dot(v, n), axis = pp.axis or 0}
+        end,
+        compose = function(pp, c)
+            local n, r, u = portal_basis(pp)
+            local lr = c.r
+            if (c.axis or 0) == 2 or (pp.axis or 0) == 2 then lr = -lr end
+            return {x = (-lr)*r.x + c.u*u.x + (-c.n)*n.x,
+                    y = (-lr)*r.y + c.u*u.y + (-c.n)*n.y,
+                    z = (-lr)*r.z + c.u*u.z + (-c.n)*n.z}
+        end,
         -- Engine PortalManager slot (0-based) of a named portal, or nil.
         engine_slot = function(name) return portal_index[name] end,
         -- Full RTT geometry of a portal def (works on remote endpoint defs

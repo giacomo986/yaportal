@@ -419,10 +419,22 @@ yaportal.xworld.handler = function(pname, portal_name, pp)
 
     local vel = player:get_velocity() or {x = 0, y = 0, z = 0}
     local speed = math.sqrt(vel.x^2 + vel.y^2 + vel.z^2)
-    write_handoff(pname, {
+    -- Where the player was and where they were looking, expressed in this
+    -- portal's own frame: the exit server maps that onto its portal, so you
+    -- come out of it the way you went in instead of facing straight ahead.
+    local rec = {
         player = pname, to_world = other.world, to_ep = other.ep,
         speed = speed, ts = now(),
-    })
+    }
+    if yaportal.xworld.decompose then
+        local c = yaportal.xworld.inner_center(pp)
+        local pos = player:get_pos()
+        rec.rel = yaportal.xworld.decompose(pp,
+            {x = pos.x - c.x, y = pos.y - c.y, z = pos.z - c.z})
+        rec.vel = yaportal.xworld.decompose(pp, vel)
+        rec.look = yaportal.xworld.decompose(pp, player:get_look_dir())
+    end
+    write_handoff(pname, rec)
 
     local slot = yaportal.xworld.engine_slot(portal_name)
     local swapped = false
@@ -492,14 +504,36 @@ apply_handoff = function(pname)
 
     local c = yaportal.xworld.inner_center(pp)
     local n = yaportal.xworld.basis(pp)
-    -- Feet just in front of the exit portal, looking away from it.
-    local pos = {x = c.x + n.x * 0.9, y = c.y - 0.9 + n.y * 0.9, z = c.z + n.z * 0.9}
+    local pos, look
+    if rec.rel and yaportal.xworld.compose then
+        local off = yaportal.xworld.compose(pp, rec.rel)
+        -- Keep the entry offset, but never leave the player inside the frame:
+        -- push out to at least 0.9 along the exit normal.
+        local depth = off.x * n.x + off.y * n.y + off.z * n.z
+        if depth < 0.9 then
+            local adj = 0.9 - depth
+            off.x, off.y, off.z = off.x + adj * n.x, off.y + adj * n.y, off.z + adj * n.z
+        end
+        pos = {x = c.x + off.x, y = c.y + off.y, z = c.z + off.z}
+        look = rec.look and yaportal.xworld.compose(pp, rec.look)
+    else
+        -- No transform in the record (older handoff): feet just in front of the
+        -- exit portal, looking away from it.
+        pos = {x = c.x + n.x * 0.9, y = c.y - 0.9 + n.y * 0.9, z = c.z + n.z * 0.9}
+    end
     player:set_pos(pos)
-    if n.x ~= 0 or n.z ~= 0 then
+
+    if look and (math.abs(look.x) > 0.001 or math.abs(look.z) > 0.001) then
+        player:set_look_horizontal(math.atan2(-look.x, look.z))
+        player:set_look_vertical(-math.asin(math.max(-1, math.min(1, look.y))))
+    elseif not look and (n.x ~= 0 or n.z ~= 0) then
         player:set_look_horizontal(math.atan2(-n.x, n.z))
         player:set_look_vertical(0)
     end
-    if rec.speed and rec.speed > 0.5 then
+
+    if rec.vel and yaportal.xworld.compose then
+        player:add_velocity(yaportal.xworld.compose(pp, rec.vel))
+    elseif rec.speed and rec.speed > 0.5 then
         player:add_velocity({x = n.x * rec.speed, y = n.y * rec.speed, z = n.z * rec.speed})
     end
     -- Arriving right in front of the exit portal must not re-trigger it.
