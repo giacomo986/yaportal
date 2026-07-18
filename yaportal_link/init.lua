@@ -507,13 +507,13 @@ apply_handoff = function(pname)
     local pos, look
     if rec.rel and yaportal.xworld.compose then
         local off = yaportal.xworld.compose(pp, rec.rel)
-        -- Keep the entry offset, but never leave the player inside the frame:
-        -- push out to at least 0.9 along the exit normal.
+        -- Keep where they were across the opening, but always come out the same
+        -- short distance in front of the exit: the entrance distance is mirrored
+        -- to BEHIND the exit (inside its wall), and the crossing is triggered a
+        -- moment before the surface is reached anyway.
         local depth = off.x * n.x + off.y * n.y + off.z * n.z
-        if depth < 0.9 then
-            local adj = 0.9 - depth
-            off.x, off.y, off.z = off.x + adj * n.x, off.y + adj * n.y, off.z + adj * n.z
-        end
+        local adj = 0.9 - depth
+        off.x, off.y, off.z = off.x + adj * n.x, off.y + adj * n.y, off.z + adj * n.z
         pos = {x = c.x + off.x, y = c.y + off.y, z = c.z + off.z}
         look = rec.look and yaportal.xworld.compose(pp, rec.look)
     else
