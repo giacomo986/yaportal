@@ -313,7 +313,9 @@ local apply_handoff
 -- the player left behind in the world they walked out of.
 
 local parked = {}          -- pname -> saved state
-local GHOST_CONFIRM_T = 2  -- s to wait for a ghost to announce itself
+-- Long enough to cover the ghost's retries: its first announcements are
+-- dropped while the server still considers the connection inactive.
+local GHOST_CONFIRM_T = 6  -- s to wait for a ghost to announce itself
 
 local function park(player)
     local pname = player:get_player_name()
