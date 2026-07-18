@@ -301,27 +301,151 @@ minetest.register_globalstep(function(dtime)
     sync_links()
 end)
 
--- ── crossing: handoff + redirect ────────────────────────────────────────────
+-- Defined further down (arrival section); the park/unpark commands need it.
+local apply_handoff
+
+-- ── parking: a player who is here but not playing here ──────────────────────
+--
+-- With the dual-client portal view the same player is connected to both worlds
+-- at once: interactive in one, passive in the other. The passive side must not
+-- be visible, solid, damageable or moving — it exists only so this server
+-- streams the portal's destination region. Same story after a session swap for
+-- the player left behind in the world they walked out of.
+
+local parked = {}          -- pname -> saved state
+local GHOST_CONFIRM_T = 2  -- s to wait for a ghost to announce itself
+
+local function park(player)
+    local pname = player:get_player_name()
+    if parked[pname] then return end
+    parked[pname] = {
+        armor = player:get_armor_groups(),
+        physics = player:get_physics_override(),
+        visible = player:get_properties().is_visible,
+        pointable = player:get_properties().pointable,
+        collide = player:get_properties().collide_with_objects,
+        nametag = player:get_nametag_attributes(),
+    }
+    player:set_properties({is_visible = false, pointable = false,
+        collide_with_objects = false})
+    player:set_armor_groups({immortal = 1})
+    player:set_physics_override({speed = 0, jump = 0, gravity = 0})
+    player:set_nametag_attributes({color = {a = 0, r = 255, g = 255, b = 255}})
+end
+
+local function unpark(pname)
+    local st = parked[pname]
+    if not st then return end
+    parked[pname] = nil
+    local player = minetest.get_player_by_name(pname)
+    if not player then return end
+    player:set_properties({is_visible = st.visible ~= false,
+        pointable = st.pointable ~= false,
+        collide_with_objects = st.collide ~= false})
+    player:set_armor_groups(st.armor or {})
+    player:set_physics_override(st.physics or {speed = 1, jump = 1, gravity = 1})
+    if st.nametag then player:set_nametag_attributes(st.nametag) end
+end
+
+-- Park the ghost beside my endpoint portal of a confirmed pair, so the region
+-- the other world looks at through the portal is loaded and meshed.
+local function park_at_endpoint(pname)
+    local player = minetest.get_player_by_name(pname)
+    if not player then return end
+    for _, rec in pairs(scan_pairs()) do
+        local other, mine = pair_other_side(rec)
+        if other and rec.status == "confirmed" and my_endpoints[mine.ep] then
+            local pp = yaportal.xworld.get_portal(my_endpoints[mine.ep].portal)
+            if pp then
+                local g = yaportal.xworld.portal_geom(pp)
+                -- Beside, not in front: in front would sit in the middle of
+                -- the view the other world renders.
+                local r = vector.cross(g.up, g.normal)
+                player:set_pos({x = g.pos.x + g.normal.x * 2 + r.x * 4,
+                    y = g.pos.y - 1,
+                    z = g.pos.z + g.normal.z * 2 + r.z * 4})
+                minetest.log("action", "[yaportal_link] ghost " .. pname ..
+                    " parked at endpoint '" .. my_endpoints[mine.ep].portal .. "'")
+                return
+            end
+        end
+    end
+end
+
+-- Sent by a passive session once it is ready: this connection is a ghost and
+-- must stay parked until its client promotes it.
+minetest.register_chatcommand("xworld_park", {
+    description = "Mark this connection as a passive cross-world ghost",
+    privs = {},
+    func = function(pname)
+        local player = minetest.get_player_by_name(pname)
+        if not player then return false end
+        park(player)
+        if parked[pname] then parked[pname].ghost = true end
+        park_at_endpoint(pname)
+        return true
+    end,
+})
+
+-- Sent by a client that just promoted this connection to its interactive one.
+minetest.register_chatcommand("xworld_unpark", {
+    description = "Take over a parked cross-world ghost connection",
+    privs = {},
+    func = function(pname)
+        unpark(pname)
+        apply_handoff(pname)
+        minetest.log("action", "[yaportal_link] " .. pname ..
+            " took over their ghost connection on " .. world_id)
+        return true
+    end,
+})
+
+-- ── crossing: swap in place, or redirect ────────────────────────────────────
 
 yaportal.xworld.handler = function(pname, portal_name, pp)
     local other = pp.xworld
     if not other then return end
     local player = minetest.get_player_by_name(pname)
     if not player then return end
+
+    -- Endpoint address from the live registry, not from the pairing snapshot:
+    -- the other world may have restarted on a different port since.
+    local eps = scan_endpoints()
+    local live = eps[other.world .. "/" .. other.ep]
+    local addr = (live and live.addr) or other.addr
+    local port = (live and live.port) or other.port
+
     local vel = player:get_velocity() or {x = 0, y = 0, z = 0}
     local speed = math.sqrt(vel.x^2 + vel.y^2 + vel.z^2)
     write_handoff(pname, {
         player = pname, to_world = other.world, to_ep = other.ep,
         speed = speed, ts = now(),
     })
-    minetest.log("action", ("[yaportal_link] %s crosses '%s' -> %s/%s (%s:%d)")
-        :format(pname, portal_name, other.world, other.ep, other.addr, other.port))
-    core.redirect_player(pname, other.addr, other.port)
+
+    local slot = yaportal.xworld.engine_slot(portal_name)
+    local swapped = false
+    if slot and core.xworld_swap_player then
+        swapped = core.xworld_swap_player(pname, addr, port, slot,
+            other.world, other.ep)
+    end
+
+    minetest.log("action", ("[yaportal_link] %s crosses '%s' -> %s/%s (%s:%d)%s")
+        :format(pname, portal_name, other.world, other.ep, addr, port,
+            swapped and " [swap]" or " [redirect]"))
+
+    if swapped then
+        -- The player stays connected here as a ghost so this world remains
+        -- visible through the portal from the other side.
+        park(player)
+        park_at_endpoint(pname)
+    else
+        core.redirect_player(pname, addr, port)
+    end
 end
 
 -- ── arrival: apply handoff on join ──────────────────────────────────────────
 
-local function apply_handoff(pname)
+apply_handoff = function(pname)
     local path = DIR .. "/handoff/" .. pname .. ".json"
     local rec = read_json(path)
     if not rec or rec.to_world ~= world_id then return end
@@ -364,10 +488,40 @@ local function apply_handoff(pname)
         :format(pname, world_id, rec.to_ep))
 end
 
+-- A joining connection is one of three things and we cannot tell them apart
+-- yet: a normal player, a player arriving through a portal (handoff on disk),
+-- or a passive ghost whose client is playing in another world. Park everyone
+-- first, then release whoever turns out to be playing here — parking a player
+-- for a fraction of a second is invisible, letting a ghost walk around is not.
 minetest.register_on_joinplayer(function(player)
     local pname = player:get_player_name()
-    -- Small delay: let the engine finish placing the player first.
-    minetest.after(0.2, function() apply_handoff(pname) end)
+    park(player)
+
+    local rec = read_json(DIR .. "/handoff/" .. pname .. ".json")
+    local arriving = rec and rec.to_world == world_id and
+        (now() - (rec.ts or 0)) <= T_HANDOFF
+
+    if arriving then
+        -- Redirect hop: this connection is the player. Place and release.
+        minetest.after(0.2, function()
+            unpark(pname)
+            apply_handoff(pname)
+        end)
+        return
+    end
+
+    -- Give a ghost time to announce itself with /xworld_park; if nothing
+    -- arrives, this is an ordinary join.
+    minetest.after(GHOST_CONFIRM_T, function()
+        local st = parked[pname]
+        if st and not st.ghost then
+            unpark(pname)
+        end
+    end)
+end)
+
+minetest.register_on_leaveplayer(function(player)
+    parked[player:get_player_name()] = nil
 end)
 
 -- ── on-demand world startup ──────────────────────────────────────────────────
@@ -1052,38 +1206,6 @@ minetest.register_globalstep(function(dtime)
             core.clear_xworld_target()
         end
     end
-end)
-
--- Dual-client live view: the passive ghost (<player>_pv) joins to make this
--- server stream the paired portal's region. Park it in front of my endpoint
--- portal of the first confirmed pair so the destination zone loads.
-minetest.register_on_joinplayer(function(player)
-    local pname = player:get_player_name()
-    if not pname:find("_pv$") then return end
-    minetest.after(1, function()
-        local p = minetest.get_player_by_name(pname)
-        if not p then return end
-        for _, rec in pairs(scan_pairs()) do
-            local other, mine = pair_other_side(rec)
-            if other and rec.status == "confirmed" and my_endpoints[mine.ep] then
-                local pp = yaportal.xworld.get_portal(my_endpoints[mine.ep].portal)
-                if pp then
-                    local g = yaportal.xworld.portal_geom(pp)
-                    -- Park beside the portal (not in front: it would sit in
-                    -- the middle of the RTT view) and hide the avatar.
-                    local r = vector.cross(g.up, g.normal)
-                    p:set_properties({is_visible = false, pointable = false,
-                        collide_with_objects = false})
-                    p:set_pos({x = g.pos.x + g.normal.x * 2 + r.x * 4,
-                        y = g.pos.y - 1,
-                        z = g.pos.z + g.normal.z * 2 + r.z * 4})
-                    minetest.log("action", "[yaportal_link] ghost " .. pname ..
-                        " parked at endpoint '" .. my_endpoints[mine.ep].portal .. "'")
-                    return
-                end
-            end
-        end
-    end)
 end)
 
 -- Double-open guard: opening a world that already runs as a server (e.g. from
