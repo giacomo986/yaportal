@@ -1,0 +1,4 @@
+[submodule "luanti_src"]
+	path = luanti_src
+	url = https://github.com/giacomo986/luanti.git
+	branch = portal-fork
