@@ -2,7 +2,7 @@
 
 A [Luanti](https://www.luanti.org/) mod that adds Portal-style 3D portals: real-time rendering of what's on the other side, teleportation with orientation correction, and per-player pocket dimensions.
 
-Requires a custom build of Luanti 5.16.1 with the C++ patches included in this repo (`src_patches/`). See [Building from source](#building-from-source) below.
+Requires a custom build of Luanti: the engine changes live in a fork, tracked here as the `luanti_src/` submodule. See [Building from source](#building-from-source) below.
 
 ---
 
@@ -119,16 +119,13 @@ drawn with the Trigger Wand):
 ### First-time setup
 
 ```sh
-PROJ=/path/to/yaportal   # this repo's directory
+# 1. Clone this repo together with the engine fork it needs
+git clone --recursive https://github.com/giacomo986/yaportal.git
+PROJ=$(pwd)/yaportal
 
-# 1. Clone Luanti at the correct base commit
-git clone https://github.com/luanti-org/luanti.git $PROJ/luanti_src
-git -C $PROJ/luanti_src checkout e35647861   # tag 5.16.1
+# (already cloned without --recursive? git submodule update --init)
 
-# 2. Apply the C++ patches
-cp -r $PROJ/src_patches/. $PROJ/luanti_src/
-
-# 3. Download binary dependencies
+# 2. Download binary dependencies
 mkdir -p $PROJ/tmp
 cd $PROJ/tmp
 apt-get download \
@@ -220,16 +217,43 @@ Produces `Luanti-portal-x86_64.AppImage` in the project root. Requires `patchelf
 
 ---
 
-## Keeping src_patches/ in sync
+## The engine fork
 
-After modifying C++ files in `luanti_src/`, sync `src_patches/` before committing:
+The mod needs engine changes (portal rendering, the cross-world session swap,
+four extra protocol messages), so `luanti_src/` is a submodule of
+**[giacomo986/luanti](https://github.com/giacomo986/luanti)**, branch
+`portal-fork` — a fork of [luanti-org/luanti](https://github.com/luanti-org/luanti),
+currently based on tag `5.16.1`. This repo records the exact engine commit each
+version of the mod runs on, so an old release can be rebuilt without guesswork.
+
+Inside `luanti_src/` the remotes are:
+
+| remote | points at | push |
+|---|---|---|
+| `origin` | `giacomo986/luanti` (the fork) | yes |
+| `upstream` | `luanti-org/luanti` (the original) | disabled on purpose |
+
+After changing C++ code, commit in `luanti_src/` first, then commit the moved
+submodule pointer here:
 
 ```sh
-PROJ=$(pwd)
-SRC=$PROJ/luanti_src
-for f in $(git -C $SRC diff --name-only HEAD); do
-    mkdir -p "$PROJ/src_patches/$(dirname $f)"
-    cp "$SRC/$f" "$PROJ/src_patches/$f"
-done
-git add src_patches/ && git commit -m "chore: sync src_patches"
+git -C luanti_src commit -am "..." && git -C luanti_src push
+git add luanti_src && git commit -m "build: bump engine"
 ```
+
+To follow a new Luanti release, rebase rather than merge — it keeps the fork
+readable as a patch series on top of an official release:
+
+```sh
+git -C luanti_src fetch upstream --tags
+git -C luanti_src rebase v5.17.0        # then rebuild and retest
+```
+
+The fork stays wire-compatible with stock Luanti in the sense that both sides
+ignore protocol messages they don't know, so a stock client on a forked server
+(or the reverse) simply sees no portals instead of breaking. Note that the fork
+claims opcodes `0x65`–`0x68` (to client) and `0x54` (to server); if upstream
+ever assigns those, they will have to be renumbered.
+
+> Only the mod is mirrored to [Gitea](https://gitea.com/giacomo986/yaportal).
+> The engine fork lives on GitHub only.
