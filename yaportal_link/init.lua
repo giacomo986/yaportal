@@ -449,9 +449,12 @@ yaportal.xworld.handler = function(pname, portal_name, pp)
 
     if swapped then
         -- The player stays connected here as a ghost so this world remains
-        -- visible through the portal from the other side.
+        -- visible through the portal from the other side. Freeze them where
+        -- they are: they are standing at the portal, which is exactly the
+        -- region the other world needs streamed, and moving them now would
+        -- show up on their screen — the client is still rendering this world
+        -- until the swap packet lands a frame later.
         park(player)
-        park_at_endpoint(pname)
     else
         core.redirect_player(pname, addr, port)
     end
