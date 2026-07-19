@@ -414,8 +414,15 @@ yaportal.xworld.handler = function(pname, portal_name, pp)
     -- the other world may have restarted on a different port since.
     local eps = scan_endpoints()
     local live = eps[other.world .. "/" .. other.ep]
-    local addr = (live and live.addr) or other.addr
-    local port = (live and live.port) or other.port
+    if not (live and live.online) then
+        -- Used to be caught by the portal being linked to a stale mirror copy
+        -- of the other world; without that copy there is simply nothing there.
+        minetest.chat_send_player(pname, minetest.colorize("#FFAA55",
+            "[portale] destinazione intermondo non disponibile (mondo remoto offline)."))
+        return
+    end
+    local addr = live.addr or other.addr
+    local port = live.port or other.port
 
     local vel = player:get_velocity() or {x = 0, y = 0, z = 0}
     local speed = math.sqrt(vel.x^2 + vel.y^2 + vel.z^2)
@@ -1048,179 +1055,60 @@ minetest.register_on_leaveplayer(function(player)
     sel[pname] = nil
 end)
 
--- ── mirror region: live view of the other world through the portal ──────────
+-- ── retired: mirror region ──────────────────────────────────────────────────
 --
--- Each side periodically serializes the node zone around its announced portal
--- into $DIR/spool/<world>__<ep>.json. The paired side copies that zone into a
--- reserved high-altitude band of its own map (one slot per pair) and creates a
--- mirror portal there; the local cross-world portal gets a one-way local link
--- to the mirror, so the whole existing RTT pipeline renders the other world's
--- exit zone unchanged. Interaction in the band is blocked.
+-- Each side used to serialize the node zone around its portal into
+-- $DIR/spool/, and the paired side copied that snapshot into a reserved
+-- high-altitude band of its own map, with a mirror portal the local
+-- cross-world portal linked to, so the RTT showed *something* of the other
+-- world. The dual-client session renders the real world B now, so the copy is
+-- dead weight: a second, always-stale version of another world's rooms sitting
+-- in every paired world's map. What is left here only clears it away.
 
-local R        = tonumber(minetest.settings:get("yaportal_link_mirror_radius")) or 8
-local MIRROR_Y = 24000
-local S_SYNC   = 2
+local S_SYNC = 2
 
-ie.os.execute(("mkdir -p '%s/spool'"):format(DIR))
+local function cleanup_mirror_band()
+    -- Mirror portals first: they link the local portal to the copied zone.
+    for _, p in ipairs(yaportal.xworld.list_portals()) do
+        if p.name:match("^gun9_xmir_") then
+            yaportal.xworld.close_portal(p.name)
+            minetest.log("action", "[yaportal_link] removed mirror portal " .. p.name)
+        end
+    end
 
-minetest.register_node("yaportal_link:unknown", {
-    description = "Nodo sconosciuto (mirror intermondo)",
-    tiles = {"yaportal_link_panel.png^[colorize:#7722AA:180"},
-    groups = {not_in_creative_inventory = 1},
-    diggable = false,
-})
-
--- Slot allocation (persisted): pairkey → slot index on a 20x20 grid.
-local mirror_slots = {}
-do
+    -- Then the copied nodes. The band is a reserved scratch area (y = 24000,
+    -- x/z around -29000), never part of the playable world, so clearing it to
+    -- air cannot destroy anything built.
     local raw = storage:get_string("mirror_slots")
-    if raw and raw ~= "" then
-        local t = minetest.parse_json(raw)
-        if type(t) == "table" then mirror_slots = t end
-    end
-end
-
-local function slot_base(slot)
-    local sx, sz = slot % 20, math.floor(slot / 20)
-    return {x = -29000 + sx * 100, y = MIRROR_Y, z = -29000 + sz * 100}
-end
-
-local function get_slot(pairkey)
-    if mirror_slots[pairkey] then return mirror_slots[pairkey] end
-    local used = {}
-    for _, s in pairs(mirror_slots) do used[s] = true end
-    local s = 0
-    while used[s] do s = s + 1 end
-    mirror_slots[pairkey] = s
-    storage:set_string("mirror_slots", minetest.write_json(mirror_slots))
-    return s
-end
-
--- Anything in the mirror band is read-only for players.
-local old_is_protected = minetest.is_protected
-function minetest.is_protected(pos, name)
-    if pos.y > MIRROR_Y - 500 and pos.y < MIRROR_Y + 500 then
-        return true
-    end
-    return old_is_protected(pos, name)
-end
-
--- Writer: serialize the zone around one of my endpoints if it changed.
-local spool_hash = {}
-local forceloaded = {}
-local function write_spool(ep, info)
-    local pp = yaportal.xworld.get_portal(info.portal)
-    if not pp then return end
-    local c = {x = pp.cx, y = pp.cy, z = pp.cz}
-    -- Keep the whole exit zone loaded so the spool stays live with no players
-    -- near (the zone spans up to 8 mapblocks; bump max_forceloaded_blocks if
-    -- you announce many endpoints).
-    if not forceloaded[ep] then
-        for _, dy in ipairs({-R, R}) do
-            for _, dz in ipairs({-R, R}) do
-                for _, dx in ipairs({-R, R}) do
-                    minetest.forceload_block(
-                        {x = c.x + dx, y = c.y + dy, z = c.z + dz}, true)
-                end
-            end
+    local slots = raw ~= "" and minetest.parse_json(raw) or nil
+    if type(slots) == "table" then
+        local air = minetest.get_content_id("air")
+        local r = 12
+        for _, slot in pairs(slots) do
+            local sx, sz = slot % 20, math.floor(slot / 20)
+            local base = {x = -29000 + sx * 100, y = 24000, z = -29000 + sz * 100}
+            local minp = {x = base.x - r, y = base.y - r, z = base.z - r}
+            local maxp = {x = base.x + r, y = base.y + r, z = base.z + r}
+            local vm = minetest.get_voxel_manip(minp, maxp)
+            local emin, emax = vm:get_emerged_area()
+            local va = VoxelArea:new({MinEdge = emin, MaxEdge = emax})
+            local data = vm:get_data()
+            for vi in va:iterp(minp, maxp) do data[vi] = air end
+            vm:set_data(data)
+            vm:write_to_map(true)
         end
-        minetest.forceload_block(c, true)
-        forceloaded[ep] = true
+        storage:set_string("mirror_slots", "")
+        minetest.log("action", "[yaportal_link] cleared mirror band")
     end
-    if minetest.get_node(c).name == "ignore" then return end
-    local minp = {x = c.x - R, y = c.y - R, z = c.z - R}
-    local maxp = {x = c.x + R, y = c.y + R, z = c.z + R}
-    local names, name_idx, nodes, p2s = {}, {}, {}, {}
-    local i = 0
-    for y = minp.y, maxp.y do
-        for z = minp.z, maxp.z do
-            for x = minp.x, maxp.x do
-                i = i + 1
-                local n = minetest.get_node({x = x, y = y, z = z})
-                local ni = name_idx[n.name]
-                if not ni then
-                    names[#names + 1] = n.name
-                    ni = #names
-                    name_idx[n.name] = ni
-                end
-                nodes[i] = ni
-                p2s[i] = n.param2
-            end
-        end
+
+    -- And the snapshot directory: nothing reads it any more.
+    for _, fn in ipairs(list_dir(DIR .. "/spool")) do
+        remove_file(DIR .. "/spool/" .. fn)
     end
-    local body = minetest.write_json({names = names, nodes = nodes, param2 = p2s})
-    local h = minetest.sha1(body)
-    if spool_hash[ep] == h then return end
-    spool_hash[ep] = h
-    write_json(DIR .. "/spool/" .. world_id .. "__" .. ep .. ".json", {
-        world = world_id, ep = ep, v = h, ts = now(),
-        center = c, r = R,
-        zone = {names = names, nodes = nodes, param2 = p2s},
-    })
+    ie.os.execute(("rmdir '%s/spool' 2>/dev/null"):format(DIR))
 end
 
--- Reader: copy a remote endpoint's zone into my mirror slot.
-local applied_v = {}
-local mirror_ready = {}  -- epkey → mirror portal name
-
-local function apply_spool(pairkey, mine, other, other_ep)
-    local epkey = other.world .. "/" .. other.ep
-    local rec = read_json(DIR .. "/spool/" .. other.world .. "__" .. other.ep .. ".json")
-    if not rec or not rec.zone or applied_v[epkey] == rec.v then return end
-
-    local base = slot_base(get_slot(pairkey))
-    local c = rec.center
-    local T = {x = base.x - c.x, y = base.y - c.y, z = base.z - c.z}
-    local r = rec.r or R
-    local minp = {x = base.x - r, y = base.y - r, z = base.z - r}
-    local maxp = {x = base.x + r, y = base.y + r, z = base.z + r}
-
-    local ids = {}
-    for i, nm in ipairs(rec.zone.names) do
-        local ok, cid = pcall(minetest.get_content_id, nm)
-        ids[i] = ok and cid or minetest.get_content_id("yaportal_link:unknown")
-    end
-
-    local vm = minetest.get_voxel_manip(minp, maxp)
-    local emin, emax = vm:get_emerged_area()
-    local va = VoxelArea:new({MinEdge = emin, MaxEdge = emax})
-    local data = vm:get_data()
-    local p2data = vm:get_param2_data()
-    local i = 0
-    for y = minp.y, maxp.y do
-        for z = minp.z, maxp.z do
-            for x = minp.x, maxp.x do
-                i = i + 1
-                local vi = va:index(x, y, z)
-                data[vi] = ids[rec.zone.nodes[i]] or ids[1]
-                p2data[vi] = rec.zone.param2[i] or 0
-            end
-        end
-    end
-    vm:set_data(data)
-    vm:set_param2_data(p2data)
-    vm:write_to_map(true)
-    applied_v[epkey] = rec.v
-
-    -- Mirror portal + one-way local link from my cross-world portal, so the
-    -- RTT view of my portal shows the mirrored zone.
-    local mname = "gun9_xmir_" .. other.world .. "_" .. other.ep
-    if not mirror_ready[epkey] and other_ep.def then
-        local d = other_ep.def
-        if not yaportal.xworld.get_portal(mname) then
-            yaportal.xworld.add_portal(mname, {
-                cx = d.cx + T.x, cy = d.cy + T.y, cz = d.cz + T.z,
-                axis = d.axis, ns = d.ns, w = d.w, h = d.h, rot = d.rot,
-                ou = d.ou, ov = d.ov, node_name = d.node_name,
-            })
-        end
-        local my_info = my_endpoints[mine.ep]
-        if my_info then
-            yaportal.xworld.set_link_local(my_info.portal, mname)
-        end
-        mirror_ready[epkey] = mname
-    end
-end
+minetest.after(2, cleanup_mirror_band)
 
 local sync_timer = 0
 minetest.register_globalstep(function(dtime)
@@ -1231,18 +1119,14 @@ minetest.register_globalstep(function(dtime)
     -- Server the client's passive second session should connect to. Only the
     -- registry knows which port the paired world currently listens on.
     local xtarget = nil
-    for fn, rec in pairs(scan_pairs()) do
+    for _, rec in pairs(scan_pairs()) do
         local other, mine = pair_other_side(rec)
         if other and rec.status == "confirmed" and my_endpoints[mine.ep] then
-            -- writer: my side of the pair
-            write_spool(mine.ep, my_endpoints[mine.ep])
-            -- reader: the other side, if online
             local other_ep = eps[other.world .. "/" .. other.ep]
             local slot = yaportal.xworld.engine_slot(my_endpoints[mine.ep].portal)
             if other_ep and other_ep.online then
-                apply_spool(fn, mine, other, other_ep)
-                -- Dual-client live view: my portal's RTT renders the real
-                -- world B from the paired destination portal's frame.
+                -- The portal's RTT renders the real world B, live, from the
+                -- paired destination portal's frame.
                 if slot and other_ep.def and core.set_portal_xworld_dest then
                     local g = yaportal.xworld.portal_geom(other_ep.def)
                     core.set_portal_xworld_dest(slot, g.pos, g.normal, g.up)
@@ -1252,7 +1136,7 @@ minetest.register_globalstep(function(dtime)
                         world = other.world}
                 end
             elseif slot and core.clear_portal_xworld_dest then
-                -- Other side offline: fall back to the mirror snapshot view.
+                -- Other side offline: the portal has nothing to show.
                 core.clear_portal_xworld_dest(slot)
             end
         end

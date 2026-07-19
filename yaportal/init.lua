@@ -1251,11 +1251,6 @@ minetest.register_globalstep(function(dtime)
             local s        = state[portal_name]
             local dst_name = pp.link
             local dst      = dst_name and portals[dst_name]
-            -- Mirror portals (gun9_xmir_*) exist only to feed the RTT view of a
-            -- cross-world portal; they must NEVER be a local teleport target,
-            -- or an offline cross-world portal would drop the player into the
-            -- hidden mirror region.
-            local dst_is_mirror = dst_name and dst_name:match("^gun9_xmir_") ~= nil
 
             if in_portal_bounds(ppos, pp) then
                 local just_entered = not s.in_bounds
@@ -1284,22 +1279,12 @@ minetest.register_globalstep(function(dtime)
                     local h = ns and ns.xworld and ns.xworld.handler
                     if h then h(pname, portal_name, pp) end
                 elseif s.entered_from_front and not s.triggered and dst
-                   and not dst_is_mirror
                    and not teleport_src
                    and (past_trigger(cpos, pp) or border_entry)
                 then
                     s.triggered  = true
                     teleport_src = portal_name
                     teleport_dst = dst_name
-                elseif s.entered_from_front and not s.triggered
-                   and dst_is_mirror and not pp.xworld
-                   and (past_trigger(cpos, pp) or border_entry)
-                then
-                    -- Cross-world portal whose remote side is offline: don't
-                    -- teleport anywhere, just tell the player.
-                    s.triggered = true
-                    minetest.chat_send_player(pname, minetest.colorize("#FFAA55",
-                        "[portale] destinazione intermondo non disponibile (mondo remoto offline)."))
                 end
             else
                 if s.in_bounds then
