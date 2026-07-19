@@ -132,6 +132,30 @@ end
 
 local function ep_file(world, ep) return DIR .. "/endpoints/" .. world .. "__" .. ep .. ".json" end
 
+-- A portal is identified by name, but breaking the frame closes that portal and
+-- rebuilding it creates a differently named one. The endpoint would then point
+-- at a portal that no longer exists: the pairing goes quiet, no xworld link is
+-- attached, and crossing does nothing — while the view can keep working off a
+-- stale engine slot, which makes it look like only the teleport broke.
+local function rebind_endpoint(ep, info)
+    if yaportal.xworld.get_portal(info.portal) then return end
+    local at = info.at
+    if not at then return end
+    for _, p in ipairs(yaportal.xworld.list_portals()) do
+        if p.node_name == XFRAME and p.axis == at.axis then
+            local c = yaportal.xworld.inner_center(p)
+            if math.abs(c.x - at.x) <= 2 and math.abs(c.y - at.y) <= 2
+               and math.abs(c.z - at.z) <= 2 then
+                minetest.log("action", ("[yaportal_link] endpoint '%s': '%s' was rebuilt as '%s'")
+                    :format(ep, info.portal, p.name))
+                info.portal = p.name
+                save_endpoints()
+                return
+            end
+        end
+    end
+end
+
 local function announce_endpoints()
     -- Publish only cross-world endpoints (auto-registered xframe portals),
     -- never ordinary play portals.
@@ -163,9 +187,13 @@ local function announce_endpoints()
         end
     end
     for ep, info in pairs(my_endpoints) do
+        rebind_endpoint(ep, info)
         local pp = yaportal.xworld.get_portal(info.portal)
         if pp then
             local c = yaportal.xworld.inner_center(pp)
+            -- Remembered so a frame rebuilt in the same place can be matched
+            -- back to this endpoint (see rebind_endpoint).
+            info.at = {x = c.x, y = c.y, z = c.z, axis = pp.axis}
             local n = yaportal.xworld.basis(pp)
             write_json(ep_file(world_id, ep), {
                 world = world_id, ep = ep, addr = my_addr, port = my_port,
@@ -259,10 +287,21 @@ end
 -- as an endpoint (open); ordinary yaportal portals are never touched. Drops
 -- endpoints whose portal no longer exists or is no longer an xworld frame.
 local function sync_xframe_endpoints()
+    -- A rebuilt frame is a NEW portal with a new name. Give it back to the
+    -- endpoint that used to stand there before anything else looks at it,
+    -- otherwise the endpoint is dropped, a differently named one takes its
+    -- place, and every pairing made with the old name is orphaned.
+    local claimed = {}
+    for ep, info in pairs(my_endpoints) do
+        rebind_endpoint(ep, info)
+        claimed[info.portal] = true
+    end
+
     for _, p in ipairs(yaportal.xworld.list_portals()) do
         if p.node_name == XFRAME then
-            if not my_endpoints[p.name] then
+            if not claimed[p.name] and not my_endpoints[p.name] then
                 my_endpoints[p.name] = {portal = p.name, open = true}
+                claimed[p.name] = true
             end
         elseif p.xworld then
             -- An ORDINARY play portal must never carry a cross-world link.
@@ -278,14 +317,51 @@ local function sync_xframe_endpoints()
             end
         end
     end
-    for ep in pairs(my_endpoints) do
-        local pp = yaportal.xworld.get_portal(ep)
+    for ep, info in pairs(my_endpoints) do
+        local pp = yaportal.xworld.get_portal(info.portal)
         if not pp or pp.node_name ~= XFRAME then
             my_endpoints[ep] = nil
             remove_file(ep_file(world_id, ep))
-            if pp then yaportal.xworld.set_link(ep, nil) end
+            if pp then yaportal.xworld.set_link(info.portal, nil) end
         end
     end
+    save_endpoints()
+end
+
+-- Repair for worlds broken before the rebind above existed: a confirmed pair
+-- names an endpoint of mine that is gone, and an endpoint nobody paired is
+-- standing where it used to be. Only acted on when both are unambiguous —
+-- with several candidates the right answer is a guess, so leave it alone.
+local function adopt_orphan_pairs()
+    -- Both sides of a pairing are on disk as their own file, so the same
+    -- endpoint name shows up more than once: count names, not records.
+    local wanted_set, referenced = {}, {}
+    for _, rec in pairs(scan_pairs()) do
+        if rec.status == "confirmed" then
+            for _, side in ipairs({rec.a, rec.b}) do
+                if side.world == world_id then
+                    referenced[side.ep] = true
+                    if not my_endpoints[side.ep] then wanted_set[side.ep] = true end
+                end
+            end
+        end
+    end
+    local wanted = {}
+    for ep in pairs(wanted_set) do wanted[#wanted + 1] = ep end
+    if #wanted ~= 1 then return end
+
+    local free = {}
+    for ep in pairs(my_endpoints) do
+        if not referenced[ep] then free[#free + 1] = ep end
+    end
+    if #free ~= 1 then return end
+
+    local from, to = free[1], wanted[1]
+    minetest.log("action", ("[yaportal_link] endpoint '%s' adopts the orphaned pairing of '%s'")
+        :format(from, to))
+    my_endpoints[to] = my_endpoints[from]
+    my_endpoints[from] = nil
+    remove_file(ep_file(world_id, from))
     save_endpoints()
 end
 
@@ -297,6 +373,7 @@ minetest.register_globalstep(function(dtime)
     if hb_timer < S_HEARTBEAT then return end
     hb_timer = 0
     sync_xframe_endpoints()
+    adopt_orphan_pairs()
     announce_endpoints()
     sync_links()
 end)
@@ -1119,6 +1196,7 @@ minetest.register_globalstep(function(dtime)
     -- Server the client's passive second session should connect to. Only the
     -- registry knows which port the paired world currently listens on.
     local xtarget = nil
+    local live_slots = {}
     for _, rec in pairs(scan_pairs()) do
         local other, mine = pair_other_side(rec)
         if other and rec.status == "confirmed" and my_endpoints[mine.ep] then
@@ -1130,6 +1208,7 @@ minetest.register_globalstep(function(dtime)
                 if slot and other_ep.def and core.set_portal_xworld_dest then
                     local g = yaportal.xworld.portal_geom(other_ep.def)
                     core.set_portal_xworld_dest(slot, g.pos, g.normal, g.up)
+                    live_slots[slot] = true
                 end
                 if not xtarget and other_ep.addr and other_ep.port then
                     xtarget = {addr = other_ep.addr, port = other_ep.port,
@@ -1141,6 +1220,15 @@ minetest.register_globalstep(function(dtime)
             end
         end
     end
+    -- Slots are assigned by portal order, so a portal that goes away hands its
+    -- slot to another one — which would then inherit a destination that has
+    -- nothing to do with it, and show another world through the wrong portal.
+    if core.clear_portal_xworld_dest then
+        for slot = 0, 15 do
+            if not live_slots[slot] then core.clear_portal_xworld_dest(slot) end
+        end
+    end
+
     if core.set_xworld_target then
         if xtarget then
             core.set_xworld_target(xtarget.addr, xtarget.port, xtarget.world)
