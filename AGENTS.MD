@@ -1,4 +1,6 @@
-This project is a Luanti mod with a custom C++ engine that adds 3D portal rendering. The patched engine source lives in `luanti_src/` (git-ignored); only the engine modifications are tracked in `src_patches/`. The mod's Lua logic is in `yaportal/`.
+This project is a Luanti mod with a custom C++ engine that adds 3D portal rendering. The engine is a **git submodule** at `luanti_src/`, tracking the fork `github.com/giacomo986/luanti` on branch `portal-fork` (the fork holds the full set of engine changes as real commits; `master` there tracks upstream for rebases). The mod's Lua logic is in `yaportal/` (single-world play portals) and `yaportal_link/` (cross-world doors — see the dual-client section below).
+
+> **Layout note:** there is no `src_patches/` any more. Engine changes are committed directly in the `luanti_src` submodule and the outer repo records the submodule pointer. If a doc or script still mentions copying `src_patches/`, it is stale — ignore it.
 
 ---
 
@@ -6,49 +8,28 @@ This project is a Luanti mod with a custom C++ engine that adds 3D portal render
 
 Follow the steps in order. Requires Ubuntu 24.04 x86_64 with access to `apt-get download`.
 
-### 1. Clone the Luanti engine
+### 1. Get the engine submodule
 
 ```sh
 PROJ=/path/to/yaportal   # this repo's directory
-git clone https://github.com/luanti-org/luanti.git $PROJ/luanti_src
-# Base commit used for the patches:
-git -C $PROJ/luanti_src checkout e35647861  # 5.16.1
+# Fresh clone: pull the submodule in one go
+git clone --recursive <this-repo-url> $PROJ
+# Already cloned without --recursive:
+git -C $PROJ submodule update --init luanti_src
 ```
 
-### 2. Apply the source patches
+The submodule is pinned to a commit on the fork's `portal-fork` branch; that
+commit already contains every engine change (portal rendering, cross-world
+dual-client, etc.). There is nothing to copy or patch on top.
 
-```sh
-PROJ=/path/to/yaportal
-cp -r $PROJ/src_patches/. $PROJ/luanti_src/
-```
+To work on the engine: edit inside `luanti_src/`, commit there (on
+`portal-fork`), then `git add luanti_src` in the outer repo to record the new
+pointer. See "Committing engine changes" below.
 
-Files added/modified by this project (all in `src_patches/`):
+### 2. (nothing to apply)
 
-| File | Type |
-|------|------|
-| `src/portal_manager.h/.cpp` | **new** — `PortalManager` singleton, N portals, cam hint |
-| `src/client/render/portal.h/.cpp` | **new** — `PortalRTTData`, `PortalPrepareStep`, `PortalQuadStep`, `PortalRenderStep` |
-| `src/client/render/plain.h/.cpp` | modified — inserts portal render steps into the pipeline |
-| `src/client/clientmap.h/.cpp` | modified — `updatePortalDrawList`, `clearPortalDrawList` |
-| `src/client/client.h` | modified — exposes ClientMap access for rendering |
-| `src/client/game.cpp` | modified — starts portal steps |
-| `src/client/localplayer.h` | modified — teleportation support |
-| `src/client/renderingengine.cpp` | modified — pipeline integration |
-| `src/script/lua_api/l_env.h/.cpp` | modified — `set_portals`, `set_portal_cam_hint`, `clear_portal_cam_hint` |
-| `src/script/lua_api/l_object.h/.cpp` | modified — `portal_teleport` |
-| `src/network/networkprotocol.h` | modified — opcode `TOCLIENT_PORTAL_TELEPORT` |
-| `src/network/clientopcodes.cpp` | modified |
-| `src/network/serveropcodes.cpp` | modified |
-| `src/network/clientpackethandler.cpp` | modified — `handleCommand_PortalTeleport` handler |
-| `src/server.h/.cpp` | modified — teleport packet sending |
-| `src/server/player_sao.h/.cpp` | modified — `setPlayerYaw`, `getLookPitch` |
-| `src/server/clientiface.cpp` | modified |
-| `irr/include/ICameraSceneNode.h` | modified — `setRenderProjectionMatrix` |
-| `irr/src/CCameraSceneNode.h/.cpp` | modified — `setRenderProjectionMatrix` (no frustum update) |
-| `irr/src/CMakeLists.txt` | modified |
-| `src/CMakeLists.txt` | modified — adds `portal_manager`, `portal` to build targets |
-| `src/client/CMakeLists.txt` | modified |
-| `cmake/Modules/FindZstd.cmake` | modified — fix find for static zstd |
+Skip — kept only so the step numbers match older notes. Engine source is the
+submodule checkout itself; no patch step.
 
 ### 3. Prepare dependencies
 
@@ -162,27 +143,29 @@ cd /path/to/yaportal/luanti_src/build && ninja -j$(nproc)
 
 ---
 
-## Updating src_patches/ after C++ changes
+## Committing engine changes
 
-After modifying any C++ files in `luanti_src/`, update `src_patches/` and commit:
+The engine is a submodule, so a C++ change is two commits — the inner one on
+the fork, then the outer pointer bump. Order matters: commit the submodule
+first, or the outer records a pointer that does not exist on the remote.
 
 ```sh
 PROJ=/path/to/yaportal
-SRC=$PROJ/luanti_src
-DEST=$PROJ/src_patches
 
-for f in $(git -C $SRC diff --name-only HEAD); do
-    mkdir -p "$DEST/$(dirname $f)"
-    cp "$SRC/$f" "$DEST/$f"
-done
-# New files not tracked by luanti_src:
-for f in src/portal_manager.cpp src/portal_manager.h \
-          src/client/render/portal.cpp src/client/render/portal.h; do
-    cp "$SRC/$f" "$DEST/$f"
-done
+# 1. Inner: the engine change itself, on the fork's branch.
+cd $PROJ/luanti_src
+git branch --show-current            # expect: portal-fork
+git add -A && git commit -m "feat: ..."
 
-git add src_patches/ && git commit -m "chore: sync src_patches with luanti_src changes"
+# 2. Outer: record the new submodule commit alongside the mod changes.
+cd $PROJ
+git add luanti_src <changed mod files>
+git commit -m "..."
 ```
+
+`git status` in the outer repo shows a modified submodule as `m luanti_src`
+(lowercase m = the submodule's checkout moved). Pushing is two `git push`es:
+the fork (`luanti_src`, GitHub only) and the outer repo (GitHub + Gitea).
 
 ---
 
@@ -264,7 +247,7 @@ CMAKE=/path/to/cmake $PROJ/release.sh
 
 ```lua
 -- Set the active portal list (called by sync_portals in yaportal/init.lua)
--- portal_list: 1-based array, max MAX_PORTALS (8) elements
+-- portal_list: 1-based array, max MAX_PORTALS (16) elements
 -- Each element: {pos, normal, up, half_w, half_h, link}
 -- link: 0-based index of the destination portal (-1 = none)
 minetest.set_portals(portal_list)
@@ -420,3 +403,62 @@ minetest.set_portal_cam_hint(dst_idx, new_pos)   -- pre-render the arrival frame
 player:portal_teleport(...)
 minetest.clear_portal_cam_hint(dst_idx)           -- hand off to the live camera
 ```
+
+---
+
+## Cross-world portals & dual-client (yaportal_link)
+
+A cross-world "door" shows another world live through the portal and walks you
+into it. The client holds **two** connections at once: the interactive
+*primary* session and a passive *secondary* `WorldSession` (world B), rendered
+into the portal's RTT. Crossing swaps the two in place (no reconnect) via
+`core.xworld_swap_player`; if there is no ready passive session it falls back to
+`core.redirect_player` (a loading screen). Registry is a shared directory of
+JSON files under `~/.minetest/yaportal_link/` (see the header of
+`yaportal_link/init.lua`).
+
+Manual test: `./play_dualtest.sh` (world B = backportal :30022, open "portal
+start"). A crossing that fell back to a redirect logs a `[yaportal_link]
+swap-miss` line with the address the mod passed vs what the server holds — read
+that first when a hop is not seamless.
+
+### Invariants — break one and a past bug comes back
+
+- **`Sky::applySkyParams` must store the WHOLE `SkyboxParams`** (not just the
+  fields its setters touch). `getSkyParams()` is copied into the demoted
+  session's sky at swap; if `type`/`bgcolor`/`clouds` fall back to constructor
+  defaults, a plain black sky comes back as a white "regular" one after a round
+  trip. `handleClientEvent_SetSky` must go through the same `applySkyParams`
+  path so the primary sky holds the full set too.
+
+- **At a swap, take the promoted world's sky/clouds/view-range from the passive
+  session's live `Sky`/`Clouds`, NOT from the replayed client events.** The
+  replay (`deferred.takeAll()`) is empty on every visit after the first — a
+  server sends `set_sky` only once — so relying on it paints world B's fog with
+  world A's sky on the second round trip. The passive session's own Sky has been
+  driven live the whole time; snapshot it (see `performSessionSwap`).
+
+- **`initSecondaryClient()` must no-op if `m_secondary` already exists.** Both
+  `startup()` and the step-loop backoff call it, and the backoff can fire during
+  world load. A second connect under the same name is refused by the server
+  ("already connected"), which drops the working passive session and turns every
+  crossing into a redirect. The backoff `teardown()`s (clearing `m_secondary`)
+  before it retries, so a session still present is one to keep.
+
+- **A cross-world frame is one game per world, but v1 assumes both worlds share
+  media/nodedef.** Different games do connect and render (confirmed
+  mineclone2 ↔ backroomtest), but treat heterogeneous games as unsupported when
+  something looks wrong before blaming the swap code.
+
+### Registry hazards
+
+- Rebuilding a door's frame makes a NEW portal with a new name; `rebind_endpoint`
+  re-attaches the old endpoint by position. A stale endpoint file can still name
+  an old portal (`ep=portal_6` but `portal=portal_7`) or an old ephemeral port —
+  a singleplayer server takes a fresh port each launch, so an endpoint from a
+  dead session lists a port nothing listens on. Endpoints are kept while a world
+  is offline (so its doors stay pickable) and refreshed on next announce; if a
+  hop misbehaves after lots of rebuilds, inspect `~/.minetest/yaportal_link/`.
+
+- `core.get_bind_port()` (not the `port` setting) is the address a hop must
+  target: singleplayer picks a free port and `--port` overrides the setting.

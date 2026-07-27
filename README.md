@@ -127,6 +127,14 @@ no door yet (*Vai lì*). `/porte` opens it from anywhere.
 Requires `secure.trusted_mods = yaportal_link` in `minetest.conf`: the mod
 launches the other worlds' servers itself.
 
+**If crossing shows a loading screen instead of a seamless step-through:** the
+hop fell back to a plain reconnect because the client had no live view of the
+destination ready. Both worlds must be reachable at the port the registry lists,
+under the same account. The mod logs a `swap-miss` line
+(`~/.minetest/yaportal_link/logs/`) naming what it tried; engine-side notes and
+the invariants that keep the hop seamless live in `AGENTS.MD` → *Cross-world
+portals & dual-client*.
+
 ---
 
 ## Building from source

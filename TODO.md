@@ -58,6 +58,14 @@ Funzioni aggiunte non previste in questa lista, già operative:
   raccolta a prossimità. Sistema di binding trigger condiviso
   (`yaportal.triggers`: button/push/space) tra porta, vent e clock.
   Copre di fatto l'item 14 per i sistemi interni alla mod.
+- **Porte intermondo (dual-client)** 🔴 `yaportal_link` + fork engine: una
+  cornice viola apre una porta verso un altro mondo, visto **live** attraverso
+  il portale (seconda connessione passiva `WorldSession` → RTT) e attraversato
+  con uno **swap di sessione senza riconnessione** (`core.xworld_swap_player`,
+  fallback `redirect_player`). Pannello `/porte`: porta + destinazione, un click
+  bidirezionale, mondi spenti avviati on-demand. Dettagli engine e **invarianti
+  da non rompere** (sky/swap/registry) in AGENTS.MD → "Cross-world portals &
+  dual-client".
 
 ---
 
@@ -177,3 +185,31 @@ esiste (`close_portal`/`deactivate_if_frame`).
   dell'AppImage via `release.sh`; altrimenti il vecchio C++ gira mentre il Lua si
   aggiorna → sembra un bug di feature (es. collisione cubo pieno su type-2). Non è
   un bug di codice ma causa diagnosi errate. Vedi AGENTS.MD.
+
+- **BUG-7 — Cielo del mondo B bianco dopo l'attraversamento (RISOLTO).** Lo swap
+  copia il cielo del mondo retrocesso via `Sky::getSkyParams()`. `applySkyParams`
+  DEVE salvare l'intera struct `SkyboxParams`, e lo snapshot al swap va preso dal
+  `Sky` vivo della sessione passiva (NON dagli eventi in replay, vuoti dalla 2ª
+  visita). Rompere uno dei due = cielo `plain` nero che torna `regular` bianco.
+  Vedi AGENTS.MD → invarianti dual-client.
+
+- **BUG-8 — Attraversamento cade in redirect invece di swap (RISOLTO).**
+  `initSecondaryClient()` girava due volte (startup + backoff), aprendo una
+  seconda connessione passiva stesso nome → rifiutata dal server → sessione persa
+  → redirect (schermata di caricamento) invece dello swap fluido. Guardia: no-op
+  se `m_secondary` esiste già. Diagnostica: la riga `swap-miss` nel log del mod
+  stampa cosa passa il mod vs cosa vede il server.
+
+- **BUG-9 — Registry sporco dopo ricostruzioni di cornici.** Ricostruire una
+  cornice crea un portale con nome NUOVO; `rebind_endpoint` lo riaggancia per
+  posizione. Un endpoint stale può nominare un portale vecchio o una porta
+  effimera morta (il singleplayer prende una porta libera diversa a ogni avvio).
+  Se un hop fa i capricci dopo tante ricostruzioni, ispezionare
+  `~/.minetest/yaportal_link/`.
+
+- **BUG-10 — "moved too fast" all'arrivo intermondo (DA INDAGARE).** Dopo lo swap
+  il server B logga `Il_puzzone moved too fast: resetting position` (anti-cheat).
+  Il primo è il salto del teletrasporto; i successivi (H~4) sono sospetti,
+  probabile `physics_override` residuo del park al momento dell'unpark. Non blocca
+  ma può causare scatti di posizione all'arrivo. Da verificare il timing
+  park→unpark→set_pos.
