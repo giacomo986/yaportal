@@ -66,6 +66,11 @@ local ALL_FRAME_NODES = {
     ["yaportal:portal_shell"]  = true,
 }
 
+-- Frame materials registered by yaportal_link: portals built from them lead to
+-- another world, so walking into one with no destination set is worth a hint
+-- instead of silence.
+local XWORLD_FRAME_NODES = {}
+
 -- ── anchor entity ───────────────────────────────────────────────────────────
 
 minetest.register_entity("yaportal:anchor", {
@@ -1106,6 +1111,9 @@ do
     local ns = rawget(_G, "yaportal") or {}
     ns.xworld = {
         handler = nil,  -- set by yaportal_link: function(pname, portal_name, pp)
+        -- Called instead when a cross-world frame portal has no destination:
+        -- function(pname, portal_name, pp)
+        unlinked_handler = nil,
         -- Attach/detach the cross-world destination of a named portal.
         set_link = function(portal_name, info)
             local pp = portals[portal_name]
@@ -1131,6 +1139,11 @@ do
         -- yaportal path.
         register_frame_material = function(node_name)
             ALL_FRAME_NODES[node_name] = true
+            XWORLD_FRAME_NODES[node_name] = true
+        end,
+        -- Name of the portal whose frame the given node belongs to, or nil.
+        portal_at = function(pos)
+            return find_portal_for_block(pos)
         end,
         activate_frame = function(pos, frame_node, placer)
             try_activate_near(pos, frame_node, placer)
@@ -1277,6 +1290,16 @@ minetest.register_globalstep(function(dtime)
                     s.triggered = true
                     local ns = rawget(_G, "yaportal")
                     local h = ns and ns.xworld and ns.xworld.handler
+                    if h then h(pname, portal_name, pp) end
+                elseif s.entered_from_front and not s.triggered and not dst
+                   and not pp.xworld and XWORLD_FRAME_NODES[pp.node_name]
+                   and (past_trigger(cpos, pp) or border_entry)
+                then
+                    -- A cross-world frame with nowhere to go: say so, otherwise
+                    -- walking through it looks like the mod is broken.
+                    s.triggered = true
+                    local ns = rawget(_G, "yaportal")
+                    local h = ns and ns.xworld and ns.xworld.unlinked_handler
                     if h then h(pname, portal_name, pp) end
                 elseif s.entered_from_front and not s.triggered and dst
                    and not teleport_src

@@ -104,6 +104,29 @@ drawn with the Trigger Wand):
 | **Portal Gun Pedestal** (`yaportal:pedestal`) | 2x2 stand displaying a portal gun. Right-click with a gun to put it on display; walking up to the pedestal hands the gun to the player. |
 | **Trigger Wand** (`yaportal:trigger_wand`) | Draws and manages trigger spaces (pure volumes usable as bindings by doors, vents and clocks). |
 
+### Doors between worlds (`yaportal_link`)
+
+A separate mod turns a portal into a **door to another world**: you see that
+world live through it and walk into it. Each world runs as its own local
+server; the mod keeps them in sync through a shared directory.
+
+Three steps, no configuration files:
+
+1. **Build a door.** A rectangle of *Cornice Portale Intermondo* around an air
+   opening, exactly like a normal portal frame. The door is created and named
+   automatically (`Porta 1`, `Porta 2`, …).
+2. **Right-click the frame.** The panel shows that door, where it currently
+   leads, and one list with every door of every other world.
+3. **Pick a destination and press *Collega qui*.** Both doors now open onto
+   each other — the other world doesn't have to be running, it is started on
+   demand, and nothing has to be confirmed on the far side.
+
+The same panel renames a door, disconnects it, or travels to a world that has
+no door yet (*Vai lì*). `/porte` opens it from anywhere.
+
+Requires `secure.trusted_mods = yaportal_link` in `minetest.conf`: the mod
+launches the other worlds' servers itself.
+
 ---
 
 ## Building from source

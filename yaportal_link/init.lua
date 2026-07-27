@@ -4,8 +4,9 @@
 -- through a shared directory of small JSON files (one record per file, no
 -- locking needed: every file has a single writer):
 --   $DIR/worlds/<world>.json                 server presence + port (heartbeat)
---   $DIR/endpoints/<world>__<ep>.json        announced portal endpoints
---   $DIR/pairs/<aW>__<aEp>__<bW>__<bEp>.json pairing state (pending/confirmed)
+--   $DIR/endpoints/<world>__<ep>.json        the doors of a world (kept while
+--                                            it is off, so they stay pickable)
+--   $DIR/pairs/<aW>__<aEp>__<bW>__<bEp>.json two doors connected to each other
 --   $DIR/handoff/<player>.json               arrival state during a hop
 -- Crossing a paired portal writes the handoff and calls core.redirect_player
 -- (engine fork, TOCLIENT_REDIRECT): the client reconnects to the other server
@@ -59,9 +60,8 @@ if not LUANTI_BIN or LUANTI_BIN == "" then
     LUANTI_BIN = LUANTI_BIN or "luanti"
 end
 
-ie.os.execute(("mkdir -p '%s/worlds' '%s/endpoints' '%s/pairs' '%s/handoff' " ..
-    "'%s/logs' '%s/announce_req'")
-    :format(DIR, DIR, DIR, DIR, DIR, DIR))
+ie.os.execute(("mkdir -p '%s/worlds' '%s/endpoints' '%s/pairs' '%s/handoff' '%s/logs'")
+    :format(DIR, DIR, DIR, DIR, DIR))
 
 -- ── JSON file helpers (single writer per file; write is tmp+rename) ─────────
 
@@ -114,7 +114,10 @@ end
 
 -- ── endpoint state (this world's announced portals) ─────────────────────────
 
--- ep name → {portal=<yaportal name>, open=bool}
+-- Every portal built from the cross-world frame is a "door" (porta) in the UI:
+-- it is announced automatically and carries a name the player can change, so
+-- nobody has to deal with the internal portal ids.
+-- ep name → {portal=<yaportal name>, open=bool, label=<display name>}
 local my_endpoints = {}
 local storage = minetest.get_mod_storage()
 
@@ -131,6 +134,21 @@ local function save_endpoints()
 end
 
 local function ep_file(world, ep) return DIR .. "/endpoints/" .. world .. "__" .. ep .. ".json" end
+
+-- Display name of one of my doors, and a fresh default for a new one.
+local function my_label(ep)
+    local info = my_endpoints[ep]
+    return (info and info.label and info.label ~= "") and info.label or ep
+end
+
+local function next_default_label()
+    local n = 0
+    for _, info in pairs(my_endpoints) do
+        local k = tostring(info.label or ""):match("^Porta (%d+)$")
+        if k then n = math.max(n, tonumber(k)) end
+    end
+    return "Porta " .. (n + 1)
+end
 
 -- A portal is identified by name, but breaking the frame closes that portal and
 -- rebuilding it creates a differently named one. The endpoint would then point
@@ -157,35 +175,8 @@ local function rebind_endpoint(ep, info)
 end
 
 local function announce_endpoints()
-    -- Publish only cross-world endpoints (auto-registered xframe portals),
-    -- never ordinary play portals.
-    local pnames = {}
-    for _, p in ipairs(yaportal.xworld.list_portals()) do
-        if #pnames < 20 and p.node_name == XFRAME then
-            pnames[#pnames + 1] = p.name
-        end
-    end
     write_json(DIR .. "/worlds/" .. world_id .. ".json",
-        {world = world_id, addr = my_addr, port = my_port, ts = now(),
-         portals = pnames})
-    -- Remote announce requests (from another world's panel): announce one of
-    -- our portals as an endpoint without anyone having to join us first.
-    for _, fn in ipairs(list_dir(DIR .. "/announce_req")) do
-        local w, portal = fn:match("^(.-)__(.+)%.json$")
-        if w == world_id and portal then
-            if yaportal.xworld.get_portal(portal) then
-                my_endpoints[portal] = my_endpoints[portal]
-                    or {portal = portal, open = true}
-                save_endpoints()
-                minetest.log("action",
-                    "[yaportal_link] endpoint '" .. portal .. "' announced remotely")
-            else
-                minetest.log("warning", "[yaportal_link] remote announce: no portal '"
-                    .. portal .. "'")
-            end
-            remove_file(DIR .. "/announce_req/" .. fn)
-        end
-    end
+        {world = world_id, addr = my_addr, port = my_port, ts = now()})
     for ep, info in pairs(my_endpoints) do
         rebind_endpoint(ep, info)
         local pp = yaportal.xworld.get_portal(info.portal)
@@ -198,6 +189,7 @@ local function announce_endpoints()
             write_json(ep_file(world_id, ep), {
                 world = world_id, ep = ep, addr = my_addr, port = my_port,
                 portal = info.portal, open = info.open and true or false,
+                label = my_label(ep),
                 pos = {x = c.x, y = c.y, z = c.z},
                 normal = {x = n.x, y = n.y, z = n.z},
                 -- raw portal geometry, needed to rebuild the mirror portal
@@ -237,7 +229,13 @@ local function scan_pairs()
     local out = {}
     for _, fn in ipairs(list_dir(DIR .. "/pairs")) do
         local rec = read_json(DIR .. "/pairs/" .. fn)
-        if rec and rec.a and rec.b then out[fn] = rec end
+        if rec and rec.a and rec.b then
+            -- Connecting two doors is one click now: a pair file on disk means
+            -- "connected", full stop. Records left half-done by the old
+            -- request/accept handshake count as connected too.
+            rec.status = "confirmed"
+            out[fn] = rec
+        end
     end
     return out
 end
@@ -283,6 +281,49 @@ local function sync_links()
     end
 end
 
+-- ── connect / disconnect ────────────────────────────────────────────────────
+--
+-- A door is connected to exactly one other door, so connecting always means
+-- "drop whatever either side was connected to, then join these two". Both
+-- sides are described by the same file, which is why one click is enough: the
+-- other world picks the change up from the registry on its next heartbeat.
+
+local function drop_pairs_of(world, ep)
+    for fn, rec in pairs(scan_pairs()) do
+        if (rec.a.world == world and rec.a.ep == ep)
+           or (rec.b.world == world and rec.b.ep == ep) then
+            remove_file(DIR .. "/pairs/" .. fn)
+        end
+    end
+end
+
+-- The door my door is connected to: {world=, ep=} or nil.
+local function connected_to(ep)
+    for _, rec in pairs(scan_pairs()) do
+        if rec.a.world == world_id and rec.a.ep == ep then return rec.b end
+        if rec.b.world == world_id and rec.b.ep == ep then return rec.a end
+    end
+    return nil
+end
+
+local function connect_doors(mine, other_world, other_ep)
+    drop_pairs_of(world_id, mine)
+    drop_pairs_of(other_world, other_ep)
+    write_json(pair_file(world_id, mine, other_world, other_ep), {
+        a = {world = world_id, ep = mine},
+        b = {world = other_world, ep = other_ep},
+        status = "confirmed", requester = world_id .. "/" .. mine, ts = now(),
+    })
+    sync_links()
+end
+
+local function disconnect_door(mine)
+    drop_pairs_of(world_id, mine)
+    local info = my_endpoints[mine]
+    if info then yaportal.xworld.set_link(info.portal, nil) end
+    sync_links()
+end
+
 -- Every portal built from the dedicated cross-world frame is auto-registered
 -- as an endpoint (open); ordinary yaportal portals are never touched. Drops
 -- endpoints whose portal no longer exists or is no longer an xworld frame.
@@ -300,8 +341,13 @@ local function sync_xframe_endpoints()
     for _, p in ipairs(yaportal.xworld.list_portals()) do
         if p.node_name == XFRAME then
             if not claimed[p.name] and not my_endpoints[p.name] then
-                my_endpoints[p.name] = {portal = p.name, open = true}
+                local label = next_default_label()
+                my_endpoints[p.name] = {portal = p.name, open = true,
+                    label = label}
                 claimed[p.name] = true
+                minetest.chat_send_all(minetest.colorize("#88CCFF",
+                    ("[porta] '%s' creata. Click destro sulla cornice per " ..
+                     "scegliere in che mondo porta."):format(label)))
             end
         elseif p.xworld then
             -- An ORDINARY play portal must never carry a cross-world link.
@@ -525,6 +571,18 @@ yaportal.xworld.handler = function(pname, portal_name, pp)
     if slot and core.xworld_swap_player then
         swapped = core.xworld_swap_player(pname, addr, port, slot,
             other.world, other.ep)
+    end
+
+    -- Why a crossing fell back to a redirect: either this portal has no engine
+    -- slot, or the server does not hold the client's passive session as ready
+    -- for this exact address:port. Print both sides so the mismatch is visible.
+    if not swapped then
+        local sr, sa, sp, sw = nil, nil, nil, nil
+        if core.player_dual_ready then sr, sa, sp, sw = core.player_dual_ready(pname) end
+        minetest.log("action", ("[yaportal_link] swap-miss %s: slot=%s pass=%s:%s || " ..
+            "server-sees ready=%s %s:%s world=%s")
+            :format(pname, tostring(slot), tostring(addr), tostring(port),
+                tostring(sr), tostring(sa), tostring(sp), tostring(sw)))
     end
 
     minetest.log("action", ("[yaportal_link] %s crosses '%s' -> %s/%s (%s:%d)%s")
@@ -753,9 +811,16 @@ local function start_world(wname)
     return port
 end
 
--- ── pairing panel ────────────────────────────────────────────────────────────
+-- ── the panel: one door, one destination ────────────────────────────────────
+--
+-- The whole feature is two ideas: a door (a portal built from the cross-world
+-- frame) and the door it leads to. So the panel shows exactly that — the door
+-- you clicked, and one list with every door of every other world to pick its
+-- destination from. Worlds that are not running are listed too and started on
+-- demand: nothing has to be prepared in advance, and there is no endpoint to
+-- announce, no request to accept, no portal name to type.
 
--- pname → {remote_keys={...}, pending_files={...}, offline_worlds={...}}
+-- pname → {mine=<my ep>, doors={...}, rows={...}, sel=<row index>}
 local panel_ctx = {}
 
 local function esc(s) return minetest.formspec_escape(tostring(s)) end
@@ -766,128 +831,196 @@ local function panel_allowed(pname)
         or minetest.check_player_privs(pname, {server = true})
 end
 
+local function my_doors()
+    local out = {}
+    for ep in pairs(my_endpoints) do out[#out + 1] = ep end
+    table.sort(out, function(a, b) return my_label(a) < my_label(b) end)
+    return out
+end
+
+local function door_display(eps, world, ep)
+    if world == world_id then return world .. " / " .. my_label(ep) end
+    local rec = eps[world .. "/" .. ep]
+    return world .. " / " .. ((rec and rec.label) or ep)
+end
+
+local function is_local_world(wname)
+    for _, w in ipairs(local_worlds()) do
+        if w == wname then return true end
+    end
+    return false
+end
+
+-- Rows of the destination list: every door of every other world, plus the
+-- worlds that have no door yet (they can still be started and visited).
+local function destination_rows()
+    local rows, eps, run, seen = {}, scan_endpoints(), running_worlds(), {}
+
+    -- who is connected to whom, so a door that is taken says so
+    local taken = {}
+    for _, rec in pairs(scan_pairs()) do
+        taken[rec.a.world .. "/" .. rec.a.ep] = rec.b
+        taken[rec.b.world .. "/" .. rec.b.ep] = rec.a
+    end
+
+    for key, rec in pairs(eps) do
+        if rec.world ~= world_id then
+            seen[rec.world] = true
+            rows[#rows + 1] = {kind = "door", world = rec.world, ep = rec.ep,
+                label = rec.label or rec.ep,
+                online = rec.online and true or false,
+                taken = taken[key],
+                taken_txt = taken[key]
+                    and door_display(eps, taken[key].world, taken[key].ep)}
+        end
+    end
+    for w in pairs(run) do
+        if w ~= world_id and not seen[w] then
+            seen[w] = true
+            rows[#rows + 1] = {kind = "world", world = w, online = true}
+        end
+    end
+    for _, w in ipairs(local_worlds()) do
+        if w ~= world_id and not seen[w] then
+            rows[#rows + 1] = {kind = "world", world = w, online = false}
+        end
+    end
+
+    -- Worlds that are up first, then alphabetical: what is usable right now
+    -- sits at the top of the list.
+    table.sort(rows, function(a, b)
+        if a.online ~= b.online then return a.online end
+        if a.world ~= b.world then return a.world < b.world end
+        return (a.label or "") < (b.label or "")
+    end)
+    return rows
+end
+
+local function row_text(row, mine)
+    if row.kind == "world" then
+        return row.online
+            and ("%s  --  acceso, nessuna porta li'"):format(row.world)
+            or  ("%s  --  spento, nessuna porta li'"):format(row.world)
+    end
+    local where = ("%s / %s"):format(row.world, row.label)
+    local t = row.taken
+    if t and t.world == world_id and t.ep == mine then
+        return ("%s  --  COLLEGATA a questa porta"):format(where)
+    elseif t then
+        return ("%s  --  occupata: va a %s"):format(where, row.taken_txt)
+    end
+    return row.online and (where .. "  --  libera")
+        or (where .. "  --  mondo spento (lo avvio io)")
+end
+
 local function build_panel_form(pname)
-    local ctx = {remote_keys = {}, pending_files = {}, offline_worlds = {},
-        online_worlds = {}}
+    local ctx = panel_ctx[pname] or {}
     panel_ctx[pname] = ctx
 
-    local eps = scan_endpoints()
-    local prs = scan_pairs()
-    local run = running_worlds()
+    local doors = my_doors()
+    ctx.doors = doors
+    if not ctx.mine or not my_endpoints[ctx.mine] then ctx.mine = doors[1] end
 
-    -- pair status per endpoint key
-    local paired, pending_out, pending_in = {}, {}, {}
-    for fn, rec in pairs(prs) do
-        local ka = rec.a.world .. "/" .. rec.a.ep
-        local kb = rec.b.world .. "/" .. rec.b.ep
-        if rec.status == "confirmed" then
-            paired[ka], paired[kb] = kb, ka
-        elseif rec.status == "pending" then
-            pending_out[ka] = kb
-            pending_in[kb] = {other = ka, file = fn}
+    -- Nothing to configure yet: say how to make a door instead of showing
+    -- empty lists.
+    if #doors == 0 then
+        return table.concat({
+            "formspec_version[4]",
+            "size[11,5.4]",
+            "label[0.4,0.6;Porte fra i mondi  --  sei nel mondo: " .. esc(world_id) .. "]",
+            "label[0.4,1.6;In questo mondo non c'e' ancora nessuna porta.]",
+            "label[0.4,2.2;Costruisci un rettangolo di 'Cornice Portale Intermondo' attorno]",
+            "label[0.4,2.7;a un'apertura d'aria, come una normale cornice yaportal.]",
+            "label[0.4,3.4;La porta nasce da sola e compare qui: poi le scegli la destinazione.]",
+            "button[0.4,4.3;2.2,0.8;refresh;Aggiorna]",
+            "button_exit[8.4,4.3;2.2,0.8;close;Chiudi]",
+        })
+    end
+
+    local eps  = scan_endpoints()
+    local rows = destination_rows()
+    ctx.rows = rows
+
+    -- Where this door leads right now.
+    local dest = connected_to(ctx.mine)
+    local status
+    if dest then
+        local drec = eps[dest.world .. "/" .. dest.ep]
+        status = "Adesso porta a:  " .. door_display(eps, dest.world, dest.ep)
+        if not (drec and drec.online) then
+            status = status .. "   (mondo spento: la porta si riaccende da sola)"
         end
+    else
+        status = "Questa porta non e' collegata: scegli qui sotto dove deve portare."
+    end
+
+    -- Door names in the dropdown; the field beside it renames the selected one.
+    local names, cur = {}, 1
+    for i, ep in ipairs(doors) do
+        names[i] = esc(my_label(ep))
+        if ep == ctx.mine then cur = i end
+    end
+
+    local list = {}
+    for i, row in ipairs(rows) do
+        list[i] = esc(row_text(row, ctx.mine))
+    end
+    if #list == 0 then
+        list[1] = esc("(nessun altro mondo trovato in " .. WORLDS_DIR .. ")")
     end
 
     local fs = {
         "formspec_version[4]",
-        "size[13,12.8]",
-        "label[0.4,0.5;Portali intermondo — mondo: " .. esc(world_id) .. "]",
+        "size[12,10.2]",
+        "label[0.4,0.6;Porte fra i mondi  --  sei nel mondo: " .. esc(world_id) .. "]",
+
+        "label[0.4,1.5;Porta:]",
+        "dropdown[1.4,1.2;4.0,0.7;mine;" .. table.concat(names, ",") ..
+            ";" .. cur .. ";true]",
+        "field[5.7,1.2;3.6,0.7;newname;;" .. esc(my_label(ctx.mine)) .. "]",
+        "field_close_on_enter[newname;false]",
+        "button[9.5,1.2;2.1,0.7;rename;Rinomina]",
+
+        "box[0.4,2.2;11.2,0.8;#3a3a3aff]",
+        "label[0.6,2.6;" .. esc(status) .. "]",
+
+        "label[0.4,3.5;Scegli dove deve portare:]",
+        "textlist[0.4,3.8;11.2,4.2;dests;" .. table.concat(list, ",") ..
+            ";" .. (ctx.sel or 0) .. ";false]",
+
+        "button[0.4,8.2;2.6,0.8;connect;Collega qui]",
+        "button[3.1,8.2;2.4,0.8;disconnect;Scollega]",
+        "button[5.6,8.2;3.0,0.8;goto_world;Vai li' (senza portale)]",
+        "button[8.7,8.2;1.4,0.8;refresh;Aggiorna]",
+        "button_exit[10.2,8.2;1.4,0.8;close;Chiudi]",
+
+        "label[0.4,9.4;'Collega qui' apre le due porte una sull'altra, nei due sensi. " ..
+            "Un mondo spento parte da solo.]",
+        "label[0.4,9.9;Attraversa la porta per passare nell'altro mondo.]",
     }
-
-    -- My cross-world endpoints: portals built from the dedicated frame, auto
-    -- registered. Ordinary play portals never appear here.
-    local ep_names = {}
-    for ep in pairs(my_endpoints) do ep_names[#ep_names + 1] = ep end
-    table.sort(ep_names)
-    local portals_dd = #ep_names > 0 and table.concat(ep_names, ",")
-        or "(nessun portale intermondo qui)"
-
-    -- My endpoints
-    fs[#fs + 1] = "label[0.4,1.2;I MIEI portali intermondo (cornice viola):]"
-    local my_list = {}
-    for _, ep in ipairs(ep_names) do
-        local key = world_id .. "/" .. ep
-        local st = paired[key] and ("accoppiato con " .. paired[key])
-            or pending_out[key] and ("richiesta inviata a " .. pending_out[key])
-            or pending_in[key] and ("richiesta DA " .. pending_in[key].other)
-            or "libero"
-        my_list[#my_list + 1] = esc(ep .. "  [" .. st .. "]")
-    end
-    fs[#fs + 1] = "textlist[0.4,1.6;5.8,2.2;my_eps;" .. table.concat(my_list, ",") .. "]"
-    fs[#fs + 1] = "label[0.4,4.0;Costruisci una cornice viola per creare un portale intermondo.]"
-
-    -- Remote endpoints
-    fs[#fs + 1] = "label[6.8,1.2;Endpoint remoti online:]"
-    local remote_list = {}
-    for key, rec in pairs(eps) do
-        if rec.world ~= world_id and rec.online then
-            ctx.remote_keys[#ctx.remote_keys + 1] = key
-            local st = paired[key] and "accoppiato" or "libero"
-            remote_list[#remote_list + 1] = esc(key .. "  [" .. st .. "]")
-        end
-    end
-    fs[#fs + 1] = "textlist[6.8,1.6;5.8,2.2;remotes;" .. table.concat(remote_list, ",") .. "]"
-    fs[#fs + 1] = "field[6.8,4.3;3.4,0.7;pair_from;Mio endpoint da collegare;]"
-    fs[#fs + 1] = "button[10.4,4.3;2.2,0.7;pair_req;Richiedi collegamento]"
-
-    -- Incoming requests
-    fs[#fs + 1] = "label[0.4,5.5;Richieste in arrivo:]"
-    local in_list = {}
-    for key, p in pairs(pending_in) do
-        local w, e = key:match("([^/]+)/(.+)")
-        if w == world_id and my_endpoints[e] then
-            ctx.pending_files[#ctx.pending_files + 1] = p.file
-            in_list[#in_list + 1] = esc(p.other .. "  ->  " .. key)
-        end
-    end
-    fs[#fs + 1] = "textlist[0.4,5.9;5.8,1.8;pending;" .. table.concat(in_list, ",") .. "]"
-    fs[#fs + 1] = "button[0.4,7.9;1.6,0.7;accept;Accetta]"
-    fs[#fs + 1] = "button[2.2,7.9;1.6,0.7;reject;Rifiuta]"
-
-    -- Offline local worlds (on-demand start)
-    fs[#fs + 1] = "label[6.8,5.5;Mondi locali fermi (avvio on-demand):]"
-    local off_list = {}
-    for _, w in ipairs(local_worlds()) do
-        if w ~= world_id and not run[w] then
-            ctx.offline_worlds[#ctx.offline_worlds + 1] = w
-            off_list[#off_list + 1] = esc(w)
-        end
-    end
-    fs[#fs + 1] = "textlist[6.8,5.9;5.8,1.8;offline;" .. table.concat(off_list, ",") .. "]"
-    fs[#fs + 1] = "button[6.8,7.9;2.2,0.7;start_world;Avvia mondo]"
-
-    -- Online worlds (running servers), with or without announced endpoints:
-    -- jump straight to their spawn, or announce one of their portals from here.
-    fs[#fs + 1] = "label[0.4,8.8;Mondi online:]"
-    local on_list = {}
-    for w, rec in pairs(run) do
-        if w ~= world_id then
-            ctx.online_worlds[#ctx.online_worlds + 1] = rec
-            local plist = rec.portals and #rec.portals > 0
-                and table.concat(rec.portals, ", ") or "nessun portale"
-            on_list[#on_list + 1] = esc(("%s (:%d) — %s"):format(w, rec.port or 0, plist))
-        end
-    end
-    fs[#fs + 1] = "textlist[0.4,9.1;7.0,1.6;online;" .. table.concat(on_list, ",") .. "]"
-    fs[#fs + 1] = "button[8.0,9.1;2.0,0.7;goto_world;Vai (spawn)]"
-    fs[#fs + 1] = "button[10.2,9.1;2.4,0.7;rannounce;Annuncia remoto]"
-    -- One-click link: my local portal <-> a portal of the selected online world.
-    fs[#fs + 1] = "label[0.4,10.5;Collega un MIO portale a uno del mondo online selezionato:]"
-    fs[#fs + 1] = "dropdown[0.4,10.9;3.2,0.7;link_mine;" .. portals_dd .. ";1]"
-    fs[#fs + 1] = "field[3.8,10.9;3.2,0.7;link_theirs;SUO portale (vedi riga);]"
-    fs[#fs + 1] = "button[7.2,10.9;2.4,0.7;link_direct;Collega i due]"
-
-    fs[#fs + 1] = "button[0.4,11.9;2.0,0.7;refresh;Aggiorna]"
-    fs[#fs + 1] = "button_exit[10.6,11.9;2.0,0.7;close;Chiudi]"
     return table.concat(fs)
 end
 
-local function show_panel(pname)
+local function show_panel(pname, ep)
+    local ctx = panel_ctx[pname] or {}
+    panel_ctx[pname] = ctx
+    if ep and my_endpoints[ep] then
+        if ctx.mine ~= ep then ctx.sel = nil end
+        ctx.mine = ep
+    end
     minetest.show_formspec(pname, "yaportal_link:panel", build_panel_form(pname))
 end
 
-minetest.register_chatcommand("worldportals", {
-    description = "Pannello portali intermondo",
+-- The door a portal belongs to, by portal name.
+local function ep_of_portal(portal_name)
+    for ep, info in pairs(my_endpoints) do
+        if info.portal == portal_name then return ep end
+    end
+    return nil
+end
+
+minetest.register_chatcommand("porte", {
+    description = "Pannello delle porte fra i mondi",
     privs = {server = true},
     func = function(pname)
         show_panel(pname)
@@ -895,17 +1028,25 @@ minetest.register_chatcommand("worldportals", {
     end,
 })
 
--- Escape hatch: get out of the hidden mirror region (y ~24000) back to a local
--- cross-world portal, or to spawn.
+-- Old name, kept so existing habits and docs keep working.
+minetest.register_chatcommand("worldportals", {
+    description = "Pannello delle porte fra i mondi (alias di /porte)",
+    privs = {server = true},
+    func = function(pname)
+        show_panel(pname)
+        return true
+    end,
+})
+
 minetest.register_chatcommand("portalhome", {
-    description = "Torna a un portale intermondo (o allo spawn) — esci dalla mirror region",
+    description = "Torna a una porta intermondo di questo mondo (o allo spawn)",
     func = function(pname)
         local player = minetest.get_player_by_name(pname)
         if not player then return false end
         for _, p in ipairs(yaportal.xworld.list_portals()) do
             if my_endpoints[p.name] and p.pos then
                 player:set_pos({x = p.pos.x, y = p.pos.y - 0.5, z = p.pos.z})
-                return true, "Riportato al portale intermondo '" .. p.name .. "'."
+                return true, "Riportato alla porta '" .. my_label(p.name) .. "'."
             end
         end
         local sp = minetest.setting_get_pos and minetest.setting_get_pos("static_spawnpoint")
@@ -915,7 +1056,7 @@ minetest.register_chatcommand("portalhome", {
 })
 
 minetest.register_node("yaportal_link:panel", {
-    description = "Pannello portali intermondo",
+    description = "Pannello delle porte fra i mondi",
     tiles = {"yaportal_link_panel.png"},
     groups = {cracky = 3, oddly_breakable_by_hand = 2},
     on_rightclick = function(pos, node, clicker)
@@ -930,11 +1071,13 @@ minetest.register_node("yaportal_link:panel", {
 
 -- Dedicated cross-world portal frame. Built like a normal yaportal frame
 -- (rectangle of these nodes around an air opening), but the resulting portal
--- is a cross-world endpoint, not an in-world play portal.
+-- is a door to another world, not an in-world play portal.
 yaportal.xworld.register_frame_material(XFRAME)
 minetest.register_node(XFRAME, {
-    description = "Cornice Portale Intermondo\n(costruisci un rettangolo attorno " ..
-        "a un'apertura d'aria, come una cornice yaportal)",
+    description = "Cornice Portale Intermondo\n" ..
+        "1. costruisci un rettangolo attorno a un'apertura d'aria\n" ..
+        "2. click destro sulla cornice\n" ..
+        "3. scegli in che mondo deve portare",
     tiles = {"yaportal_link_frame.png"},
     groups = {cracky = 2, oddly_breakable_by_hand = 2},
     after_place_node = function(pos, placer)
@@ -944,11 +1087,24 @@ minetest.register_node(XFRAME, {
         yaportal.xworld.deactivate_frame(pos)
     end,
     on_rightclick = function(pos, node, clicker)
-        -- Configuring a cross-world frame opens the linking panel directly.
+        -- Right-clicking a frame configures *that* door: no picking it out of a
+        -- list, no typing its name.
         local pname = clicker:get_player_name()
-        if panel_allowed(pname) then show_panel(pname) end
+        if not panel_allowed(pname) then
+            minetest.chat_send_player(pname, "Serve il privilegio 'server'.")
+            return
+        end
+        local portal = yaportal.xworld.portal_at and yaportal.xworld.portal_at(pos)
+        show_panel(pname, portal and ep_of_portal(portal))
     end,
 })
+
+-- Walking into a door that leads nowhere: without this it looks broken.
+yaportal.xworld.unlinked_handler = function(pname, portal_name)
+    minetest.chat_send_player(pname, minetest.colorize("#FFAA55",
+        "[porta] Questa porta non porta ancora da nessuna parte. Click destro " ..
+        "sulla cornice per scegliere il mondo di destinazione."))
+end
 
 -- Per-game recipes: obsidian-ish walls around a light source. Registered only
 -- when the ingredients exist, so no "unknown item" spam on games that lack them.
@@ -978,158 +1134,147 @@ minetest.register_on_mods_loaded(function()
     add_frame_recipe("br_core:wallpaper_0", "br_core:ceiling_light_0")
 end)
 
--- selection state per player (textlist indexes)
-local sel = {}
+-- ── panel actions ───────────────────────────────────────────────────────────
+
+local function say(pname, msg, color)
+    minetest.chat_send_player(pname, color and minetest.colorize(color, msg) or msg)
+end
+
+-- Travel to a world without going through a portal. If it is not running,
+-- start it and hop as soon as it answers.
+local function travel_to(pname, wname)
+    local rec = running_worlds()[wname]
+    local function hop(r)
+        if not minetest.get_player_by_name(pname) then return end
+        write_handoff(pname, {player = pname, to_world = wname, ts = now()})
+        minetest.close_formspec(pname, "yaportal_link:panel")
+        core.redirect_player(pname, r.addr, r.port)
+    end
+    if rec then hop(rec) return end
+    if not is_local_world(wname) then
+        say(pname, ("Il mondo '%s' non e' su questo computer."):format(wname), "#FFAA55")
+        return
+    end
+    if not start_world(wname) then
+        say(pname, ("Non riesco ad avviare '%s': binario luanti non trovato " ..
+            "(imposta yaportal_link_bin)."):format(wname), "#FF5555")
+        return
+    end
+    say(pname, ("Avvio '%s'... ti porto li' appena e' pronto."):format(wname))
+    local tries = 0
+    local function poll()
+        tries = tries + 1
+        local r = running_worlds()[wname]
+        if r then
+            hop(r)
+        elseif tries < 25 then
+            minetest.after(1, poll)
+        else
+            say(pname, ("'%s' non si e' avviato: guarda %s/logs/%s.log.")
+                :format(wname, DIR, wname), "#FF5555")
+        end
+    end
+    minetest.after(2, poll)
+end
+
+local function do_connect(pname, ctx)
+    local row = ctx.sel and ctx.rows and ctx.rows[ctx.sel]
+    if not row then
+        say(pname, "Scegli prima una destinazione nella lista.", "#FFAA55")
+        return
+    end
+    if row.kind == "world" then
+        -- A world with no door of its own: get it running, the door has to be
+        -- built there.
+        if not row.online then
+            if start_world(row.world) then
+                say(pname, ("Avvio '%s'. Quando e' acceso, vai li', costruisci una " ..
+                    "cornice viola e torna qui: la sua porta comparira' nella lista.")
+                    :format(row.world))
+            else
+                say(pname, ("Non riesco ad avviare '%s': binario luanti non trovato " ..
+                    "(imposta yaportal_link_bin)."):format(row.world), "#FF5555")
+            end
+        else
+            say(pname, ("'%s' non ha ancora una porta: usa 'Vai li'', costruisci una " ..
+                "cornice viola e torna qui."):format(row.world), "#FFAA55")
+        end
+        return
+    end
+
+    -- A door on the other side: connect, and wake its world up if it is down so
+    -- the link goes live by itself.
+    connect_doors(ctx.mine, row.world, row.ep)
+    local started = false
+    if not row.online and is_local_world(row.world)
+       and not running_worlds()[row.world] then
+        started = start_world(row.world) ~= nil
+    end
+    say(pname, ("Fatto: '%s' adesso porta a %s / %s.%s"):format(
+        my_label(ctx.mine), row.world, row.label,
+        (row.online or started) and "" or " (accendi quel mondo per attraversarla)"),
+        "#55FF55")
+end
 
 minetest.register_on_player_receive_fields(function(player, formname, fields)
     if formname ~= "yaportal_link:panel" then return end
     local pname = player:get_player_name()
     if not panel_allowed(pname) then return true end
-    local ctx = panel_ctx[pname] or {remote_keys = {}, pending_files = {}, offline_worlds = {}}
-    sel[pname] = sel[pname] or {}
+    local ctx = panel_ctx[pname]
+    if not ctx then show_panel(pname) return true end
 
-    for _, f in ipairs({"remotes", "pending", "offline", "online"}) do
-        if fields[f] then
-            local ev = minetest.explode_textlist_event(fields[f])
-            if ev.type == "CHG" then sel[pname][f] = ev.index end
-        end
-    end
+    -- Every element submits its value on any event, so the door dropdown is
+    -- read first and only the button actually pressed decides what happens.
+    local was = ctx.mine
+    local di = tonumber(fields.mine)
+    if di and ctx.doors and ctx.doors[di] then ctx.mine = ctx.doors[di] end
 
-    if fields.announce and fields.new_ep and fields.new_ep ~= "" then
-        local portal = fields.new_ep
-        if yaportal.xworld.get_portal(portal) then
-            my_endpoints[portal] = {portal = portal, open = false}
-            save_endpoints()
-            announce_endpoints()
-            minetest.chat_send_player(pname, "Endpoint '" .. portal .. "' annunciato.")
-        else
-            minetest.chat_send_player(pname, "Portale yaportal '" .. portal .. "' inesistente.")
-        end
-        show_panel(pname)
-    elseif fields.pair_req then
-        local idx = sel[pname].remotes
-        local key = idx and ctx.remote_keys[idx]
-        local mine = fields.pair_from or ""
-        if key and my_endpoints[mine] then
-            local bw, be = key:match("([^/]+)/(.+)")
-            write_json(pair_file(world_id, mine, bw, be), {
-                a = {world = world_id, ep = mine}, b = {world = bw, ep = be},
-                status = "pending", requester = world_id .. "/" .. mine, ts = now(),
-            })
-            minetest.chat_send_player(pname, "Richiesta inviata a " .. key .. ".")
-        else
-            minetest.chat_send_player(pname,
-                "Seleziona un endpoint remoto e indica un tuo endpoint valido.")
-        end
-        show_panel(pname)
-    elseif fields.accept or fields.reject then
-        local idx = sel[pname].pending
-        local fn = idx and ctx.pending_files[idx]
-        if fn then
-            local path = DIR .. "/pairs/" .. fn
-            if fields.accept then
-                local rec = read_json(path)
-                if rec then
-                    rec.status = "confirmed"
-                    rec.ts = now()
-                    write_json(path, rec)
-                    minetest.chat_send_player(pname, "Collegamento confermato.")
-                    sync_links()
-                end
-            else
-                remove_file(path)
-                minetest.chat_send_player(pname, "Richiesta rifiutata.")
-            end
-        end
-        show_panel(pname)
-    elseif fields.goto_world then
-        local idx = sel[pname].online
-        local rec = idx and ctx.online_worlds[idx]
-        if rec then
-            write_handoff(pname, {
-                player = pname, to_world = rec.world, ts = now(),
-            })
-            minetest.close_formspec(pname, "yaportal_link:panel")
-            core.redirect_player(pname, rec.addr, rec.port)
-        else
-            minetest.chat_send_player(pname, "Seleziona un mondo online.")
+    if fields.dests then
+        local ev = minetest.explode_textlist_event(fields.dests)
+        if ev.type == "CHG" or ev.type == "DCL" then ctx.sel = ev.index end
+        if ev.type == "DCL" then
+            do_connect(pname, ctx)
             show_panel(pname)
+            return true
         end
-    elseif fields.rannounce then
-        local idx = sel[pname].online
-        local rec = idx and ctx.online_worlds[idx]
-        local portal = fields.rannounce_portal or ""
-        if rec and portal ~= "" then
-            write_json(DIR .. "/announce_req/" .. rec.world .. "__" .. portal .. ".json",
-                {world = rec.world, portal = portal, ts = now()})
-            minetest.chat_send_player(pname,
-                ("Richiesta inviata: '%s' su '%s' — comparirà tra gli endpoint " ..
-                 "remoti entro qualche secondo."):format(portal, rec.world))
-        else
-            minetest.chat_send_player(pname,
-                "Seleziona un mondo online e scrivi il nome di un suo portale.")
-        end
-        show_panel(pname)
-    elseif fields.link_direct then
-        -- One click: announce my local portal, ask the remote world to announce
-        -- its portal, and create the confirmed pair. The link activates as soon
-        -- as the remote endpoint comes online (sync_links waits for it).
-        local idx = sel[pname].online
-        local rec = idx and ctx.online_worlds[idx]
-        local mine = fields.link_mine or ""
-        local theirs = fields.link_theirs or ""
-        if not rec then
-            minetest.chat_send_player(pname, "Seleziona prima un mondo online.")
-        elseif mine == "" or mine:sub(1, 1) == "(" or theirs == "" then
-            minetest.chat_send_player(pname,
-                "Serve un TUO portale intermondo (cornice viola) e il nome del " ..
-                "portale remoto.")
-        elseif not my_endpoints[mine] then
-            minetest.chat_send_player(pname,
-                "'" .. mine .. "' non e' un portale intermondo di questo mondo.")
-        else
-            -- my local endpoint
-            my_endpoints[mine] = my_endpoints[mine] or {portal = mine, open = true}
+        -- A plain selection must not rebuild the form: that would drop it.
+        if ev.type == "CHG" then return true end
+    end
+
+    if fields.rename then
+        local nm = (fields.newname or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        local info = ctx.mine and my_endpoints[ctx.mine]
+        if info and nm ~= "" then
+            info.label = nm:sub(1, 24)
             save_endpoints()
             announce_endpoints()
-            -- remote endpoint request
-            write_json(DIR .. "/announce_req/" .. rec.world .. "__" .. theirs .. ".json",
-                {world = rec.world, portal = theirs, ts = now()})
-            -- confirmed pair (order by world name for a stable filename)
-            local pa = {world = world_id, ep = mine}
-            local pb = {world = rec.world, ep = theirs}
-            write_json(pair_file(pa.world, pa.ep, pb.world, pb.ep), {
-                a = pa, b = pb, status = "confirmed",
-                requester = world_id .. "/" .. mine, ts = now(),
-            })
-            sync_links()
-            minetest.chat_send_player(pname, minetest.colorize("#55FF55",
-                ("Collegato '%s' <-> %s/'%s'. Il portale si attiva appena il " ..
-                 "mondo remoto annuncia il suo (pochi secondi)."):format(
-                 mine, rec.world, theirs)))
+            say(pname, "Porta rinominata: " .. info.label)
         end
-        show_panel(pname)
-    elseif fields.start_world then
-        local idx = sel[pname].offline
-        local w = idx and ctx.offline_worlds[idx]
-        if w then
-            local port = start_world(w)
-            minetest.chat_send_player(pname, port
-                and ("Avvio '%s' sulla porta %d — comparirà tra i mondi online."):format(w, port)
-                or ("Impossibile avviare '%s': binario luanti non trovato " ..
-                    "(imposta yaportal_link_bin)."):format(w))
+    elseif fields.connect then
+        do_connect(pname, ctx)
+    elseif fields.disconnect then
+        if ctx.mine then
+            disconnect_door(ctx.mine)
+            say(pname, ("'%s' non porta piu' da nessuna parte."):format(my_label(ctx.mine)))
         end
-        show_panel(pname)
-    elseif fields.refresh then
-        show_panel(pname)
+    elseif fields.goto_world then
+        local row = ctx.sel and ctx.rows and ctx.rows[ctx.sel]
+        if row then
+            travel_to(pname, row.world)
+            return true
+        end
+        say(pname, "Scegli prima un mondo nella lista.", "#FFAA55")
+    elseif not fields.refresh and ctx.mine == was then
+        -- Nothing to do (quit/esc, or an event we don't act on).
+        return true
     end
+
+    show_panel(pname)
     return true
 end)
 
 minetest.register_on_leaveplayer(function(player)
-    local pname = player:get_player_name()
-    panel_ctx[pname] = nil
-    sel[pname] = nil
+    panel_ctx[player:get_player_name()] = nil
 end)
 
 -- ── retired: mirror region ──────────────────────────────────────────────────
@@ -1246,18 +1391,17 @@ do
     if rec and (now() - (rec.ts or 0)) < T_ONLINE then
         error("\n\nIl mondo '" .. world_id .. "' e' GIA' AVVIATO come server " ..
             "(porta " .. tostring(rec.port) .. ").\nNon aprirlo una seconda " ..
-            "volta: entra in un altro mondo e usa 'Vai' dal pannello " ..
-            "/worldportals per raggiungerlo.\n")
+            "volta: entra in un altro mondo e raggiungilo con \"Vai li'\" dal " ..
+            "pannello /porte.\n")
     end
 end
 
--- Clean shutdown: retire our registry entries so the world can be reopened
--- immediately (the double-open guard only trips on a *live* heartbeat).
+-- Clean shutdown: retire the presence record so the world can be reopened
+-- immediately (the double-open guard only trips on a *live* heartbeat). The
+-- endpoint files stay: a door of a world that is currently off is still a
+-- destination you can pick — the panel starts the world when you do.
 minetest.register_on_shutdown(function()
     remove_file(DIR .. "/worlds/" .. world_id .. ".json")
-    for ep in pairs(my_endpoints) do
-        remove_file(ep_file(world_id, ep))
-    end
 end)
 
 -- First announce shortly after startup (portals from mod storage may need a tick)
