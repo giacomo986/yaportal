@@ -69,6 +69,17 @@ Funzioni aggiunte non previste in questa lista, già operative:
 
 ---
 
+### ✅ 15. Porte cross-game (mondo destinazione con gioco diverso) · 🟢+🔴
+Gioco FPS minimale `yafps/` (arena, fucile hitscan `yafps_weapons.fire_ray`,
+bersagli/droni con respawn, HUD crosshair+munizioni, movimento arcade) come
+destinazione portale. Pannello `/porte` → "Nuovo mondo…": nome + dropdown dei
+giochi installati (`installed_games()`/`create_world()` in `yaportal_link`,
+world.mt completo). Mondo yafps nasce con la porta intermondo già attiva nel
+muro nord dell'arena. Engine: warning `[xworld] media collision` quando la
+sessione passiva sovrascrive un'immagine con contenuto diverso (cache texture
+condivisa per nome — convenzione: media tutti prefissati `yafps_`, verificati
+0 collisioni contro VoxeLibre). Vedi AGENTS.MD sezione YaFPS.
+
 ## Funzionalità future
 
 ### ❌ 3. Sezione di entità attraverso il piano portale  · 🔴 Difficile
@@ -207,9 +218,13 @@ esiste (`close_portal`/`deactivate_if_frame`).
   Se un hop fa i capricci dopo tante ricostruzioni, ispezionare
   `~/.minetest/yaportal_link/`.
 
-- **BUG-10 — "moved too fast" all'arrivo intermondo (DA INDAGARE).** Dopo lo swap
-  il server B logga `Il_puzzone moved too fast: resetting position` (anti-cheat).
-  Il primo è il salto del teletrasporto; i successivi (H~4) sono sospetti,
-  probabile `physics_override` residuo del park al momento dell'unpark. Non blocca
-  ma può causare scatti di posizione all'arrivo. Da verificare il timing
-  park→unpark→set_pos.
+- **BUG-10 — "moved too fast" all'arrivo intermondo (RISOLTO 2026-07-28).**
+  L'ipotesi era giusta: `park()` al join fotografava la `physics_override`
+  PRIMA del callback di join del game (ordine di load game-vs-globali non
+  garantito), quindi l'unpark ripristinava i moltiplicatori default e
+  l'anti-cheat calcolava la velocità ammessa dal valore sbagliato (H~4 =
+  sempre al limite → reset di posizione; su yafps annullava anche il
+  movimento arcade). Fix: `park()` ri-fotografa e ri-congela in
+  `minetest.after(0)`, dopo tutti i callback di join. Attenzione alla
+  trappola che l'ha mascherato: i server-mondo in background caricano il Lua
+  all'avvio — dopo un fix mod vanno riavviati (hazard in AGENTS.MD).

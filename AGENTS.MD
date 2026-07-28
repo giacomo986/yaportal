@@ -445,10 +445,45 @@ that first when a hop is not seamless.
   crossing into a redirect. The backoff `teardown()`s (clearing `m_secondary`)
   before it retries, so a session still present is one to keep.
 
-- **A cross-world frame is one game per world, but v1 assumes both worlds share
-  media/nodedef.** Different games do connect and render (confirmed
-  mineclone2 ↔ backroomtest), but treat heterogeneous games as unsupported when
-  something looks wrong before blaming the swap code.
+- **`TOSERVER_XWORLD_STATUS` must be re-sent on a timer while the passive
+  session is Ready — never fire-and-forget.** The primary server drops in-game
+  packets until the client is `CS_Active` there, and world A can keep loading
+  for tens of seconds after the passive is already Ready, so a one-shot status
+  can vanish ("Got packet command 84 ... Dropping packet."). The server then
+  holds `ready=false` forever and EVERY crossing of the session falls back to
+  a redirect (`swap-miss ... server-sees ready=false :0 world=`). Same
+  deafness window the `/xworld_park` announcement already works around; the
+  status heartbeat in `stepSecondaryClient` (2s) is the cure — keep it.
+
+- **Passive-target precedence and re-pairing.** The pair registry
+  (`core.set_xworld_target`) WINS over the `yaportal_dualtest_*` settings
+  whenever the mods have published a target; the dualtest override is only the
+  no-pairing smoke fallback (`Game::secondaryTarget`). Letting the override
+  win kept the passive glued to the test port after pairing a door inside a
+  `play_dualtest.sh` session: black portal, crossing degraded to redirect —
+  and a redirect out of a singleplayer-hosted world KILLS that world's server,
+  so the return door goes offline too (a swap keeps it hosted). Retargeting
+  (`stepSecondaryClient`): a target naming a DIFFERENT world (≠ the session's
+  `target_world` AND ≠ `m_current_world`) is a deliberate re-pair and is
+  followed even by a Ready or pinned (just-swapped) session — without the
+  pinned bypass, re-pairing after ANY crossing left the passive stuck on the
+  old world. The `m_current_world` exclusion keeps the M8 protection: right
+  after a swap the registry still names the world just entered, and treating
+  that as a re-pair would drop the freshly demoted session. Same-world
+  addr:port changes (registry flap / stale endpoint port) still only retarget
+  an unpinned, not-yet-Ready session.
+
+- **Cross-game doors are supported, but only under the unique-media-name
+  convention.** `TextureSource`, `ISoundManager` and `ItemVisualsManager` are
+  shared between the two sessions and keyed by plain file/item name: two games
+  serving the same filename with different content silently corrupt each other
+  (the passive session skips `rebuildImagesAndTextures()`, and a swap rebuilds
+  nothing). `Client::loadMedia` logs `[xworld] media collision: image "..."`
+  when the passive session overwrites an image with different bytes — grep for
+  it FIRST when a cross-game portal looks visually wrong; sounds and item
+  visuals collide silently (no diagnostic). The bundled `yafps` game prefixes
+  every file `yafps_` precisely to keep this set empty (verified 0 collisions
+  against the full VoxeLibre media set).
 
 ### Registry hazards
 
@@ -462,3 +497,44 @@ that first when a hop is not seamless.
 
 - `core.get_bind_port()` (not the `port` setting) is the address a hop must
   target: singleplayer picks a free port and `--port` overrides the setting.
+
+- **Background world servers keep the OLD mod code (and binary) until
+  restarted.** `start_world` launches them with nohup and they survive the
+  client for hours; Lua loads once at launch. After editing yaportal_link /
+  yaportal / a game, a fix "verified in smoke but not in game" is usually a
+  stale server: `ps -ef | grep bin/luanti`, SIGTERM it (clean shutdown
+  retires the heartbeat), the panel restarts it on demand. This masked the
+  park physics fix for a whole evening.
+
+### YaFPS — the cross-game destination game (`yafps/`)
+
+`yafps/` (repo root, symlinked as `~/.minetest/games/yafps` for dev, bundled by
+`release.sh` and the flatpak manifest) is a minimal FPS arena game meant as a
+"different game" portal destination: hitscan rifle (`yafps_weapons.fire_ray`,
+server-side raycast — worlds are local, no lag compensation needed), targets
+and drones with respawn, crosshair+ammo HUD, arcade movement. The `/porte`
+panel's "Nuovo mondo…" button creates a destination world with any installed
+game: `create_world()` in `yaportal_link/init.lua` writes a **complete**
+`world.mt` (a partial one leaves the gameid unresolvable, the headless server
+is launched without `--gameid`), and `installed_games()` replicates the
+engine's discovery/de-dup (`subgames.cpp`: strip `_game`, share wins).
+
+Rules that keep it working:
+
+- **Every media file must keep the `yafps_` prefix** — see the media-collision
+  invariant above.
+- **`yafps_core` must set physics/sky synchronously inside
+  `register_on_joinplayer`, never via `minetest.after`.** Load order between
+  game mods and global mods is NOT guaranteed (observed: yaportal loads
+  before yafps_core), so yaportal_link's `park()` may snapshot ghost physics
+  BEFORE the game's join callback sets the arcade values — that produced
+  "still walking like the old world" after a swap. `park()` therefore
+  re-snapshots and re-freezes in `minetest.after(0)`, which runs after every
+  join callback; a game that set physics via its own `after()` would fire
+  later still and thaw the parked ghost with an unrecoverable snapshot.
+- The game keeps sky `type="regular"` (custom colors): the yaportal overworld
+  sky-sync mirrors only regular skies into the portal view.
+- A world created from the panel gets its cross-world door pre-built:
+  `yafps_arena` carves a frame into the north arena wall and calls
+  `yaportal.xworld.activate_frame` with a stand-in placer position inside the
+  arena (only `get_pos()` is read; it decides the door's facing).
