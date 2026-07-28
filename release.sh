@@ -86,6 +86,9 @@ cp "$SRC/bin/luanti" "$APPDIR/bin/luanti"
 for dir in games builtin fonts textures locale clientmods; do
     [ -d "$SRC/$dir" ] && cp -r "$SRC/$dir" "$APPDIR/$dir"
 done
+# The FPS arena game lives in the repo root, not in luanti_src/games.
+mkdir -p "$APPDIR/games"
+cp -r "$PROJ/yafps" "$APPDIR/games/yafps"
 mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 

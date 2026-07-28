@@ -456,6 +456,30 @@ local function park(player)
     player:set_armor_groups({immortal = 1})
     player:set_physics_override({speed = 0, jump = 0, gravity = 0})
     player:set_nametag_attributes({color = {a = 0, r = 255, g = 255, b = 255}})
+    -- Mod load order decides whether a game's own join callback (e.g. yafps
+    -- arcade physics) runs before or AFTER this one. When it runs after, it
+    -- both thaws the freeze and makes our snapshot stale — unparking would
+    -- then restore the wrong physics (the "still walking like the old world"
+    -- bug). One step later every join callback has run: re-take whatever a
+    -- later callback overwrote and re-apply the freeze.
+    minetest.after(0, function()
+        local st = parked[pname]
+        local pl = minetest.get_player_by_name(pname)
+        if not (st and pl) then return end
+        local ph = pl:get_physics_override()
+        if ph.speed ~= 0 or ph.jump ~= 0 or ph.gravity ~= 0 then
+            st.physics = ph
+            pl:set_physics_override({speed = 0, jump = 0, gravity = 0})
+        end
+        local props = pl:get_properties()
+        if props.is_visible or props.pointable or props.collide_with_objects then
+            st.visible = props.is_visible
+            st.pointable = props.pointable
+            st.collide = props.collide_with_objects
+            pl:set_properties({is_visible = false, pointable = false,
+                collide_with_objects = false})
+        end
+    end)
 end
 
 local function unpark(pname)
@@ -741,6 +765,103 @@ local function local_worlds()
     return list_dir(WORLDS_DIR)
 end
 
+-- ── installed games (for creating a destination world with another game) ─────
+
+-- Same normalization as the engine (subgames.cpp): "minetest_game" and
+-- "minetest" are the same id, and the first directory found wins, share
+-- before user, so the dropdown matches what the engine would launch.
+local function norm_gameid(id)
+    return (id:gsub("_game$", ""))
+end
+
+local function game_title(conf_path)
+    local f = ie.io.open(conf_path, "r")
+    if not f then return nil end
+    local title
+    for line in f:lines() do
+        local t = line:match("^%s*title%s*=%s*(.-)%s*$")
+        if t and t ~= "" then title = t break end
+    end
+    f:close()
+    return title
+end
+
+-- {id, title, path} for every game the engine can see, sorted by title.
+local function installed_games()
+    local dirs = {}
+    -- share dir: <share>/games sits beside <share>/builtin
+    local builtin = core.get_builtin_path and core.get_builtin_path() or ""
+    local share_games = builtin:gsub("builtin[/\\]?$", "games")
+    if share_games ~= "" and share_games ~= builtin then
+        dirs[#dirs + 1] = share_games
+    end
+    dirs[#dirs + 1] = HOME .. "/.minetest/games"
+    local env = ie.os.getenv("LUANTI_GAME_PATH")
+    if env then
+        for p in env:gmatch("[^:]+") do dirs[#dirs + 1] = p end
+    end
+
+    local games, seen = {}, {}
+    for _, dir in ipairs(dirs) do
+        for _, entry in ipairs(list_dir(dir)) do
+            local path = dir .. "/" .. entry
+            local title = game_title(path .. "/game.conf")
+            if title then
+                local id = norm_gameid(entry)
+                if not seen[id] then
+                    seen[id] = true
+                    games[#games + 1] = {id = id, title = title, path = path}
+                end
+            end
+        end
+    end
+    table.sort(games, function(a, b) return a.title < b.title end)
+    return games
+end
+
+-- Create a world directory with a complete world.mt: the headless server is
+-- launched without --gameid, so the gameid must be resolvable from world.mt
+-- alone (a partial file would leave it empty). Mirrors the fields written by
+-- the engine's loadGameConfAndInitWorld (subgames.cpp).
+local function create_world(wname, gameid)
+    if not wname:match("^[A-Za-z0-9_%-]+$") then
+        return nil, "nome non valido (solo lettere, numeri, _ e -)"
+    end
+    local wpath = WORLDS_DIR .. "/" .. wname
+    if ie.io.open(wpath .. "/world.mt", "r") then
+        return nil, ("il mondo '%s' esiste gia'"):format(wname)
+    end
+    ie.os.execute(("mkdir -p '%s'"):format(wpath))
+    -- yafps is a survival arena; for anything else keep this world's flavor.
+    local damage, creative
+    if gameid == "yafps" then
+        damage, creative = "true", "false"
+    else
+        damage = minetest.settings:get_bool("enable_damage", true)
+            and "true" or "false"
+        creative = minetest.settings:get_bool("creative_mode", false)
+            and "true" or "false"
+    end
+    local f = ie.io.open(wpath .. "/world.mt", "w")
+    if not f then
+        return nil, "non riesco a scrivere world.mt"
+    end
+    f:write(table.concat({
+        "world_name = " .. wname,
+        "gameid = " .. gameid,
+        "enable_damage = " .. damage,
+        "creative_mode = " .. creative,
+        "backend = sqlite3",
+        "player_backend = sqlite3",
+        "auth_backend = sqlite3",
+        "mod_storage_backend = sqlite3",
+        "load_mod_yaportal = true",
+        "load_mod_yaportal_link = true",
+    }, "\n") .. "\n")
+    f:close()
+    return wpath
+end
+
 local function next_free_port()
     local used = {[my_port] = true}
     for _, rec in pairs(running_worlds()) do used[rec.port or 0] = true end
@@ -933,6 +1054,7 @@ local function build_panel_form(pname)
             "label[0.4,2.7;a un'apertura d'aria, come una normale cornice yaportal.]",
             "label[0.4,3.4;La porta nasce da sola e compare qui: poi le scegli la destinazione.]",
             "button[0.4,4.3;2.2,0.8;refresh;Aggiorna]",
+            "button[2.7,4.3;2.6,0.8;newworld;Nuovo mondo...]",
             "button_exit[8.4,4.3;2.2,0.8;close;Chiudi]",
         })
     end
@@ -985,6 +1107,7 @@ local function build_panel_form(pname)
         "label[0.6,2.6;" .. esc(status) .. "]",
 
         "label[0.4,3.5;Scegli dove deve portare:]",
+        "button[8.6,3.15;3.0,0.6;newworld;Nuovo mondo...]",
         "textlist[0.4,3.8;11.2,4.2;dests;" .. table.concat(list, ",") ..
             ";" .. (ctx.sel or 0) .. ";false]",
 
@@ -1132,7 +1255,30 @@ minetest.register_on_mods_loaded(function()
     add_frame_recipe("mcl_core:obsidian", "mesecons_torch:redstoneblock")
     -- Backrooms (backroomtest): yellow wallpaper walls around a ceiling light.
     add_frame_recipe("br_core:wallpaper_0", "br_core:ceiling_light_0")
+    -- YaFPS: arena wall panels around an arena light.
+    add_frame_recipe("yafps_core:wall", "yafps_core:light")
 end)
+
+-- Config-gated selftest for headless runs: logs the games the "new world"
+-- dropdown would show and creates a throwaway yafps world, so the whole flow
+-- is greppable without a GUI (set yaportal_link_worlds_dir to keep it out of
+-- the real worlds directory).
+if minetest.settings:get_bool("yaportal_link_selftest", false) then
+    minetest.after(3, function()
+        local ids = {}
+        for _, g in ipairs(installed_games()) do ids[#ids + 1] = g.id end
+        minetest.log("action", "[yaportal_link] selftest games: "
+            .. table.concat(ids, ", "))
+        local wpath, err = create_world("selftest_fps", "yafps")
+        if wpath then
+            minetest.log("action",
+                "[yaportal_link] selftest PASS create_world " .. wpath)
+        else
+            minetest.log("error",
+                "[yaportal_link] selftest FAIL create_world: " .. tostring(err))
+        end
+    end)
+end
 
 -- ── panel actions ───────────────────────────────────────────────────────────
 
@@ -1216,6 +1362,71 @@ local function do_connect(pname, ctx)
         "#55FF55")
 end
 
+-- Sub-form: create a destination world, picking its game. The dropdown shows
+-- every game the engine can see, defaulting to the one this world runs.
+local function show_newworld_form(pname)
+    local ctx = panel_ctx[pname] or {}
+    panel_ctx[pname] = ctx
+    local games = installed_games()
+    ctx.games = games
+    local cur_id = core.get_game_info
+        and norm_gameid(core.get_game_info().id or "") or ""
+    local titles, sel = {}, 1
+    for i, g in ipairs(games) do
+        titles[i] = esc(("%s (%s)"):format(g.title, g.id))
+        if g.id == cur_id then sel = i end
+    end
+    minetest.show_formspec(pname, "yaportal_link:newworld", table.concat({
+        "formspec_version[4]",
+        "size[8.2,5.2]",
+        "label[0.4,0.6;Nuovo mondo di destinazione]",
+        "field[0.4,1.5;7.4,0.7;wname;Nome del mondo;]",
+        "field_close_on_enter[wname;false]",
+        "label[0.4,2.7;Gioco:]",
+        "dropdown[1.6,2.4;6.2,0.7;wgame;" .. table.concat(titles, ",") ..
+            ";" .. sel .. ";true]",
+        "button[0.4,4.0;2.6,0.8;wcreate;Crea e avvia]",
+        "button[5.8,4.0;2.0,0.8;wcancel;Annulla]",
+    }))
+end
+
+minetest.register_on_player_receive_fields(function(player, formname, fields)
+    if formname ~= "yaportal_link:newworld" then return end
+    local pname = player:get_player_name()
+    if not panel_allowed(pname) then return true end
+    if fields.wcancel then
+        show_panel(pname)
+        return true
+    end
+    if not (fields.wcreate or fields.key_enter_field == "wname") then
+        return true
+    end
+    local ctx = panel_ctx[pname] or {}
+    local games = ctx.games or installed_games()
+    local g = games[tonumber(fields.wgame) or 0]
+    local wname = (fields.wname or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if not g then
+        say(pname, "Scegli un gioco nella lista.", "#FFAA55")
+        return true
+    end
+    local wpath, err = create_world(wname, g.id)
+    if not wpath then
+        say(pname, "Mondo non creato: " .. err, "#FF5555")
+        show_newworld_form(pname)
+        return true
+    end
+    if start_world(wname) then
+        say(pname, ("Creato '%s' (gioco %s): lo sto avviando. Usa 'Vai li'' " ..
+            "oppure collegaci una porta."):format(wname, g.id), "#55FF55")
+    else
+        say(pname, ("Creato '%s' (gioco %s), ma non riesco ad avviarlo: " ..
+            "binario luanti non trovato (imposta yaportal_link_bin).")
+            :format(wname, g.id), "#FFAA55")
+    end
+    show_panel(pname)
+    return true
+end)
+
 minetest.register_on_player_receive_fields(function(player, formname, fields)
     if formname ~= "yaportal_link:panel" then return end
     local pname = player:get_player_name()
@@ -1264,6 +1475,9 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
             return true
         end
         say(pname, "Scegli prima un mondo nella lista.", "#FFAA55")
+    elseif fields.newworld then
+        show_newworld_form(pname)
+        return true
     elseif not fields.refresh and ctx.mine == was then
         -- Nothing to do (quit/esc, or an event we don't act on).
         return true

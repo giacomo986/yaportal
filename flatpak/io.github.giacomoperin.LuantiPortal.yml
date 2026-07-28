@@ -102,6 +102,17 @@ modules:
       - type: dir
         path: ../yaportal
 
+  - name: yafps-game
+    buildsystem: simple
+    build-commands:
+      # FPS arena game (cross-world portal destination), repo root not
+      # luanti_src/games, so it needs its own module like yaportal.
+      - mkdir -p /app/share/luanti/games/yafps
+      - cp -r game.conf minetest.conf mods /app/share/luanti/games/yafps/
+    sources:
+      - type: dir
+        path: ../yafps
+
   - name: launcher
     buildsystem: simple
     build-commands:
