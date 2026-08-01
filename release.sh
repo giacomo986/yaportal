@@ -92,11 +92,13 @@ cp -r "$PROJ/yafps" "$APPDIR/games/yafps"
 mkdir -p "$APPDIR/client"
 [ -d "$SRC/client/shaders" ] && cp -r "$SRC/client/shaders" "$APPDIR/client/shaders"
 
-# Mod in bundled_mods/ (not auto-discovered by Luanti as global mods).
-# AppRun copies it to $LUANTI_USER/mods/ on first launch.
-mkdir -p "$APPDIR/bundled_mods/yaportal"
-cp "$PROJ/yaportal/init.lua" "$PROJ/yaportal/mod.conf" "$APPDIR/bundled_mods/yaportal/"
-cp -r "$PROJ/yaportal/textures" "$APPDIR/bundled_mods/yaportal/"
+# Mods in bundled_mods/ (not auto-discovered by Luanti as global mods).
+# AppRun copies them to $LUANTI_USER/mods/ on first launch.
+for mod in yaportal yaportal_link; do
+    mkdir -p "$APPDIR/bundled_mods/$mod"
+    cp "$PROJ/$mod/init.lua" "$PROJ/$mod/mod.conf" "$APPDIR/bundled_mods/$mod/"
+    cp -r "$PROJ/$mod/textures" "$APPDIR/bundled_mods/$mod/"
+done
 
 # ── collect .so ─────────────────────────────────────────────────────────────
 echo ">>> Collecting libraries..."
@@ -142,11 +144,22 @@ mkdir -p "$LUANTI_USER"
 # Remove old mod dir left over from rename mio_portale → yaportal
 rm -rf "$LUANTI_USER/mods/mio_portale"
 
-USERMOD="$LUANTI_USER/mods/yaportal"
-if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/yaportal/init.lua" -nt "$USERMOD/init.lua" ]; then
-    mkdir -p "$LUANTI_USER/mods"
-    rm -rf "$USERMOD"
-    cp -r "$APPDIR/bundled_mods/yaportal" "$USERMOD"
+for mod in yaportal yaportal_link; do
+    USERMOD="$LUANTI_USER/mods/$mod"
+    if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/$mod/init.lua" -nt "$USERMOD/init.lua" ]; then
+        mkdir -p "$LUANTI_USER/mods"
+        rm -rf "$USERMOD"
+        cp -r "$APPDIR/bundled_mods/$mod" "$USERMOD"
+    fi
+done
+
+# yaportal_link needs an insecure environment (it starts and links local
+# world servers); without this setting it disables itself at load.
+CONF="$LUANTI_USER/minetest.conf"
+if [ ! -f "$CONF" ] || ! grep -q '^secure\.trusted_mods' "$CONF"; then
+    echo 'secure.trusted_mods = yaportal_link' >> "$CONF"
+elif ! grep -q '^secure\.trusted_mods.*yaportal_link' "$CONF"; then
+    sed -i 's|^secure\.trusted_mods[[:space:]]*=[[:space:]]*|&yaportal_link,|' "$CONF"
 fi
 
 # Migrate world.mt: rename old mod key and force-enable yaportal

@@ -102,6 +102,16 @@ modules:
       - type: dir
         path: ../yaportal
 
+  - name: yaportal-link-mod
+    buildsystem: simple
+    build-commands:
+      # Cross-world doors mod, staged like yaportal above.
+      - mkdir -p /app/share/luanti-portal/bundled_mods/yaportal_link
+      - cp -r init.lua mod.conf textures /app/share/luanti-portal/bundled_mods/yaportal_link/
+    sources:
+      - type: dir
+        path: ../yaportal_link
+
   - name: yafps-game
     buildsystem: simple
     build-commands:
