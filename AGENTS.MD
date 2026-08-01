@@ -455,6 +455,25 @@ that first when a hop is not seamless.
   deafness window the `/xworld_park` announcement already works around; the
   status heartbeat in `stepSecondaryClient` (2s) is the cure — keep it.
 
+- **Player `is_visible` must reach the wire.** Upstream's
+  `PlayerSAO::getPropertyPacket()` forced `m_prop.is_visible = true` into every
+  player property packet (and, being an assignment, corrupted the server-side
+  property too) — `park()`'s hide never left the server, so the ghost stood
+  visible next to the endpoint portal for anyone in world B. The force is
+  removed in the fork; nothing may reintroduce a "players are always visible"
+  shortcut, mods rely on the property being honest.
+
+- **A passive session declares itself in the handshake, not by chat alone.**
+  `sendReady()` appends an optional trailing `u8` to `TOSERVER_CLIENT_READY`
+  (`m_passive`); the server stores it on `RemoteClient` BEFORE
+  `StageTwoClientInit`, so `on_joinplayer` already sees
+  `get_player_information().xworld_passive` and parks the ghost before anyone
+  ever sees it. This replaced the "park EVERY join, unpark after 6 s unless
+  `/xworld_park` arrived" window, which (a) left a visible ghost whenever the
+  chat announce was lost and (b) froze+hid every normal multiplayer join for
+  6 s. `/xworld_park` stays as fallback and to re-run `park_at_endpoint` once
+  a pair confirms after the join; absent flag = interactive (old client).
+
 - **Passive-target precedence and re-pairing.** The pair registry
   (`core.set_xworld_target`) WINS over the `yaportal_dualtest_*` settings
   whenever the mods have published a target; the dualtest override is only the

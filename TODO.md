@@ -63,9 +63,11 @@ Funzioni aggiunte non previste in questa lista, già operative:
   il portale (seconda connessione passiva `WorldSession` → RTT) e attraversato
   con uno **swap di sessione senza riconnessione** (`core.xworld_swap_player`,
   fallback `redirect_player`). Pannello `/porte`: porta + destinazione, un click
-  bidirezionale, mondi spenti avviati on-demand. Dettagli engine e **invarianti
-  da non rompere** (sky/swap/registry) in AGENTS.MD → "Cross-world portals &
-  dual-client".
+  bidirezionale, mondi spenti avviati on-demand. La sessione passiva si
+  dichiara nel handshake (`CLIENT_READY` + byte) e il suo ghost resta
+  invisibile/parcheggiato nel mondo di destinazione finché non viene promossa.
+  Dettagli engine e **invarianti da non rompere** (sky/swap/registry) in
+  AGENTS.MD → "Cross-world portals & dual-client".
 
 ---
 
@@ -217,6 +219,15 @@ esiste (`close_portal`/`deactivate_if_frame`).
   effimera morta (il singleplayer prende una porta libera diversa a ogni avvio).
   Se un hop fa i capricci dopo tante ricostruzioni, ispezionare
   `~/.minetest/yaportal_link/`.
+
+- **BUG-11 — Ghost passivo visibile agli altri player nel mondo B (RISOLTO
+  2026-08-01).** Due cause: l'engine (da upstream) forzava `is_visible=true` in
+  ogni property packet dei player, vanificando il `park()`; e il server B non
+  sapeva distinguere il ghost al join (attesa `/xworld_park` via chat, finestra
+  6 s fragile che inoltre congelava ogni join normale). Fix: `is_visible`
+  rispettato sul filo + flag passivo nel handshake `CLIENT_READY` →
+  `get_player_information().xworld_passive` → park immediato solo per i ghost.
+  Invarianti in AGENTS.MD.
 
 - **BUG-10 — "moved too fast" all'arrivo intermondo (RISOLTO 2026-07-28).**
   L'ipotesi era giusta: `park()` al join fotografava la `physics_override`

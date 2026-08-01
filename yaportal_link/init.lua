@@ -436,9 +436,6 @@ local apply_handoff
 -- the player left behind in the world they walked out of.
 
 local parked = {}          -- pname -> saved state
--- Long enough to cover the ghost's retries: its first announcements are
--- dropped while the server still considers the connection inactive.
-local GHOST_CONFIRM_T = 6  -- s to wait for a ghost to announce itself
 
 local function park(player)
     local pname = player:get_player_name()
@@ -721,35 +718,36 @@ apply_handoff = function(pname)
         :format(pname, world_id, rec.to_ep))
 end
 
--- A joining connection is one of three things and we cannot tell them apart
--- yet: a normal player, a player arriving through a portal (handoff on disk),
--- or a passive ghost whose client is playing in another world. Park everyone
--- first, then release whoever turns out to be playing here — parking a player
--- for a fraction of a second is invisible, letting a ghost walk around is not.
+-- A joining connection is one of three things, told apart at join time: a
+-- passive ghost declares itself in the CLIENT_READY handshake
+-- (get_player_information().xworld_passive), a player arriving through a
+-- portal left a handoff on disk, anything else is a normal join and must not
+-- be touched. The /xworld_park chat announce stays as a fallback and to
+-- re-place the ghost once a pair confirms after the join.
 minetest.register_on_joinplayer(function(player)
     local pname = player:get_player_name()
-    park(player)
+
+    local info = minetest.get_player_information(pname)
+    if info and info.xworld_passive then
+        -- Ghost: park it before anyone ever sees it, until its client
+        -- promotes the connection.
+        park(player)
+        parked[pname].ghost = true
+        park_at_endpoint(pname)
+        minetest.log("action", "[yaportal_link] ghost " .. pname ..
+            " joined passive, parked")
+        return
+    end
 
     local rec = read_handoff(pname)
-    local arriving = rec and (now() - (rec.ts or 0)) <= T_HANDOFF
-
-    if arriving then
+    if rec and (now() - (rec.ts or 0)) <= T_HANDOFF then
         -- Redirect hop: this connection is the player. Place and release.
+        park(player)
         minetest.after(0.2, function()
             unpark(pname)
             apply_handoff(pname)
         end)
-        return
     end
-
-    -- Give a ghost time to announce itself with /xworld_park; if nothing
-    -- arrives, this is an ordinary join.
-    minetest.after(GHOST_CONFIRM_T, function()
-        local st = parked[pname]
-        if st and not st.ghost then
-            unpark(pname)
-        end
-    end)
 end)
 
 minetest.register_on_leaveplayer(function(player)
