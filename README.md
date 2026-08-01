@@ -10,8 +10,8 @@ Requires a custom build of Luanti: the engine changes live in a fork, tracked he
 
 Pre-built packages for Linux x86\_64:
 
-- **[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.5.1-alpha/Luanti-portal-x86_64.AppImage)**
-- **[Luanti-portal-x86\_64.flatpak](https://github.com/giacomo986/yaportal/releases/download/v0.5.1-alpha/Luanti-portal-x86_64.flatpak)** — install with `flatpak install --user Luanti-portal-x86_64.flatpak`
+- **[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.5.2-alpha/Luanti-portal-x86_64.AppImage)**
+- **[Luanti-portal-x86\_64.flatpak](https://github.com/giacomo986/yaportal/releases/download/v0.5.2-alpha/Luanti-portal-x86_64.flatpak)** — install with `flatpak install --user Luanti-portal-x86_64.flatpak`
 
 (or browse all releases on [GitHub](https://github.com/giacomo986/yaportal/releases))
 
@@ -284,7 +284,10 @@ The fork stays wire-compatible with stock Luanti in the sense that both sides
 ignore protocol messages they don't know, so a stock client on a forked server
 (or the reverse) simply sees no portals instead of breaking. Note that the fork
 claims opcodes `0x65`–`0x68` (to client) and `0x54` (to server); if upstream
-ever assigns those, they will have to be renumbered.
+ever assigns those, they will have to be renumbered. The fork also appends an
+optional trailing byte to `TOSERVER_CLIENT_READY` (a passive cross-world
+session declares itself at the handshake, so the destination server hides its
+ghost player before anyone sees it); stock peers omit or ignore it.
 
 > Only the mod is mirrored to [Gitea](https://gitea.com/giacomo986/yaportal).
 > The engine fork lives on GitHub only.
