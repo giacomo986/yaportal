@@ -461,21 +461,29 @@ local function park(player)
     -- both thaws the freeze and makes our snapshot stale — unparking would
     -- then restore the wrong physics (the "still walking like the old world"
     -- bug). One step later every join callback has run: re-take whatever a
-    -- later callback overwrote and re-apply the freeze.
+    -- later callback overwrote and re-apply the freeze. Per attribute, not
+    -- whole-table: VoxeLibre's playerphysics overrides one attribute at a
+    -- time, so a still-frozen 0 next to a thawed value is OUR freeze, not the
+    -- game's — copying it into the snapshot would unpark with gravity 0 (the
+    -- "can't fall, jump ascends forever" bug).
     minetest.after(0, function()
         local st = parked[pname]
         local pl = minetest.get_player_by_name(pname)
         if not (st and pl) then return end
         local ph = pl:get_physics_override()
-        if ph.speed ~= 0 or ph.jump ~= 0 or ph.gravity ~= 0 then
-            st.physics = ph
+        local thawed = false
+        if ph.speed ~= 0 then st.physics.speed = ph.speed; thawed = true end
+        if ph.jump ~= 0 then st.physics.jump = ph.jump; thawed = true end
+        if ph.gravity ~= 0 then st.physics.gravity = ph.gravity; thawed = true end
+        if thawed then
             pl:set_physics_override({speed = 0, jump = 0, gravity = 0})
         end
         local props = pl:get_properties()
-        if props.is_visible or props.pointable or props.collide_with_objects then
-            st.visible = props.is_visible
-            st.pointable = props.pointable
-            st.collide = props.collide_with_objects
+        local shown = false
+        if props.is_visible then st.visible = true; shown = true end
+        if props.pointable then st.pointable = true; shown = true end
+        if props.collide_with_objects then st.collide = true; shown = true end
+        if shown then
             pl:set_properties({is_visible = false, pointable = false,
                 collide_with_objects = false})
         end

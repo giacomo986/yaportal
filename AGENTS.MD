@@ -532,6 +532,13 @@ Rules that keep it working:
   re-snapshots and re-freezes in `minetest.after(0)`, which runs after every
   join callback; a game that set physics via its own `after()` would fire
   later still and thaw the parked ghost with an unrecoverable snapshot.
+  The re-snapshot is **per attribute**: it copies only the values a later
+  callback actually overwrote (≠ 0), never the still-frozen zeros. VoxeLibre's
+  `playerphysics` writes one attribute at a time (`speed` on join, `gravity`
+  basically never), so a whole-table re-snapshot captured `gravity = 0` and
+  unpark restored it — permanent no-gravity in the VoxeLibre worlds ("can't
+  fall, a jump ascends forever"; speed/jump got healed by the game's own
+  factor bookkeeping, gravity did not).
 - The game keeps sky `type="regular"` (custom colors): the yaportal overworld
   sky-sync mirrors only regular skies into the portal view.
 - A world created from the panel gets its cross-world door pre-built:
