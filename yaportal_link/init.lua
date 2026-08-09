@@ -174,9 +174,66 @@ local function rebind_endpoint(ep, info)
     end
 end
 
+-- ── remote exchange (cross-machine registries) ──────────────────────────────
+--
+-- Worlds on the same machine meet through DIR; a server on ANOTHER machine is
+-- reached over TCP through the engine's PortalExchange service, which every
+-- yaportal_link world serves on game_port + XPORT_OFF. GET /registry returns
+-- what that world announces; POST /post drops a record (endpoint, pair,
+-- unpair, handoff) that the mod ingests into DIR as if a local world had
+-- written the file — everything downstream (scans, links, panel) is unchanged.
+
+local XPORT_OFF = 5000
+local XKEY = minetest.settings:get("yaportal_link_key") or ""
+local http = minetest.request_http_api and minetest.request_http_api()
+if not http then
+    minetest.log("warning", "[yaportal_link] no HTTP API: remote server search disabled")
+end
+
+local rs_raw = storage:get_string("remote_servers")
+local remote_servers = (rs_raw ~= "" and minetest.parse_json(rs_raw)) or {}
+
+local function save_remote_servers()
+    storage:set_string("remote_servers", minetest.write_json(remote_servers) or "{}")
+end
+
+local function remember_server(addr, gport)
+    gport = tonumber(gport)
+    if not addr or not gport then return end
+    if (addr == "127.0.0.1" or addr == my_addr) and gport == my_port then return end
+    local k = addr .. ":" .. gport
+    if not remote_servers[k] then
+        remote_servers[k] = {addr = addr, port = gport}
+        save_remote_servers()
+    end
+end
+
+local function xurl(addr, gport, path)
+    return ("http://%s:%d%s"):format(addr, gport + XPORT_OFF, path)
+end
+
+-- Fire-and-forget write to a remote world's exchange.
+local function xpost(addr, gport, payload)
+    if not http then return end
+    payload.key = XKEY
+    http.fetch({
+        url = xurl(addr, gport, "/post"),
+        method = "POST",
+        data = minetest.write_json(payload),
+        extra_headers = {"Content-Type: application/json"},
+        timeout = 5,
+    }, function(res)
+        if not res.succeeded then
+            minetest.log("warning", ("[yaportal_link] POST to %s:%d failed")
+                :format(addr, gport))
+        end
+    end)
+end
+
 local function announce_endpoints()
     write_json(DIR .. "/worlds/" .. world_id .. ".json",
         {world = world_id, addr = my_addr, port = my_port, ts = now()})
+    local pub_eps = {}
     for ep, info in pairs(my_endpoints) do
         rebind_endpoint(ep, info)
         local pp = yaportal.xworld.get_portal(info.portal)
@@ -186,7 +243,7 @@ local function announce_endpoints()
             -- back to this endpoint (see rebind_endpoint).
             info.at = {x = c.x, y = c.y, z = c.z, axis = pp.axis}
             local n = yaportal.xworld.basis(pp)
-            write_json(ep_file(world_id, ep), {
+            local rec = {
                 world = world_id, ep = ep, addr = my_addr, port = my_port,
                 portal = info.portal, open = info.open and true or false,
                 label = my_label(ep),
@@ -197,13 +254,21 @@ local function announce_endpoints()
                        ns = pp.ns, w = pp.w, h = pp.h, rot = pp.rot,
                        ou = pp.ou, ov = pp.ov, node_name = pp.node_name},
                 ts = now(),
-            })
+            }
+            write_json(ep_file(world_id, ep), rec)
+            pub_eps[#pub_eps + 1] = rec
         else
             -- Portal gone (closed/broken): stop announcing so nobody pairs
             -- with a dead endpoint. Keep the my_endpoints entry: it revives
             -- if a portal with the same name comes back.
             remove_file(ep_file(world_id, ep))
         end
+    end
+    if core.xworld_exchange then
+        core.xworld_exchange(my_port + XPORT_OFF, minetest.write_json({
+            v = 1, world = {world = world_id, port = my_port},
+            endpoints = pub_eps,
+        }) or "{}")
     end
 end
 
@@ -318,6 +383,17 @@ local function connect_doors(mine, other_world, other_ep)
 end
 
 local function disconnect_door(mine)
+    -- A cross-machine counterpart cannot see our pair files go away: tell it.
+    local other = connected_to(mine)
+    if other then
+        local rec = scan_endpoints()[other.world .. "/" .. other.ep]
+        if rec and rec.remote then
+            xpost(rec.addr, rec.port, {kind = "unpair", data = {
+                a = {world = world_id, ep = mine},
+                b = {world = other.world, ep = other.ep},
+            }})
+        end
+    end
     drop_pairs_of(world_id, mine)
     local info = my_endpoints[mine]
     if info then yaportal.xworld.set_link(info.portal, nil) end
@@ -411,6 +487,101 @@ local function adopt_orphan_pairs()
     save_endpoints()
 end
 
+-- ── remote exchange: ingest & refresh ───────────────────────────────────────
+
+-- Network-supplied names end up in file names: keep them boring.
+local function safe_id(s)
+    return type(s) == "string" and s ~= "" and s:len() <= 64
+        and not s:find("[/%z]") and not s:find("%.%.") and s or nil
+end
+
+-- A remote /registry answer: its world and door records enter our registry
+-- with the address WE reached it at (what it announces is its own loopback).
+local function ingest_registry(srv, resp)
+    if type(resp) ~= "table" or type(resp.world) ~= "table" then return 0 end
+    local rw = safe_id(resp.world.world)
+    if not rw or rw == world_id then return 0 end
+    write_json(DIR .. "/worlds/" .. rw .. ".json", {
+        world = rw, addr = srv.addr,
+        port = tonumber(resp.world.port) or srv.port,
+        ts = now(), remote = true,
+    })
+    local n = 0
+    for _, rec in ipairs(resp.endpoints or {}) do
+        local w, e = safe_id(rec.world), safe_id(rec.ep)
+        if w == rw and e then
+            rec.addr   = srv.addr
+            rec.port   = tonumber(rec.port) or srv.port
+            rec.remote = true
+            rec.ts     = now()
+            write_json(ep_file(w, e), rec)
+            n = n + 1
+        end
+    end
+    return n
+end
+
+local xrefresh_inflight = {}
+local function remote_refresh()
+    if not http then return end
+    for k, srv in pairs(remote_servers) do
+        if not xrefresh_inflight[k] then
+            xrefresh_inflight[k] = true
+            http.fetch({url = xurl(srv.addr, srv.port, "/registry"), timeout = 5},
+                function(res)
+                    xrefresh_inflight[k] = nil
+                    if res.succeeded then
+                        ingest_registry(srv, minetest.parse_json(res.data or ""))
+                    end
+                end)
+        end
+    end
+end
+
+-- Records POSTed by remote servers: validate, then drop them into DIR as if a
+-- local world had written the file.
+local function ingest_post(peer, body)
+    local msg = minetest.parse_json(body or "")
+    if type(msg) ~= "table" or type(msg.data) ~= "table" then return end
+    if XKEY ~= "" and msg.key ~= XKEY then
+        minetest.log("warning",
+            "[yaportal_link] post from " .. peer .. " rejected (wrong key)")
+        return
+    end
+    local d = msg.data
+    if msg.kind == "endpoint" then
+        local w, e = safe_id(d.world), safe_id(d.ep)
+        if not (w and e) or w == world_id then return end
+        -- "auto": the sender does not know its own address as seen from
+        -- here; the TCP source does. NAT-proof and needs no configuration.
+        if d.addr == "auto" or not d.addr then d.addr = peer end
+        d.port = tonumber(d.port)
+        if not d.port then return end
+        d.remote, d.ts = true, now()
+        write_json(ep_file(w, e), d)
+        remember_server(d.addr, d.port)
+    elseif msg.kind == "pair" or msg.kind == "unpair" then
+        local ok = type(d.a) == "table" and type(d.b) == "table"
+            and safe_id(d.a.world) and safe_id(d.a.ep)
+            and safe_id(d.b.world) and safe_id(d.b.ep)
+        if not ok then return end
+        drop_pairs_of(d.a.world, d.a.ep)
+        drop_pairs_of(d.b.world, d.b.ep)
+        if msg.kind == "pair" then
+            write_json(pair_file(d.a.world, d.a.ep, d.b.world, d.b.ep), {
+                a = {world = d.a.world, ep = d.a.ep},
+                b = {world = d.b.world, ep = d.b.ep},
+                status = "confirmed", requester = d.requester, ts = now(),
+            })
+        end
+    elseif msg.kind == "handoff" then
+        local p = safe_id(d.player)
+        if not p then return end
+        d.ts = now()
+        write_handoff(p, d)
+    end
+end
+
 -- ── heartbeat ────────────────────────────────────────────────────────────────
 
 local hb_timer = 0
@@ -421,8 +592,19 @@ minetest.register_globalstep(function(dtime)
     sync_xframe_endpoints()
     adopt_orphan_pairs()
     announce_endpoints()
+    remote_refresh()
     sync_links()
 end)
+
+-- Posts are drained every step, not every heartbeat: a handoff must be on
+-- disk before the player it precedes connects.
+if core.xworld_exchange_posts then
+    minetest.register_globalstep(function()
+        for _, post in ipairs(core.xworld_exchange_posts()) do
+            ingest_post(post.peer, post.body)
+        end
+    end)
+end
 
 -- Defined further down (arrival section); the park/unpark commands need it.
 local apply_handoff
@@ -594,6 +776,11 @@ yaportal.xworld.handler = function(pname, portal_name, pp)
         rec.look = yaportal.xworld.decompose(pp, player:get_look_dir())
     end
     write_handoff(pname, rec)
+    -- On another machine the shared DIR does not exist: hand the record to
+    -- the destination server itself, ahead of the redirect below.
+    if live.remote then
+        xpost(live.addr, live.port, {kind = "handoff", data = rec})
+    end
 
     local slot = yaportal.xworld.engine_slot(portal_name)
     local swapped = false
@@ -996,6 +1183,8 @@ local function destination_rows()
             rows[#rows + 1] = {kind = "door", world = rec.world, ep = rec.ep,
                 label = rec.label or rec.ep,
                 online = rec.online and true or false,
+                remote = rec.remote and rec.addr or nil,
+                rport = rec.remote and rec.port or nil,
                 taken = taken[key],
                 taken_txt = taken[key]
                     and door_display(eps, taken[key].world, taken[key].ep)}
@@ -1030,13 +1219,15 @@ local function row_text(row, mine)
             or  ("%s  --  spento, nessuna porta li'"):format(row.world)
     end
     local where = ("%s / %s"):format(row.world, row.label)
+    if row.remote then where = ("%s  [%s]"):format(where, row.remote) end
     local t = row.taken
     if t and t.world == world_id and t.ep == mine then
         return ("%s  --  COLLEGATA a questa porta"):format(where)
     elseif t then
         return ("%s  --  occupata: va a %s"):format(where, row.taken_txt)
     end
-    return row.online and (where .. "  --  libera")
+    if row.online then return where .. "  --  libera" end
+    return row.remote and (where .. "  --  server remoto irraggiungibile")
         or (where .. "  --  mondo spento (lo avvio io)")
 end
 
@@ -1123,9 +1314,11 @@ local function build_panel_form(pname)
         "button[8.7,8.2;1.4,0.8;refresh;Aggiorna]",
         "button_exit[10.2,8.2;1.4,0.8;close;Chiudi]",
 
-        "label[0.4,9.4;'Collega qui' apre le due porte una sull'altra, nei due sensi. " ..
+        "label[0.4,9.35;'Collega qui' apre le due porte una sull'altra, nei due sensi. " ..
             "Un mondo spento parte da solo.]",
-        "label[0.4,9.9;Attraversa la porta per passare nell'altro mondo.]",
+        "field[0.4,9.6;5.4,0.55;xaddr;;" .. esc(ctx.xaddr or "") .. "]",
+        "field_close_on_enter[xaddr;false]",
+        "button[5.9,9.6;5.7,0.55;xsearch;Cerca su un altro computer (IP)]",
     }
     return table.concat(fs)
 end
@@ -1298,7 +1491,11 @@ local function travel_to(pname, wname)
     local rec = running_worlds()[wname]
     local function hop(r)
         if not minetest.get_player_by_name(pname) then return end
-        write_handoff(pname, {player = pname, to_world = wname, ts = now()})
+        local hrec = {player = pname, to_world = wname, ts = now()}
+        write_handoff(pname, hrec)
+        if r.remote then
+            xpost(r.addr, r.port, {kind = "handoff", data = hrec})
+        end
         minetest.close_formspec(pname, "yaportal_link:panel")
         core.redirect_player(pname, r.addr, r.port)
     end
@@ -1329,6 +1526,50 @@ local function travel_to(pname, wname)
     minetest.after(2, poll)
 end
 
+-- Query a remote machine's exchange and pull its doors into the local
+-- registry; from then on the heartbeat keeps them fresh like any other row.
+local function search_remote(pname, input)
+    if not http then
+        say(pname, "Ricerca remota non disponibile: HTTP API spenta per questo mod.",
+            "#FF5555")
+        return
+    end
+    local addr, port = (input or ""):match("^%s*([%w%.%-]+):?(%d*)%s*$")
+    port = tonumber(port) or 30000
+    if not addr or addr == "" then
+        say(pname, "Scrivi l'indirizzo del server, es. 192.168.1.20 oppure " ..
+            "192.168.1.20:30000.", "#FFAA55")
+        return
+    end
+    local srv = {addr = addr, port = port}
+    say(pname, ("Cerco porte su %s:%d..."):format(addr, port))
+    http.fetch({url = xurl(addr, port, "/registry"), timeout = 5}, function(res)
+        if not minetest.get_player_by_name(pname) then return end
+        if not res.succeeded then
+            say(pname, ("Nessuna risposta da %s:%d (server spento, IP sbagliato " ..
+                "o firewall sulla porta %d)."):format(addr, port, port + XPORT_OFF),
+                "#FF5555")
+            return
+        end
+        local resp = minetest.parse_json(res.data or "")
+        if type(resp) ~= "table" or type(resp.world) ~= "table" then
+            say(pname, "Risposta non valida: non sembra un server con yaportal_link.",
+                "#FF5555")
+            return
+        end
+        if resp.world.world == world_id then
+            say(pname, "Quel server sei tu: serve l'IP di un'altra macchina.", "#FFAA55")
+            return
+        end
+        local n = ingest_registry(srv, resp)
+        remember_server(addr, port)
+        say(pname, ("Trovato il mondo '%s': %d porte, ora in lista. " ..
+            "D'ora in poi lo tengo d'occhio da solo.")
+            :format(tostring(resp.world.world), n), "#55FF55")
+        show_panel(pname)
+    end)
+end
+
 local function do_connect(pname, ctx)
     local row = ctx.sel and ctx.rows and ctx.rows[ctx.sel]
     if not row then
@@ -1357,6 +1598,20 @@ local function do_connect(pname, ctx)
     -- A door on the other side: connect, and wake its world up if it is down so
     -- the link goes live by itself.
     connect_doors(ctx.mine, row.world, row.ep)
+    -- Cross-machine pair: the other server cannot see our DIR, so send it our
+    -- door and the pair record; its next heartbeat links its side.
+    if row.remote then
+        local myrec = read_json(ep_file(world_id, ctx.mine))
+        if myrec then
+            myrec.addr, myrec.remote = "auto", nil
+            xpost(row.remote, row.rport, {kind = "endpoint", data = myrec})
+        end
+        xpost(row.remote, row.rport, {kind = "pair", data = {
+            a = {world = world_id, ep = ctx.mine},
+            b = {world = row.world, ep = row.ep},
+            requester = world_id .. "/" .. ctx.mine,
+        }})
+    end
     local started = false
     if not row.online and is_local_world(row.world)
        and not running_worlds()[row.world] then
@@ -1483,6 +1738,10 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
         say(pname, "Scegli prima un mondo nella lista.", "#FFAA55")
     elseif fields.newworld then
         show_newworld_form(pname)
+        return true
+    elseif fields.xsearch or fields.key_enter_field == "xaddr" then
+        ctx.xaddr = fields.xaddr
+        search_remote(pname, fields.xaddr)
         return true
     elseif not fields.refresh and ctx.mine == was then
         -- Nothing to do (quit/esc, or an event we don't act on).
