@@ -525,6 +525,30 @@ that first when a hop is not seamless.
   retires the heartbeat), the panel restarts it on demand. This masked the
   park physics fix for a whole evening.
 
+### Remote registries (doors on another machine)
+
+Worlds on one machine meet through the shared directory; another machine is
+reached over TCP by `PortalExchange` (`src/server/portalexchange.{h,cpp}`), a
+tiny HTTP responder each world serves on **game port + 5000**: `GET /registry`
+returns what `announce_endpoints` published, `POST /post` queues a record.
+Lua side: `core.xworld_exchange(port, json)` publishes (and starts/rebinds the
+service), `core.xworld_exchange_posts()` drains posts.
+
+- The mod turns everything remote back into **files in the local registry**
+  (`remote = true`). Nothing downstream — scans, `sync_links`, panel, arrival —
+  knows the difference; keep it that way instead of teaching them about
+  addresses.
+- A sender never states its own address: `addr = "auto"` is replaced with the
+  TCP source, which is what makes it work behind NAT. Trusting a payload
+  address would also let anyone redirect players to a host of their choosing.
+- Names arriving from the network end up in file names: `safe_id` gates them
+  (no `/`, no `..`, ≤64 chars). `yaportal_link_key`, when set, must match on
+  both sides or posts are dropped.
+- Posts are drained every globalstep, not every heartbeat: a handoff must be on
+  disk before the player it announces connects.
+- `disconnect_door` posts the unpair *before* dropping the local pair file —
+  it needs `connected_to` to still resolve the other side.
+
 ### YaFPS — the cross-game destination game (`yafps/`)
 
 `yafps/` (repo root, symlinked as `~/.minetest/games/yafps` for dev, bundled by

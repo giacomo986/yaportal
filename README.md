@@ -124,6 +124,17 @@ Three steps, no configuration files:
 The same panel renames a door, disconnects it, or travels to a world that has
 no door yet (*Vai lì*). `/porte` opens it from anywhere.
 
+**Doors on another computer.** The field at the bottom of the panel takes the
+address of a machine running Luanti-portal (`192.168.1.20`, or
+`192.168.1.20:30000` if that server is not on the default port): press *Cerca
+su un altro computer* and its doors join the list, marked with the address.
+From there everything works as with a local world — connect, cross, or *Vai
+lì*. Once found, that server is remembered and refreshed on its own. Its
+firewall must allow the game port (UDP) **and the game port + 5000** (TCP),
+which is where each world answers registry queries. On an untrusted network,
+set the same `yaportal_link_key = <secret>` in `minetest.conf` on both sides:
+without a matching key a server ignores what the other one sends.
+
 Requires `secure.trusted_mods = yaportal_link` in `minetest.conf`: the mod
 launches the other worlds' servers itself.
 
