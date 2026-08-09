@@ -10,8 +10,8 @@ Requires a custom build of Luanti: the engine changes live in a fork, tracked he
 
 Pre-built packages for Linux x86\_64:
 
-- **[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.5.2-alpha/Luanti-portal-x86_64.AppImage)**
-- **[Luanti-portal-x86\_64.flatpak](https://github.com/giacomo986/yaportal/releases/download/v0.5.2-alpha/Luanti-portal-x86_64.flatpak)** — install with `flatpak install --user Luanti-portal-x86_64.flatpak`
+- **[Luanti-portal-x86\_64.AppImage](https://github.com/giacomo986/yaportal/releases/download/v0.5.3-alpha/Luanti-portal-x86_64.AppImage)**
+- **[Luanti-portal-x86\_64.flatpak](https://github.com/giacomo986/yaportal/releases/download/v0.5.3-alpha/Luanti-portal-x86_64.flatpak)** — install with `flatpak install --user Luanti-portal-x86_64.flatpak`
 
 (or browse all releases on [GitHub](https://github.com/giacomo986/yaportal/releases))
 
