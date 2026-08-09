@@ -12,7 +12,9 @@ rm -rf "$LUANTI_USER/mods/mio_portale"
 for mod in yaportal yaportal_link; do
     BUNDLED="/app/share/luanti-portal/bundled_mods/$mod"
     USERMOD="$LUANTI_USER/mods/$mod"
-    if [ ! -d "$USERMOD" ] || [ "$BUNDLED/init.lua" -nt "$USERMOD/init.lua" ]; then
+    # Content compare, not -nt: ostree resets bundled mtimes to epoch, so a
+    # timestamp check would never refresh an existing user copy.
+    if [ ! -d "$USERMOD" ] || ! cmp -s "$BUNDLED/init.lua" "$USERMOD/init.lua"; then
         mkdir -p "$LUANTI_USER/mods"
         rm -rf "$USERMOD"
         cp -r "$BUNDLED" "$USERMOD"

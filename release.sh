@@ -146,7 +146,9 @@ rm -rf "$LUANTI_USER/mods/mio_portale"
 
 for mod in yaportal yaportal_link; do
     USERMOD="$LUANTI_USER/mods/$mod"
-    if [ ! -d "$USERMOD" ] || [ "$APPDIR/bundled_mods/$mod/init.lua" -nt "$USERMOD/init.lua" ]; then
+    # Content compare, not -nt: mtimes inside the image are not reliable
+    # (flatpak/ostree resets them to epoch), so compare init.lua instead.
+    if [ ! -d "$USERMOD" ] || ! cmp -s "$APPDIR/bundled_mods/$mod/init.lua" "$USERMOD/init.lua"; then
         mkdir -p "$LUANTI_USER/mods"
         rm -rf "$USERMOD"
         cp -r "$APPDIR/bundled_mods/$mod" "$USERMOD"
