@@ -43,6 +43,19 @@ local world_id   = worldpath:match("([^/]+)$")
 local my_port    = (core.get_bind_port and core.get_bind_port())
                    or tonumber(minetest.settings:get("port")) or 30000
 local my_addr    = minetest.settings:get("yaportal_link_addr") or "127.0.0.1"
+-- A local game binds its server to 127.0.0.1 unless bind_address says
+-- otherwise, so no other machine can reach this world however well the
+-- registry describes it. Worth knowing before a door is paired across the
+-- network: the crossing would end in a connection timeout.
+local lan_open = true
+if core.get_bind_address then
+    local b = core.get_bind_address()
+    lan_open = not (b == "127.0.0.1" or b == "::1" or b == "localhost")
+end
+if not lan_open then
+    minetest.log("action", "[yaportal_link] world bound to loopback: " ..
+        "doors on other machines cannot be crossed (set bind_address)")
+end
 local HOME       = ie.os.getenv("HOME") or "/tmp"
 local DIR        = minetest.settings:get("yaportal_link_dir")
                    or (HOME .. "/.minetest/yaportal_link")
@@ -184,6 +197,10 @@ end
 -- written the file — everything downstream (scans, links, panel) is unchanged.
 
 local XPORT_OFF = 5000
+-- Set from the engine's answer each heartbeat: a game port near the top of
+-- the range derives an exchange port past 65535, and then this world cannot
+-- be found from another machine however open the network is.
+local exchange_ok = false
 local XKEY = minetest.settings:get("yaportal_link_key") or ""
 local http = minetest.request_http_api and minetest.request_http_api()
 if not http then
@@ -253,6 +270,7 @@ local function announce_endpoints()
                 def = {cx = pp.cx, cy = pp.cy, cz = pp.cz, axis = pp.axis,
                        ns = pp.ns, w = pp.w, h = pp.h, rot = pp.rot,
                        ou = pp.ou, ov = pp.ov, node_name = pp.node_name},
+                lan = lan_open,
                 ts = now(),
             }
             write_json(ep_file(world_id, ep), rec)
@@ -265,8 +283,8 @@ local function announce_endpoints()
         end
     end
     if core.xworld_exchange then
-        core.xworld_exchange(my_port + XPORT_OFF, minetest.write_json({
-            v = 1, world = {world = world_id, port = my_port},
+        exchange_ok = core.xworld_exchange(my_port + XPORT_OFF, minetest.write_json({
+            v = 1, world = {world = world_id, port = my_port, lan = lan_open},
             endpoints = pub_eps,
         }) or "{}")
     end
@@ -513,6 +531,9 @@ local function ingest_registry(srv, resp)
             rec.addr   = srv.addr
             rec.port   = tonumber(rec.port) or srv.port
             rec.remote = true
+            -- Its own view of whether it is reachable from outside; a world
+            -- bound to loopback answers registry queries but cannot be joined.
+            rec.lan    = (rec.lan ~= false) and (resp.world.lan ~= false)
             rec.ts     = now()
             write_json(ep_file(w, e), rec)
             n = n + 1
@@ -1185,6 +1206,7 @@ local function destination_rows()
                 online = rec.online and true or false,
                 remote = rec.remote and rec.addr or nil,
                 rport = rec.remote and rec.port or nil,
+                unreachable = (rec.remote and rec.lan == false) or nil,
                 taken = taken[key],
                 taken_txt = taken[key]
                     and door_display(eps, taken[key].world, taken[key].ep)}
@@ -1225,6 +1247,9 @@ local function row_text(row, mine)
         return ("%s  --  COLLEGATA a questa porta"):format(where)
     elseif t then
         return ("%s  --  occupata: va a %s"):format(where, row.taken_txt)
+    end
+    if row.unreachable then
+        return where .. "  --  quel mondo e' aperto solo sul suo computer"
     end
     if row.online then return where .. "  --  libera" end
     return row.remote and (where .. "  --  server remoto irraggiungibile")
@@ -1273,6 +1298,22 @@ local function build_panel_form(pname)
         status = "Questa porta non e' collegata: scegli qui sotto dove deve portare."
     end
 
+    -- Second status line: what another computer needs to reach this world, or
+    -- why it cannot. A local game listens on 127.0.0.1 only, and a door paired
+    -- across the network would then fail with a connection timeout.
+    local reach
+    if lan_open and not exchange_ok then
+        reach = ("Porta di gioco %d: troppo alta per la ricerca (%d oltre 65535). " ..
+            "Metti port = 30000 in minetest.conf e riapri il mondo.")
+            :format(my_port, my_port + XPORT_OFF)
+    elseif lan_open then
+        reach = ("Dalla rete: porta gioco %d UDP, ricerca %d TCP (apri il firewall)")
+            :format(my_port, my_port + XPORT_OFF)
+    else
+        reach = "Questo mondo e' aperto solo su questo computer: metti " ..
+            "bind_address = 0.0.0.0 in minetest.conf per le porte verso altri PC."
+    end
+
     -- Door names in the dropdown; the field beside it renames the selected one.
     local names, cur = {}, 1
     for i, ep in ipairs(doors) do
@@ -1300,12 +1341,13 @@ local function build_panel_form(pname)
         "field_close_on_enter[newname;false]",
         "button[9.5,1.2;2.1,0.7;rename;Rinomina]",
 
-        "box[0.4,2.2;11.2,0.8;#3a3a3aff]",
-        "label[0.6,2.6;" .. esc(status) .. "]",
+        "box[0.4,2.2;11.2,1.2;#3a3a3aff]",
+        "label[0.6,2.55;" .. esc(status) .. "]",
+        "label[0.6,3.05;" .. esc(reach) .. "]",
 
-        "label[0.4,3.5;Scegli dove deve portare:]",
-        "button[8.6,3.15;3.0,0.6;newworld;Nuovo mondo...]",
-        "textlist[0.4,3.8;11.2,4.2;dests;" .. table.concat(list, ",") ..
+        "label[0.4,3.9;Scegli dove deve portare:]",
+        "button[8.6,3.6;3.0,0.6;newworld;Nuovo mondo...]",
+        "textlist[0.4,4.2;11.2,3.8;dests;" .. table.concat(list, ",") ..
             ";" .. (ctx.sel or 0) .. ";false]",
 
         "button[0.4,8.2;2.6,0.8;connect;Collega qui]",
@@ -1566,6 +1608,17 @@ local function search_remote(pname, input)
         say(pname, ("Trovato il mondo '%s': %d porte, ora in lista. " ..
             "D'ora in poi lo tengo d'occhio da solo.")
             :format(tostring(resp.world.world), n), "#55FF55")
+        if resp.world.lan == false then
+            say(pname, ("Attenzione: '%s' e' aperto solo sul suo computer " ..
+                "(bind_address = 127.0.0.1). Lo vedi ma non ci puoi entrare " ..
+                "finche' non lo apre alla rete."):format(tostring(resp.world.world)),
+                "#FFAA55")
+        end
+        if not lan_open then
+            say(pname, "E il tuo mondo non e' raggiungibile dalla rete: dal suo " ..
+                "computer non riusciranno a entrare qui. Metti bind_address = " ..
+                "0.0.0.0 in minetest.conf e riapri il mondo.", "#FFAA55")
+        end
         show_panel(pname)
     end)
 end
@@ -1621,6 +1674,17 @@ local function do_connect(pname, ctx)
         my_label(ctx.mine), row.world, row.label,
         (row.online or started) and "" or " (accendi quel mondo per attraversarla)"),
         "#55FF55")
+    -- Pairing across machines succeeds even when the crossing cannot: say so
+    -- now instead of letting the player walk into a connection timeout.
+    if row.remote and row.unreachable then
+        say(pname, "Ma quel mondo e' aperto solo sul suo computer: la porta si " ..
+            "vede e non si attraversa finche' non lo apre alla rete.", "#FFAA55")
+    end
+    if row.remote and not lan_open then
+        say(pname, "E dal suo computer non potranno venire qui: questo mondo " ..
+            "ascolta solo su 127.0.0.1. Metti bind_address = 0.0.0.0 in " ..
+            "minetest.conf e riapri il mondo.", "#FFAA55")
+    end
 end
 
 -- Sub-form: create a destination world, picking its game. The dropdown shows

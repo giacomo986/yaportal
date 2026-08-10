@@ -129,11 +129,28 @@ address of a machine running Luanti-portal (`192.168.1.20`, or
 `192.168.1.20:30000` if that server is not on the default port): press *Cerca
 su un altro computer* and its doors join the list, marked with the address.
 From there everything works as with a local world — connect, cross, or *Vai
-lì*. Once found, that server is remembered and refreshed on its own. Its
-firewall must allow the game port (UDP) **and the game port + 5000** (TCP),
-which is where each world answers registry queries. On an untrusted network,
-set the same `yaportal_link_key = <secret>` in `minetest.conf` on both sides:
-without a matching key a server ignores what the other one sends.
+lì*. Once found, that server is remembered and refreshed on its own.
+
+Each machine that others must be able to *enter* needs three things, and the
+panel's second status line tells you which one is missing:
+
+1. `bind_address = 0.0.0.0` in `minetest.conf`. Without it a local game listens
+   on `127.0.0.1` only — the door pairs, and crossing it ends in *connection
+   timed out*. (This also pins the port, see below.)
+2. `port = 30000` in `minetest.conf`. A local game otherwise takes a random
+   port every launch, which no firewall rule and no remote search can follow.
+3. The firewall open on that game port (UDP) **and on the game port + 5000**
+   (TCP), where each world answers registry queries. On Ubuntu:
+
+   ```bash
+   sudo ufw allow from 192.168.1.0/24 to any port 30000 proto udp
+   sudo ufw allow from 192.168.1.0/24 to any port 35000 proto tcp
+   ```
+
+A world opened this way is reachable by anyone who can reach the machine, so
+keep it to networks you trust, or give it a password. On an untrusted network
+also set the same `yaportal_link_key = <secret>` in `minetest.conf` on both
+sides: without a matching key a server ignores what the other one sends.
 
 Requires `secure.trusted_mods = yaportal_link` in `minetest.conf`: the mod
 launches the other worlds' servers itself.

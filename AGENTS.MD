@@ -549,6 +549,25 @@ service), `core.xworld_exchange_posts()` drains posts.
 - `disconnect_door` posts the unpair *before* dropping the local pair file —
   it needs `connected_to` to still resolve the other side.
 
+- **A local game is loopback-only and takes a random port.** Upstream binds the
+  simple-singleplayer server to `127.0.0.1` and calls `myrand_range(49152,
+  65535)` for its port, so a world you play normally can be *found* (the
+  exchange listens on all interfaces) but never *entered* from another machine:
+  the crossing ends in a connection timeout. The fork makes both conditional on
+  `bind_address` being set — set it and the world binds there and takes the
+  `port` setting (`remote_port`, which the client path normally uses, is the
+  address book for joining others, not a hosting port). Default behaviour is
+  unchanged when `bind_address` is empty. `core.get_bind_address()` is how the
+  mod tells, and it publishes the answer as `lan` so the *other* side can say
+  "aperto solo sul suo computer" instead of letting a player walk into a
+  timeout.
+
+- Exchange port = game port + 5000, which **overflows** for a game port above
+  60535. `PortalExchange::start` takes a u32 and refuses out-of-range ports
+  instead of binding the truncated value (that landed on privileged port 1008,
+  warning every heartbeat); failures are logged once per port because callers
+  retry on a timer.
+
 ### YaFPS — the cross-game destination game (`yafps/`)
 
 `yafps/` (repo root, symlinked as `~/.minetest/games/yafps` for dev, bundled by
