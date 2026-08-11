@@ -10,16 +10,28 @@
 # LuaJIT/OpenAL sources; later runs are cached (ccache + state dir).
 #
 # Usage:
-#   ./release-flatpak.sh            # produce Luanti-portal-x86_64.flatpak
-#   ./release-flatpak.sh --install  # also install/update it (flatpak --user)
+#   ./release-flatpak.sh              # produce Luanti-portal-x86_64.flatpak
+#   ./release-flatpak.sh --install    # also install/update it (flatpak --user)
+#   BUILD_NO=12 ./release-flatpak.sh  # rebuild build 12 instead of bumping
 set -e
 
 PROJ="$(cd "$(dirname "$0")" && pwd)"
 APP_ID="io.github.giacomoperin.LuantiPortal"
 MANIFEST="$PROJ/flatpak/$APP_ID.yml"
+METAINFO="$PROJ/flatpak/$APP_ID.metainfo.xml"
 FP_TMP="$PROJ/tmp/flatpak"
 RUNTIME_VER="24.08"
 OUT="$PROJ/Luanti-portal-x86_64.flatpak"
+
+# ── build number ──────────────────────────────────────────────────────────────
+# Bumped here and stamped into the two places the installed app carries it:
+# the engine version string (main menu, `luanti --version`) and the appstream
+# metainfo (`flatpak info`). Both files are committed, so the repo always says
+# which build the artifact is.
+source "$PROJ/build-number.sh"
+sed -i "s|^\( *- -DVERSION_EXTRA=\).*|\1$VERSION_EXTRA|" "$MANIFEST"
+sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"/>|<release version=\"$VERSION_FULL\" date=\"$(date +%F)\"/>|" \
+    "$METAINFO"
 
 # ── prerequisites ─────────────────────────────────────────────────────────────
 command -v flatpak >/dev/null 2>&1 || {
@@ -69,5 +81,7 @@ fi
 
 echo ""
 echo "Flatpak bundle: $OUT"
-echo "Install with:   flatpak install --user $OUT"
+echo "Build:          $BUILD_NO  ($VERSION_FULL)"
+echo "Install with:   flatpak install --user --reinstall $OUT"
 echo "Run with:       flatpak run $APP_ID"
+echo "Which build:    flatpak info $APP_ID   (or the version in the main menu)"

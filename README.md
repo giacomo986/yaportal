@@ -267,6 +267,16 @@ Produces `Luanti-portal-x86_64.AppImage` in the project root. Requires `patchelf
 
 **For maximum portability, build on the oldest glibc you want to support.** `libc`/`libstdc++` are not bundled, so the resulting AppImage only runs on systems with a glibc equal to or newer than the build host's. Building inside a container based on an old LTS (e.g. an older Ubuntu/Debian) yields the widest compatibility.
 
+### Build number
+
+Both release scripts bump the shared counter in `BUILD_NUMBER` and stamp it
+into the version string, so an install identifies itself as e.g.
+`5.16.1-portal-b12` in the main menu, in `luanti --version` and — for the
+Flatpak — in `flatpak info io.github.giacomoperin.LuantiPortal`. Compare that
+number with the one printed at the end of the build to know whether an update
+actually landed. `BUILD_NO=12 ./release-flatpak.sh` rebuilds an existing number
+instead of taking a new one.
+
 ---
 
 ## Credits

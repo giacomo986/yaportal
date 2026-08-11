@@ -188,6 +188,32 @@ apt-get download \
 
 ---
 
+## Build number
+
+Every shipped artifact carries a number so two installs can be told apart —
+"which build am I running?" must never need a guess. One counter serves both
+the AppImage and the Flatpak: `BUILD_NUMBER` (repo root, committed),
+incremented by `build-number.sh`, which `release.sh` and `release-flatpak.sh`
+source before they compile.
+
+It reaches the artifact as the engine's `VERSION_EXTRA`, so a build shows up
+as `5.16.1-portal-b12` in the main menu and in `luanti --version`; the Flatpak
+also gets it in `flatpak/*.metainfo.xml`, which is what `flatpak info` reports.
+Both that file and the manifest's `-DVERSION_EXTRA=` line are rewritten by
+`release-flatpak.sh` and committed with the build, so the repo says what was
+shipped.
+
+- Rebuild a number instead of bumping it: `BUILD_NO=12 ./release-flatpak.sh`.
+- Bundle filenames stay fixed (`Luanti-portal-x86_64.flatpak`), so updating is
+  always `flatpak install --user --reinstall <bundle>`; the number, not the
+  file name, tells you whether it actually changed.
+- The dev build (`build.sh`) is deliberately outside the counter: it reports
+  `5.16.1-debug`, which is itself the answer to "is this a release artifact?".
+  `release.sh` clears `VERSION_EXTRA` when it restores the Debug build, so a
+  release run cannot leave a stale number in the dev cache.
+
+---
+
 ## Building a portable AppImage
 
 Produces `Luanti-portal-x86_64.AppImage` (~70 MB) runnable on any x86_64 Linux.

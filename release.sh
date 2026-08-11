@@ -23,6 +23,9 @@ fi
 NINJA="${NINJA:-ninja}"
 OUT="$PROJ/Luanti-portal-x86_64.AppImage"
 
+# Bump the shared build counter and stamp it into the version string.
+source "$PROJ/build-number.sh"
+
 # ── prerequisites ──────────────────────────────────────────────────────────────
 for cmd in patchelf wget; do
     command -v "$cmd" >/dev/null 2>&1 || {
@@ -70,6 +73,7 @@ echo ">>> cmake Release..."
 "$CMAKE" -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Release \
     -DRUN_IN_PLACE=FALSE \
+    -DVERSION_EXTRA="$VERSION_EXTRA" \
     > /dev/null
 
 # ── compile ───────────────────────────────────────────────────────────────────
@@ -195,9 +199,10 @@ ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$OUT"
 echo ">>> Restoring Debug build for dev..."
 "$CMAKE" -S "$SRC" -B "$BUILD" \
     -DCMAKE_BUILD_TYPE=Debug \
+    -DVERSION_EXTRA= \
     > /dev/null
 "$NINJA" -C "$BUILD" -j"$(nproc)"
 
 echo ""
-echo "AppImage: $OUT"
+echo "AppImage: $OUT  (build $BUILD_NO, $VERSION_FULL)"
 echo "Run with: ./$OUT"
