@@ -543,16 +543,31 @@ local function ingest_registry(srv, resp)
 end
 
 local xrefresh_inflight = {}
+-- A remembered server that stops answering must not be asked every heartbeat.
+-- The engine logs a failed fetch to errorstream, and `chat_log_level = error`
+-- (the default) paints errorstream into the chat window: a machine that went
+-- away — switched off, new DHCP address — spat a red line at every player
+-- every 3 seconds, in worlds that have nothing to do with it. Back off to five
+-- minutes instead, and never give up: the peer may well come back, and the
+-- first success resets the clock.
+local xrefresh_fail = {}
+local xrefresh_next = {}
 local function remote_refresh()
     if not http then return end
     for k, srv in pairs(remote_servers) do
-        if not xrefresh_inflight[k] then
+        if not xrefresh_inflight[k] and now() >= (xrefresh_next[k] or 0) then
             xrefresh_inflight[k] = true
             http.fetch({url = xurl(srv.addr, srv.port, "/registry"), timeout = 5},
                 function(res)
                     xrefresh_inflight[k] = nil
                     if res.succeeded then
+                        xrefresh_fail[k], xrefresh_next[k] = nil, nil
                         ingest_registry(srv, minetest.parse_json(res.data or ""))
+                    else
+                        local n = (xrefresh_fail[k] or 0) + 1
+                        xrefresh_fail[k] = n
+                        xrefresh_next[k] = now() +
+                            math.min(300, S_HEARTBEAT * 2 ^ math.min(n, 7))
                     end
                 end)
         end

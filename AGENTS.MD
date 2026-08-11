@@ -489,6 +489,23 @@ that first when a hop is not seamless.
   removed in the fork; nothing may reintroduce a "players are always visible"
   shortcut, mods rely on the property being honest.
 
+- **A swap keeps the keys the player is holding.** `performSessionSwap` uses
+  `input->clearEdges()`, never `input->clear()`. A swap happens between two
+  frames with the same player at the same keyboard: wiping `keyIsDown` needs a
+  fresh key-down event to move again, and none is coming for a key that was
+  never released — walking into a door with W held stopped the player dead on
+  arrival. Only the edge-triggered leftovers (`keyWasDown/Pressed/Released`,
+  wheel) belong to the world being left. The connect and focus-loss paths keep
+  the full `clear()`.
+
+- **Nothing in the mod may poll a dead peer at heartbeat rate.** The engine
+  logs a failed `http.fetch` to errorstream and `chat_log_level = error` (the
+  default) paints errorstream into the chat window, so a remembered machine
+  that went away turned into a red line for every player every 3 seconds, in
+  worlds unrelated to it. `remote_refresh` backs off per server up to five
+  minutes and resets on the first success; anything else added on the
+  heartbeat that talks to the network needs the same treatment.
+
 - **A swap must re-decide who draws their own avatar.** Client-side self-view
   is `GenericCAO::m_is_visible`, separate from the server's `is_visible`
   property, and it is decided exactly once — in `setAttachment`, at object
