@@ -463,6 +463,17 @@ that first when a hop is not seamless.
   removed in the fork; nothing may reintroduce a "players are always visible"
   shortcut, mods rely on the property being honest.
 
+- **A swap must re-decide who draws their own avatar.** Client-side self-view
+  is `GenericCAO::m_is_visible`, separate from the server's `is_visible`
+  property, and it is decided exactly once — in `setAttachment`, at object
+  creation, from "does this session have a camera" (the fork's rule that keeps
+  a ghost from painting its own avatar into the portal view). Nothing re-runs
+  it when a session changes role, so `performSessionSwap` sets it explicitly:
+  visible on the promoted session, hidden on the demoted one. Without it a
+  player who walked through a door is invisible to THEMSELVES in third person
+  (everyone else sees them fine — this flag never leaves the client), and the
+  world they left shows their own back through the portal.
+
 - **A passive session declares itself in the handshake, not by chat alone.**
   `sendReady()` appends an optional trailing `u8` to `TOSERVER_CLIENT_READY`
   (`m_passive`); the server stores it on `RemoteClient` BEFORE
@@ -473,6 +484,22 @@ that first when a hop is not seamless.
   chat announce was lost and (b) froze+hid every normal multiplayer join for
   6 s. `/xworld_park` stays as fallback and to re-run `park_at_endpoint` once
   a pair confirms after the join; absent flag = interactive (old client).
+
+- **A passive session is identified by WORLD NAME, not by address string.**
+  The client reports the session by the address *it* dials; the server
+  weighing a swap knows only the address *its* registry learned (`addr=auto`
+  → the TCP source). For a world hosted on the player's own machine those are
+  `127.0.0.1` and that machine's LAN address, so a literal `s.address ==
+  address` test turned every trip home into a redirect — and a redirect out of
+  a singleplayer-hosted world kills that world's server, taking the return
+  door (and anyone still in it) with it. `Server::SwapPlayer` and
+  `Game::performSessionSwap` therefore accept `to_world == session world` (with
+  the port, which the world publishes itself) and keep addr:port only as the
+  fallback for a session that reported no world. `m_current_address/_port`
+  after a swap come from `promoted->getServerAddress()`, not from the request,
+  for the same reason. Symptom of a regression: `swap-miss ... pass=<LAN
+  ip>:<port> || server-sees ready=true 127.0.0.1:<same port> world=<the world
+  being entered>`.
 
 - **Passive-target precedence and re-pairing.** The pair registry
   (`core.set_xworld_target`) WINS over the `yaportal_dualtest_*` settings
