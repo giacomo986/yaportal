@@ -655,6 +655,12 @@ service), `core.xworld_exchange_posts()` drains posts.
 - **A crossing that would fall back to a redirect is REFUSED while other
   players are connected to a self-hosted world** (`yaportal.xworld.handler`).
   The redirect kills the world for them; not crossing is the smaller loss.
+  This is the whole fix, by decision: a server must NOT outlive the client
+  that launched it. Do not propose keeping the in-process server stepping
+  after its player leaves — an invisible world nobody can close is worse than
+  a world that closes when its host walks away. Refusing the crossing, and
+  the swap path (which never detaches the server from its client), are the
+  supported answers.
 
 - Exchange port = game port + 5000, which **overflows** for a game port above
   60535. `PortalExchange::start` takes a u32 and refuses out-of-range ports
