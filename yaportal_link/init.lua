@@ -229,22 +229,88 @@ local function xurl(addr, gport, path)
     return ("http://%s:%d%s"):format(addr, gport + XPORT_OFF, path)
 end
 
--- Fire-and-forget write to a remote world's exchange.
-local function xpost(addr, gport, payload)
-    if not http then return end
-    payload.key = XKEY
+-- Write to a remote world's exchange. A pair or an unpair is the only copy the
+-- other machine will ever get — its /registry answer carries worlds and doors,
+-- never pairs — so a single failed POST left a door linked on one side only:
+-- that player saw nothing through it and every crossing degraded to a redirect,
+-- which on a self-hosted world kills the world. Those posts are therefore
+-- retried (keep = true) with backoff, and parked, not dropped, once the burst
+-- is spent: remote_refresh wakes them the moment that machine answers again.
+-- A handoff stays fire-and-forget — it expires in T_HANDOFF seconds and a late
+-- delivery would teleport somebody who has long since arrived on foot.
+local XPOST_TRIES = 8
+local outbox = {}
+
+local function xsend(it)
+    it.inflight = true
     http.fetch({
-        url = xurl(addr, gport, "/post"),
+        url = xurl(it.addr, it.port, "/post"),
         method = "POST",
-        data = minetest.write_json(payload),
+        data = minetest.write_json(it.payload),
         extra_headers = {"Content-Type: application/json"},
         timeout = 5,
     }, function(res)
-        if not res.succeeded then
+        it.inflight = false
+        if res.succeeded then
+            it.done = true
+            if it.tries > 0 then
+                minetest.log("action", ("[yaportal_link] %s reached %s:%d after " ..
+                    "%d retries"):format(tostring(it.payload.kind), it.addr,
+                    it.port, it.tries))
+            end
+            return
+        end
+        it.tries = it.tries + 1
+        if not it.keep then
+            it.done = true
             minetest.log("warning", ("[yaportal_link] POST to %s:%d failed")
-                :format(addr, gport))
+                :format(it.addr, it.port))
+            return
+        end
+        if it.tries >= XPOST_TRIES then
+            -- Parked, not lost: one line, then silence until that machine is
+            -- seen answering again (waking it here would just spam the log,
+            -- which chat_log_level = error puts on everyone's screen).
+            it.next = math.huge
+            minetest.log("warning", ("[yaportal_link] %s for %s:%d still " ..
+                "undelivered after %d tries, waiting for that machine")
+                :format(tostring(it.payload.kind), it.addr, it.port, it.tries))
+        else
+            it.next = now() + math.min(60, S_HEARTBEAT * 2 ^ math.min(it.tries, 5))
+        end
+        if not it.queued then
+            it.queued = true
+            outbox[#outbox + 1] = it
         end
     end)
+end
+
+local function xpost(addr, gport, payload, keep)
+    if not http then return end
+    payload.key = XKEY
+    xsend({addr = addr, port = gport, payload = payload, tries = 0, next = 0,
+        keep = keep})
+end
+
+local function flush_outbox()
+    if #outbox == 0 then return end
+    local t, live = now(), {}
+    for _, it in ipairs(outbox) do
+        if not it.done then
+            live[#live + 1] = it
+            if not it.inflight and t >= it.next then xsend(it) end
+        end
+    end
+    outbox = live
+end
+
+-- That machine is answering again: everything still owed to it goes out now.
+local function wake_outbox(addr, port)
+    for _, it in ipairs(outbox) do
+        if it.addr == addr and it.port == port and not it.done then
+            it.tries, it.next = 0, 0
+        end
+    end
 end
 
 local function announce_endpoints()
@@ -409,7 +475,7 @@ local function disconnect_door(mine)
             xpost(rec.addr, rec.port, {kind = "unpair", data = {
                 a = {world = world_id, ep = mine},
                 b = {world = other.world, ep = other.ep},
-            }})
+            }}, true)
         end
     end
     drop_pairs_of(world_id, mine)
@@ -562,6 +628,7 @@ local function remote_refresh()
                     xrefresh_inflight[k] = nil
                     if res.succeeded then
                         xrefresh_fail[k], xrefresh_next[k] = nil, nil
+                        wake_outbox(srv.addr, srv.port)
                         ingest_registry(srv, minetest.parse_json(res.data or ""))
                     else
                         local n = (xrefresh_fail[k] or 0) + 1
@@ -629,6 +696,7 @@ minetest.register_globalstep(function(dtime)
     adopt_orphan_pairs()
     announce_endpoints()
     remote_refresh()
+    flush_outbox()
     sync_links()
 end)
 
@@ -1771,13 +1839,13 @@ local function do_connect(pname, ctx)
         local myrec = read_json(ep_file(world_id, ctx.mine))
         if myrec then
             myrec.addr, myrec.remote = "auto", nil
-            xpost(row.remote, row.rport, {kind = "endpoint", data = myrec})
+            xpost(row.remote, row.rport, {kind = "endpoint", data = myrec}, true)
         end
         xpost(row.remote, row.rport, {kind = "pair", data = {
             a = {world = world_id, ep = ctx.mine},
             b = {world = row.world, ep = row.ep},
             requester = world_id .. "/" .. ctx.mine,
-        }})
+        }}, true)
     end
     local started = false
     if not row.online and is_local_world(row.world)
