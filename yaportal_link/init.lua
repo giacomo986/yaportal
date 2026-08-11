@@ -956,6 +956,19 @@ minetest.register_on_joinplayer(function(player)
             apply_handoff(pname)
         end)
     end
+
+    -- A world closed to the network is the failure mode that leaves no trace
+    -- in game: the doors still list, the other machine simply never finds
+    -- this world. Its exchange follows the random port a loopback game takes
+    -- (game+5000 of something new every launch), so a search at the usual
+    -- address answers nothing and there is nothing to see anywhere. The panel
+    -- says so, but only if you open it — say it to anyone who has doors.
+    if not lan_open and (next(my_endpoints) or next(remote_servers)) then
+        minetest.chat_send_player(pname, minetest.colorize("#FFAA55",
+            "[porte] Questo mondo e' aperto solo su questo computer: dagli " ..
+            "altri PC non lo trovano e non ci entrano. Metti bind_address = " ..
+            "0.0.0.0 in minetest.conf e riapri il mondo."))
+    end
 end)
 
 minetest.register_on_leaveplayer(function(player)
