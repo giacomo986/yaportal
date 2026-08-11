@@ -632,6 +632,30 @@ service), `core.xworld_exchange_posts()` drains posts.
   "aperto solo sul suo computer" instead of letting a player walk into a
   timeout.
 
+- **A local game open to the network must also ACCEPT guests.** Binding is only
+  half of it: upstream refuses every client after the first in simple
+  singleplayer mode (`handleCommand_Init`, `SERVER_ACCESSDENIED_SINGLEPLAYER`),
+  which is exactly what the other machine's passive session is. The fork drops
+  that limit when `bind_address` is set — same condition as the bind above.
+  Without it the link works in ONE direction only and looks like a mystery: the
+  host with the hosting-enabled world sees the other world through its door,
+  the plain-singleplayer host sees black, every crossing from the black side
+  degrades to a redirect, and that redirect takes down BOTH worlds (his server
+  dies with his client, which kicks the visitor, whose own client then quits
+  and kills the world it was hosting). Cost: one debug.txt carried between two
+  houses on a USB stick.
+- **In a singleplayer world the name `singleplayer` is reserved for a loopback
+  peer.** `handleCommand_SrpBytesM` skips the password check for that name
+  (`is_true_singleplayer`), so once the world accepts guests, anyone on the LAN
+  could claim the host's account without a password. Both the name check in
+  `handleCommand_Init` and `is_true_singleplayer` require `isLocalhost()`.
+- **A refused passive session must say so in chat, once** (`Game::stepSecondary
+  Client`, `m_secondary_denial_told`). A black portal is indistinguishable from
+  a portal that is not paired, not reachable, or looking at an empty room.
+- **A crossing that would fall back to a redirect is REFUSED while other
+  players are connected to a self-hosted world** (`yaportal.xworld.handler`).
+  The redirect kills the world for them; not crossing is the smaller loss.
+
 - Exchange port = game port + 5000, which **overflows** for a game port above
   60535. `PortalExchange::start` takes a u32 and refuses out-of-range ports
   instead of binding the truncated value (that landed on privileged port 1008,

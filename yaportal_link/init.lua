@@ -918,6 +918,26 @@ yaportal.xworld.handler = function(pname, portal_name, pp)
         -- until the swap packet lands a frame later.
         park(player)
     else
+        -- The redirect fallback takes this player's client away from here, and
+        -- in a world hosted inside that same client the server goes with it:
+        -- every visitor gets "Server shutting down", and a visitor who was
+        -- himself hosting takes his own world down when his client quits. One
+        -- unswapped crossing closed two worlds on two machines that way, so
+        -- refuse it while anyone else is here and say what to do about it.
+        local guests = {}
+        if core.is_singleplayer() then
+            for _, p in ipairs(core.get_connected_players()) do
+                local n = p:get_player_name()
+                if n ~= pname then guests[#guests + 1] = n end
+            end
+        end
+        if #guests > 0 then
+            minetest.chat_send_player(pname, minetest.colorize("#FFAA55",
+                ("[portale] la porta non è pronta (di là questo mondo non si vede ancora) e " ..
+                 "passare adesso chiuderebbe il mondo per %s. Aspetta che la porta mostri " ..
+                 "l'altro mondo da entrambi i lati."):format(table.concat(guests, ", "))))
+            return
+        end
         core.redirect_player(pname, addr, port)
     end
 end

@@ -135,8 +135,10 @@ Each machine that others must be able to *enter* needs three things, and the
 panel's second status line tells you which one is missing:
 
 1. `bind_address = 0.0.0.0` in `minetest.conf`. Without it a local game listens
-   on `127.0.0.1` only — the door pairs, and crossing it ends in *connection
-   timed out*. (This also pins the port, see below.)
+   on `127.0.0.1` only and refuses every guest — the door pairs, the other
+   machine sees a black portal instead of your world, and crossing it ends in
+   *connection timed out*. With it set, a world you start from *Gioca* accepts
+   visitors like a hosted one. (This also pins the port, see below.)
 2. `port = 30000` in `minetest.conf`. A local game otherwise takes a random
    port every launch, which no firewall rule and no remote search can follow.
 3. The firewall open on that game port (UDP) **and on the game port + 5000**
