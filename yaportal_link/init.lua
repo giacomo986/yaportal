@@ -1617,7 +1617,8 @@ local function search_remote(pname, input)
         if not minetest.get_player_by_name(pname) then return end
         if not res.succeeded then
             say(pname, ("Nessuna risposta da %s:%d (server spento, IP sbagliato " ..
-                "o firewall sulla porta %d)."):format(addr, port, port + XPORT_OFF),
+                "o firewall sulla porta %d). Per capire quale: /porte_diag %s " ..
+                "qui, e /porte_diag li'."):format(addr, port, port + XPORT_OFF, addr),
                 "#FF5555")
             return
         end
@@ -1650,6 +1651,91 @@ local function search_remote(pname, input)
         show_panel(pname)
     end)
 end
+
+-- Why two computers cannot see each other. Half of that answer always lives on
+-- the OTHER machine — its address today, whether a world is open right now,
+-- whether its service is up — and the panel can only speak for the world you
+-- are standing in. Run it on both sides and compare the two outputs; every
+-- cross-machine failure so far (a world bound to loopback, a random port after
+-- a lost bind_address, a peer that took a new DHCP address, a machine simply
+-- sitting in the main menu) shows up in one of these lines.
+minetest.register_chatcommand("porte_diag", {
+    description = "Perche' due computer non si vedono: /porte_diag [ip[:porta]]",
+    func = function(pname, param)
+        say(pname, ("Mondo '%s': gioco %d UDP, ricerca %d TCP — %s"):format(
+            world_id, my_port, my_port + XPORT_OFF,
+            exchange_ok and "servizio attivo" or "SERVIZIO DI RICERCA SPENTO"),
+            exchange_ok and "#55FF55" or "#FF5555")
+
+        if lan_open then
+            -- Real interfaces only: hostname -I also lists the docker/lxc
+            -- bridge addresses, and an address the other machine cannot route
+            -- to is worse than none — it looks like an answer.
+            local p = ie.io.popen("ip -4 -o addr show scope global 2>/dev/null " ..
+                "| grep -vE ' (docker|br-|lxcbr|virbr|veth)' " ..
+                "| awk '{print $4}' | cut -d/ -f1 | tr '\\n' ' '")
+            local ips = ((p and p:read("*l")) or ""):gsub("%s+$", "")
+            if p then p:close() end
+            say(pname, "Dall'altro computer cerca questo indirizzo: " ..
+                (ips ~= "" and ips or "(nessun indirizzo di rete su questa macchina)"))
+        else
+            say(pname, "Questo mondo ascolta solo su 127.0.0.1: nessun altro " ..
+                "computer lo trova. Metti bind_address = 0.0.0.0 e port = 30000 " ..
+                "in minetest.conf, poi riapri il mondo.", "#FF5555")
+        end
+
+        for k, srv in pairs(remote_servers) do
+            local fails = xrefresh_fail[k] or 0
+            say(pname, ("Ricordato %s:%d — %s"):format(srv.addr, srv.port,
+                fails == 0 and "risponde" or
+                ("%d tentativi a vuoto, riprovo fra %ds"):format(fails,
+                    math.max(0, math.floor((xrefresh_next[k] or 0) - now())))),
+                fails == 0 and "#55FF55" or "#FFAA55")
+        end
+
+        if not http then
+            say(pname, "HTTP spento per questo mod: non posso provare altri " ..
+                "computer (serve secure.trusted_mods = yaportal_link).", "#FF5555")
+            return true
+        end
+        if param == "" then
+            say(pname, "Per provare l'altro computer: /porte_diag <ip> — " ..
+                "li' deve esserci un mondo APERTO in quel momento.")
+            return true
+        end
+
+        local addr, port = param:match("^%s*([%w%.%-]+):?(%d*)%s*$")
+        port = tonumber(port) or 30000
+        if not addr or addr == "" then
+            say(pname, "Scrivi un indirizzo, es. /porte_diag 192.168.1.20",
+                "#FFAA55")
+            return true
+        end
+        say(pname, ("Provo %s: ricerca su %d TCP..."):format(addr, port + XPORT_OFF))
+        http.fetch({url = xurl(addr, port, "/registry"), timeout = 5}, function(res)
+            if not minetest.get_player_by_name(pname) then return end
+            if not res.succeeded then
+                say(pname, ("%s:%d non risponde. Controlla in quest'ordine: " ..
+                    "1) su quel computer c'e' un mondo APERTO adesso? " ..
+                    "2) l'indirizzo e' ancora questo? (li' /porte_diag lo stampa) " ..
+                    "3) il firewall lascia passare %d TCP?")
+                    :format(addr, port, port + XPORT_OFF), "#FF5555")
+                return
+            end
+            local resp = minetest.parse_json(res.data or "")
+            if type(resp) ~= "table" or type(resp.world) ~= "table" then
+                say(pname, ("%s:%d risponde ma non e' un mondo yaportal_link.")
+                    :format(addr, port + XPORT_OFF), "#FF5555")
+                return
+            end
+            say(pname, ("%s risponde: mondo '%s', %d porte%s."):format(addr,
+                tostring(resp.world.world), #(resp.endpoints or {}),
+                resp.world.lan == false and ", ma aperto solo sul suo computer"
+                or ""), "#55FF55")
+        end)
+        return true
+    end,
+})
 
 local function do_connect(pname, ctx)
     local row = ctx.sel and ctx.rows and ctx.rows[ctx.sel]

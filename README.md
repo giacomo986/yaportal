@@ -147,6 +147,14 @@ panel's second status line tells you which one is missing:
    sudo ufw allow from 192.168.1.0/24 to any port 35000 proto tcp
    ```
 
+**When two machines cannot find each other, run `/porte_diag` on both.** It
+prints what that world is serving (game port UDP, search port TCP, whether the
+service is up), the address the *other* machine should search for, and the
+state of every remembered server. `/porte_diag <ip>` then probes that machine
+and says which of the three usual causes it is: no world open there right now,
+a different address than you think (DHCP moves them), or a firewall. A world
+only answers while it is open — a machine sitting in the main menu is invisible.
+
 A world opened this way is reachable by anyone who can reach the machine, so
 keep it to networks you trust, or give it a password. On an untrusted network
 also set the same `yaportal_link_key = <secret>` in `minetest.conf` on both
