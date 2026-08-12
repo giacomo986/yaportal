@@ -1772,6 +1772,21 @@ minetest.register_chatcommand("porte_diag", {
                 "in minetest.conf, poi riapri il mondo.", "#FF5555")
         end
 
+        -- Who is standing in this world and whether the other side can see
+        -- them. A body left parked (invisible) after a crossing looks, from
+        -- the other world's portal, exactly like an empty room.
+        for _, pl in ipairs(core.get_connected_players()) do
+            local n = pl:get_player_name()
+            local st = parked[n]
+            local pos = pl:get_pos()
+            say(pname, ("Giocatore %s: %s, %s, a (%d,%d,%d)"):format(n,
+                st and (st.ghost and "fantasma parcheggiato" or "parcheggiato")
+                    or "attivo",
+                pl:get_properties().is_visible and "visibile" or "INVISIBILE",
+                pos.x, pos.y, pos.z),
+                (st or pl:get_properties().is_visible) and "#AAAAAA" or "#FF5555")
+        end
+
         for k, srv in pairs(remote_servers) do
             local fails = xrefresh_fail[k] or 0
             say(pname, ("Ricordato %s:%d — %s"):format(srv.addr, srv.port,
