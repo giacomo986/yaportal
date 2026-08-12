@@ -157,6 +157,15 @@ and says which of the three usual causes it is: no world open there right now,
 a different address than you think (DHCP moves them), or a firewall. A world
 only answers while it is open — a machine sitting in the main menu is invisible.
 
+It also lists everyone connected to that world with their state: *attivo*,
+*parcheggiato* (a body whose player is currently in the other world) or
+*fantasma parcheggiato* (the connection another machine holds open just to
+show this world through its door), plus whether the server considers them
+visible. That is the answer to "I can see their world through the door but
+not them in it": a body still parked is invisible on purpose, and one marked
+*attivo* + *visibile* that you still cannot see is a problem on the watching
+machine, whose log then carries `[xworld] portal view: player … shown`.
+
 A world opened this way is reachable by anyone who can reach the machine, so
 keep it to networks you trust, or give it a password. On an untrusted network
 also set the same `yaportal_link_key = <secret>` in `minetest.conf` on both

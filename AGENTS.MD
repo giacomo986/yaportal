@@ -562,6 +562,26 @@ that first when a hop is not seamless.
   addr:port changes (registry flap / stale endpoint port) still only retarget
   an unpinned, not-yet-Ready session.
 
+- **`m_current_world` must be the name the registry publishes.** It is the
+  identity both `Server::SwapPlayer` and `Game::performSessionSwap` match on,
+  and it is what the demoted session is retargeted against. A world opened
+  from the command line (`--worldname`, every `play_*.sh`) carries
+  clientlauncher's placeholder `[--world parameter]` in its world spec, which
+  matches nothing: after each crossing the demoted session was dropped as a
+  "re-pair", reconnected as a ghost, and the player re-entered their own world
+  under the ghost account while their old body stayed parked and invisible at
+  the door. `Game::startup` falls back to the world directory name.
+
+- **The passive session DOES rebuild a player's visuals when the mod unparks
+  them** — verified end-to-end in a scripted local round trip (two clients,
+  two hosted worlds, crossing forced by a throwaway worldmod calling
+  `yaportal.xworld.handler`), both cross-game and VoxeLibre↔VoxeLibre:
+  `is_visible` false→true expires the visuals and `GenericCAO::step` builds
+  the node in the secondary scene manager. So "someone is missing from the
+  portal view" is NOT a missing rebuild; look at the park state on the server
+  (`/porte_diag` lists it) and at the `[xworld] portal view: player X
+  shown/hidden` lines the passive session logs.
+
 - **Cross-game doors are supported, but only under the unique-media-name
   convention.** `TextureSource`, `ISoundManager` and `ItemVisualsManager` are
   shared between the two sessions and keyed by plain file/item name: two games
