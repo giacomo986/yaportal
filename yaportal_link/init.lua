@@ -726,6 +726,14 @@ local parked = {}          -- pname -> saved state
 local function park(player)
     local pname = player:get_player_name()
     if parked[pname] then return end
+    -- The snapshot taken here is what unpark hands back, so a body that is
+    -- already hidden when we park it stays hidden for good. That should not
+    -- happen (we only park bodies a game just spawned or a player just left
+    -- behind) — record it, because it is invisible in every sense afterwards.
+    if not player:get_properties().is_visible then
+        minetest.log("warning", "[yaportal_link] parking " .. pname ..
+            " while already invisible: whoever hid them is not this mod")
+    end
     parked[pname] = {
         armor = player:get_armor_groups(),
         physics = player:get_physics_override(),
@@ -773,18 +781,43 @@ local function park(player)
     end)
 end
 
-local function unpark(pname)
+-- take_over: this connection is not going back to being a ghost, it IS the
+-- player now (they walked in through a door).
+local function unpark(pname, take_over)
     local st = parked[pname]
     if not st then return end
     parked[pname] = nil
     local player = minetest.get_player_by_name(pname)
     if not player then return end
-    player:set_properties({is_visible = st.visible ~= false,
-        pointable = st.pointable ~= false,
-        collide_with_objects = st.collide ~= false})
+    local vis = st.visible ~= false
+    local point = st.pointable ~= false
+    local coll = st.collide ~= false
+    -- A saved "hidden" is either the game's own doing (an invisibility effect
+    -- running when we parked) or a snapshot taken while the body was already
+    -- hidden — the two are indistinguishable here. Handing that back to the
+    -- connection that is now the player leaves someone walking around a world
+    -- where nobody can see them (reported twice from two machines: the
+    -- traveller moved normally and stayed invisible to everyone). Show them,
+    -- and leave the reason in the log.
+    if take_over and not (vis and point and coll) then
+        minetest.log("warning", ("[yaportal_link] %s took over a body saved " ..
+            "as %s — showing it anyway"):format(pname,
+            (not vis and "invisible") or (not point and "not pointable") or
+            "non-colliding"))
+        vis, point, coll = true, true, true
+    end
+    player:set_properties({is_visible = vis, pointable = point,
+        collide_with_objects = coll})
     player:set_armor_groups(st.armor or {})
     player:set_physics_override(st.physics or {speed = 1, jump = 1, gravity = 1})
-    if st.nametag then player:set_nametag_attributes(st.nametag) end
+    local tag = st.nametag
+    -- Parking hides the nametag by making it transparent; a snapshot taken in
+    -- that state would give the player back a name nobody can read.
+    if take_over and tag and tag.color and (tag.color.a or 255) == 0 then
+        tag = table.copy(tag)
+        tag.color = {a = 255, r = 255, g = 255, b = 255}
+    end
+    if tag then player:set_nametag_attributes(tag) end
 end
 
 -- Park the ghost beside my endpoint portal of a confirmed pair, so the region
@@ -832,7 +865,7 @@ minetest.register_chatcommand("xworld_unpark", {
     description = "Take over a parked cross-world ghost connection",
     privs = {},
     func = function(pname)
-        unpark(pname)
+        unpark(pname, true)
         apply_handoff(pname)
         minetest.log("action", "[yaportal_link] " .. pname ..
             " took over their ghost connection on " .. world_id)
@@ -1055,7 +1088,7 @@ minetest.register_on_joinplayer(function(player)
         -- Redirect hop: this connection is the player. Place and release.
         park(player)
         minetest.after(0.2, function()
-            unpark(pname)
+            unpark(pname, true)
             apply_handoff(pname)
         end)
     end

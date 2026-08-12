@@ -572,6 +572,15 @@ that first when a hop is not seamless.
   under the ghost account while their old body stayed parked and invisible at
   the door. `Game::startup` falls back to the world directory name.
 
+- **Taking over a parked body never restores it hidden** (`unpark(pname,
+  true)`, used by `/xworld_unpark` and the redirect-arrival path). The park
+  snapshot is what unpark hands back, so a body that was already invisible when
+  it was parked stays invisible for good — and since park also freezes physics,
+  the giveaway is a traveller who walks around normally and is visible to
+  nobody (reported from two machines, in one direction only). Both ends log it:
+  `parking X while already invisible` when the snapshot is poisoned, `took over
+  a body saved as invisible` when the take-over overrides it.
+
 - **The passive session DOES rebuild a player's visuals when the mod unparks
   them** — verified end-to-end in a scripted local round trip (two clients,
   two hosted worlds, crossing forced by a throwaway worldmod calling
