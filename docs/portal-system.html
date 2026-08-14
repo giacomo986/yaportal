@@ -1,0 +1,2000 @@
+<title>yaportal Internals</title>
+
+<style>
+:root {
+  --bg:        #F4F6F8;
+  --surface:   #FFFFFF;
+  --surface-2: #EDF1F5;
+  --ink:       #10151C;
+  --muted:     #5A6673;
+  --faint:     #8593A1;
+  --rule:      #DBE2E9;
+  --accent:    #0E6FB8;
+  --accent-bg: #E3EFF8;
+  --other:     #C1591F;
+  --other-bg:  #FBEDE3;
+  --code-bg:   #EEF2F6;
+
+  --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --measure: 68ch;
+  --s1: .35rem; --s2: .7rem; --s3: 1.15rem; --s4: 1.9rem; --s5: 3rem; --s6: 4.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0B0F14;
+    --surface:   #121921;
+    --surface-2: #161F29;
+    --ink:       #E4EBF2;
+    --muted:     #94A3B1;
+    --faint:     #6C7B8A;
+    --rule:      #1E2A36;
+    --accent:    #56B0EC;
+    --accent-bg: #10222F;
+    --other:     #E5924F;
+    --other-bg:  #2A1D12;
+    --code-bg:   #101820;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:        #0B0F14;
+  --surface:   #121921;
+  --surface-2: #161F29;
+  --ink:       #E4EBF2;
+  --muted:     #94A3B1;
+  --faint:     #6C7B8A;
+  --rule:      #1E2A36;
+  --accent:    #56B0EC;
+  --accent-bg: #10222F;
+  --other:     #E5924F;
+  --other-bg:  #2A1D12;
+  --code-bg:   #101820;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ── shell ───────────────────────────────────────────────── */
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--s5) var(--s4) var(--s6);
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: var(--s5);
+  align-items: start;
+}
+@media (max-width: 950px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: var(--s4); padding: var(--s4) var(--s3) var(--s5); }
+}
+
+/* ── masthead ────────────────────────────────────────────── */
+
+.masthead { grid-column: 1 / -1; border-bottom: 2px solid var(--ink); padding-bottom: var(--s3); }
+.mark { display: flex; align-items: center; gap: .5rem; margin-bottom: var(--s3); }
+.mark .chip { width: 1.05rem; height: 1.45rem; border-radius: 3px; }
+.mark .chip.a { background: var(--accent); }
+.mark .chip.b { background: var(--other); }
+.mark .wordmark {
+  font-family: var(--mono); font-size: .72rem; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--muted); margin-left: .35rem;
+}
+h1 {
+  font-family: var(--serif); font-weight: 600;
+  font-size: clamp(2.1rem, 5.5vw, 3.4rem); line-height: 1.08;
+  letter-spacing: -.02em; margin: 0 0 var(--s2); text-wrap: balance;
+}
+.standfirst {
+  max-width: var(--measure); color: var(--muted);
+  font-size: 1.08rem; margin: 0 0 var(--s3);
+}
+.baseline {
+  font-family: var(--mono); font-size: .78rem; line-height: 1.7;
+  color: var(--muted); border-left: 2px solid var(--accent);
+  padding-left: var(--s2); max-width: var(--measure);
+}
+.baseline strong { color: var(--ink); font-weight: 600; }
+
+/* ── rail ────────────────────────────────────────────────── */
+
+nav.rail { position: sticky; top: var(--s3); font-family: var(--mono); font-size: .78rem; }
+@media (max-width: 950px) {
+  nav.rail { position: static; border: 1px solid var(--rule); background: var(--surface); border-radius: 4px; padding: var(--s3); }
+}
+nav.rail h2 {
+  font-size: .68rem; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--faint); margin: 0 0 var(--s2); font-weight: 500;
+}
+nav.rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .28rem; }
+nav.rail a {
+  color: var(--muted); text-decoration: none; display: grid;
+  grid-template-columns: 1.6rem 1fr; gap: .3rem; padding: .12rem 0;
+  border-radius: 3px;
+}
+nav.rail a .n { color: var(--faint); font-variant-numeric: tabular-nums; }
+nav.rail a:hover { color: var(--accent); }
+nav.rail a:hover .n { color: var(--accent); }
+nav.rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+nav.rail .sep { height: 1px; background: var(--rule); margin: var(--s2) 0; }
+
+/* ── article ─────────────────────────────────────────────── */
+
+article { min-width: 0; }
+article > * { max-width: var(--measure); }
+article > .wide, article > figure, article > .tablewrap, article > pre, article > .mermaid { max-width: 100%; }
+
+section { padding-top: var(--s5); }
+section:first-of-type { padding-top: var(--s3); }
+
+h2 {
+  font-size: clamp(1.5rem, 3.2vw, 2rem); font-weight: 600; letter-spacing: -.015em;
+  line-height: 1.15; margin: 0 0 var(--s3); padding-top: var(--s2);
+  border-top: 1px solid var(--rule); text-wrap: balance;
+  display: grid; grid-template-columns: 2.6rem 1fr; gap: .4rem; align-items: baseline;
+}
+h2 .n {
+  font-family: var(--mono); font-size: .8rem; font-weight: 500;
+  color: var(--accent); letter-spacing: .04em; font-variant-numeric: tabular-nums;
+}
+h3 {
+  font-size: 1.16rem; font-weight: 600; letter-spacing: -.005em;
+  margin: var(--s4) 0 var(--s2); text-wrap: balance;
+}
+h4 {
+  font-family: var(--mono); font-size: .8rem; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  margin: var(--s3) 0 var(--s1);
+}
+p { margin: 0 0 var(--s3); }
+ul, ol { margin: 0 0 var(--s3); padding-left: 1.3rem; }
+li { margin-bottom: var(--s1); }
+li > ul, li > ol { margin-top: var(--s1); }
+strong { font-weight: 600; }
+a { color: var(--accent); text-underline-offset: .18em; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s4) 0; }
+
+code {
+  font-family: var(--mono); font-size: .855em;
+  background: var(--code-bg); padding: .1em .32em; border-radius: 3px;
+  overflow-wrap: break-word;
+}
+pre {
+  font-family: var(--mono); font-size: .8rem; line-height: 1.6;
+  background: var(--code-bg); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 4px;
+  padding: var(--s3); margin: 0 0 var(--s3);
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+.tablewrap { overflow-x: auto; margin: 0 0 var(--s3); border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; font-family: var(--serif); }
+th, td { text-align: left; padding: .5rem .8rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: .7rem; font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+  background: var(--surface-2); white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td code { font-size: .82em; }
+
+blockquote {
+  margin: 0 0 var(--s3); padding: var(--s2) var(--s3);
+  border-left: 3px solid var(--other); background: var(--other-bg);
+  border-radius: 0 4px 4px 0; color: var(--ink);
+}
+blockquote > :last-child { margin-bottom: 0; }
+
+.note {
+  margin: 0 0 var(--s3); padding: var(--s2) var(--s3);
+  border-left: 3px solid var(--accent); background: var(--accent-bg);
+  border-radius: 0 4px 4px 0;
+}
+.note > :last-child { margin-bottom: 0; }
+
+figure {
+  margin: 0 0 var(--s4); padding: var(--s3);
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+  overflow-x: auto;
+}
+figure svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--ink); }
+figcaption {
+  font-family: var(--mono); font-size: .74rem; line-height: 1.6;
+  color: var(--muted); margin-top: var(--s2); text-align: left;
+}
+figcaption b { color: var(--ink); font-weight: 600; }
+
+/* primitives for the flow / state / sequence figures */
+svg.dg text { font-family: var(--mono); font-size: 12px; fill: currentColor; }
+svg.dg .lbl { font-size: 10.5px; opacity: .72; }
+svg.dg .sub { font-size: 10.5px; opacity: .7; }
+svg.dg .hd  { font-size: 10px; letter-spacing: .12em; opacity: .55; }
+svg.dg .box { fill: none; stroke: currentColor; stroke-width: 1.4; }
+svg.dg .grp { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 4 4; opacity: .4; }
+svg.dg .fl  { fill: none; stroke: currentColor; stroke-width: 1.4; }
+svg.dg .life{ stroke: currentColor; stroke-width: 1; stroke-dasharray: 3 4; opacity: .4; }
+svg.dg .k   { stroke: #3193DB; }
+svg.dg .o   { stroke: #DD7F3C; }
+svg.dg text.k { fill: #3193DB; stroke: none; }
+svg.dg text.o { fill: #DD7F3C; stroke: none; }
+
+.eq {
+  font-family: var(--mono); font-size: .82rem; line-height: 1.75;
+  background: var(--code-bg); border: 1px solid var(--rule); border-radius: 4px;
+  padding: var(--s3); margin: 0 0 var(--s3); overflow-x: auto; white-space: pre;
+}
+
+.src {
+  font-family: var(--mono); font-size: .74rem; color: var(--faint);
+  margin: 0 0 var(--s3); letter-spacing: .01em;
+}
+.src code { background: none; padding: 0; color: var(--muted); }
+
+footer {
+  grid-column: 1 / -1; margin-top: var(--s6); padding-top: var(--s3);
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono); font-size: .75rem; color: var(--faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <div class="mark">
+    <span class="chip a"></span><span class="chip b"></span>
+    <span class="wordmark">Luanti&nbsp;·&nbsp;portal-fork</span>
+  </div>
+  <h1>yaportal Internals</h1>
+  <p class="standfirst">
+    The geometry and mathematics of a portal, the frame-by-frame rendering method, the
+    cross-world dual-client, and every change made to the Luanti engine with the reason it
+    was needed.
+  </p>
+  <p class="baseline">
+    Engine baseline: fork of luanti-org/luanti at tag <strong>5.16.1</strong> —
+    <strong>29 commits, 77 files, +6369 / −309</strong>.<br>
+    This is the explanation. <code>AGENTS.MD</code> is the build recipe and the invariants;
+    <code>README.md</code> is the user manual.<br>
+    Where this page and the code disagree, the code wins — and the disagreement is a bug report.
+  </p>
+</header>
+
+<nav class="rail">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#p0"><span class="n">00</span><span>Architecture</span></a></li>
+    <li><a href="#p1"><span class="n">01</span><span>Geometry &amp; transform</span></a></li>
+    <li><a href="#p2"><span class="n">02</span><span>Trigger &amp; traversal</span></a></li>
+    <li><a href="#p3"><span class="n">03</span><span>Rendering</span></a></li>
+    <li><a href="#p4"><span class="n">04</span><span>Motion &amp; camera</span></a></li>
+    <li><a href="#p5"><span class="n">05</span><span>Node types</span></a></li>
+    <li><a href="#p6"><span class="n">06</span><span>Cross-world doors</span></a></li>
+    <li><a href="#p7"><span class="n">07</span><span>Engine changes</span></a></li>
+    <li><a href="#p8"><span class="n">08</span><span>Failure modes</span></a></li>
+    <li><a href="#p9"><span class="n">09</span><span>Diagnostics</span></a></li>
+  </ol>
+  <div class="sep"></div>
+  <ol>
+    <li><a href="#a"><span class="n">A</span><span>Constants</span></a></li>
+    <li><a href="#b"><span class="n">B</span><span>Lua API</span></a></li>
+    <li><a href="#c"><span class="n">C</span><span>Protocol</span></a></li>
+  </ol>
+</nav>
+
+<article>
+
+<!-- ══ 0 ══════════════════════════════════════════════════ -->
+<section id="p0">
+<h2><span class="n">00</span><span>Architecture</span></h2>
+
+<p>A portal is one object described in three places at once, and most of the system's
+complexity is keeping those three descriptions in agreement.</p>
+
+<div class="tablewrap"><table>
+<thead><tr><th>Layer</th><th>Owns</th><th>Lives in</th></tr></thead>
+<tbody>
+<tr><td><b>Mod</b> (Lua, server)</td><td>What a portal <em>is</em>: where its frame stands, which portal it leads to, when a player has crossed it, where they come out.</td><td><code>yaportal/init.lua</code> (6747 lines)<br><code>yaportal_link/init.lua</code> (2221)</td></tr>
+<tr><td><b>Engine</b> (C++, client)</td><td>What a portal <em>looks like</em>: a render-to-texture pass from a mirrored camera, drawn onto five faces of a tunnel.</td><td><code>src/portal_manager.*</code><br><code>src/client/render/portal.*</code><br><code>src/client/worldsession.*</code></td></tr>
+<tr><td><b>Protocol</b></td><td>Getting the first to the second when they are not the same process.</td><td>four <code>TOCLIENT</code> and one <code>TOSERVER</code> message</td></tr>
+</tbody>
+</table></div>
+
+<figure>
+<svg class="dg" viewBox="0 0 900 320" role="img" aria-label="Server-side Lua decides portal state and crossings, protocol messages carry it across the process boundary, and the client's PortalManager, render steps, LocalPlayer and WorldSession consume it; the passive session reports its readiness back to the server.">
+  <defs>
+    <marker id="d1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d1o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#DD7F3C"/>
+    </marker>
+  </defs>
+
+  <text class="hd" x="114" y="24" text-anchor="middle">SERVER · LUA</text>
+  <text class="hd" x="385" y="24" text-anchor="middle">WIRE</text>
+  <text class="hd" x="719" y="24" text-anchor="middle">CLIENT · C++</text>
+
+  <rect class="box" x="24" y="54" width="180" height="44" rx="3"/>
+  <text x="114" y="74" text-anchor="middle">yaportal</text>
+  <text class="sub" x="114" y="89" text-anchor="middle">portals[name] table</text>
+  <rect class="box" x="24" y="204" width="180" height="44" rx="3"/>
+  <text x="114" y="224" text-anchor="middle">yaportal_link</text>
+  <text class="sub" x="114" y="239" text-anchor="middle">registry + pairing</text>
+
+  <rect class="box" x="300" y="62" width="170" height="28" rx="14"/>
+  <text class="sub" x="385" y="80" text-anchor="middle">PORTAL_STATE</text>
+  <rect class="box" x="300" y="162" width="170" height="28" rx="14"/>
+  <text class="sub" x="385" y="180" text-anchor="middle">PORTAL_TELEPORT</text>
+  <rect class="box" x="300" y="212" width="170" height="28" rx="14"/>
+  <text class="sub" x="385" y="230" text-anchor="middle">XWORLD_SWAP</text>
+  <rect class="box o" x="300" y="272" width="170" height="28" rx="14"/>
+  <text class="sub o" x="385" y="290" text-anchor="middle">XWORLD_STATUS</text>
+
+  <rect class="grp" x="556" y="44" width="326" height="204" rx="4"/>
+  <rect class="box" x="572" y="58" width="294" height="36" rx="3"/>
+  <text x="719" y="81" text-anchor="middle">PortalManager · 16 slots</text>
+  <rect class="box k" x="572" y="106" width="294" height="44" rx="3"/>
+  <text x="719" y="125" text-anchor="middle">portal render steps</text>
+  <text class="sub" x="719" y="141" text-anchor="middle">RTT + tunnel quads</text>
+  <rect class="box" x="572" y="162" width="294" height="28" rx="3"/>
+  <text class="sub" x="719" y="180" text-anchor="middle">LocalPlayer · snapView / warp</text>
+  <rect class="box o" x="572" y="206" width="294" height="40" rx="3"/>
+  <text x="719" y="224" text-anchor="middle">WorldSession</text>
+  <text class="sub" x="719" y="239" text-anchor="middle">passive second client</text>
+
+  <line class="fl" x1="204" y1="76" x2="294" y2="76" marker-end="url(#d1)"/>
+  <text class="lbl" x="249" y="68" text-anchor="middle">set_portals</text>
+  <path class="fl" d="M 204 88 L 250 88 L 250 176 L 294 176" marker-end="url(#d1)"/>
+  <text class="lbl" x="258" y="140">portal_teleport</text>
+  <line class="fl" x1="204" y1="226" x2="294" y2="226" marker-end="url(#d1)"/>
+  <text class="lbl" x="249" y="218" text-anchor="middle">xworld_swap_player</text>
+
+  <line class="fl" x1="470" y1="76"  x2="566" y2="76"  marker-end="url(#d1)"/>
+  <line class="fl" x1="470" y1="176" x2="566" y2="176" marker-end="url(#d1)"/>
+  <line class="fl" x1="470" y1="226" x2="566" y2="226" marker-end="url(#d1)"/>
+
+  <line class="fl" x1="600" y1="94" x2="600" y2="102" marker-end="url(#d1)"/>
+  <line class="fl" x1="822" y1="206" x2="822" y2="154" marker-end="url(#d1)"/>
+  <text class="lbl" x="816" y="180" text-anchor="end">portal view</text>
+
+  <path class="fl o" d="M 700 246 L 700 286 L 476 286" marker-end="url(#d1o)"/>
+  <path class="fl o" d="M 300 286 L 114 286 L 114 254" marker-end="url(#d1o)"/>
+  <text class="lbl o" x="196" y="306" text-anchor="middle">ready · addr · world, every 2 s</text>
+</svg>
+<figcaption><b>The portal is decided in Lua and drawn in C++.</b> In a local singleplayer
+world those are the same process; for any other world these messages are the only thing
+holding the two halves together. Only the passive <code>WorldSession</code> talks
+back.</figcaption>
+</figure>
+
+<h3>Components</h3>
+<ul>
+<li><code>yaportal/</code> — the play portals: frames, portal guns, pocket dimensions, floor and ceiling portals, the Portal-1 puzzle blocks. Everything here is single-world.</li>
+<li><code>yaportal_link/</code> — cross-world doors. A trusted mod: it launches other worlds' servers and reads/writes a shared registry directory.</li>
+<li><code>yafps/</code> — a minimal FPS arena game, shipped as a <em>different game</em> to walk into, which is what forces the cross-game media rules of §6.</li>
+<li><code>luanti_src/</code> — the engine fork.</li>
+</ul>
+
+<h3>Why the engine had to be forked</h3>
+<p>Everything below is invisible to a Lua mod in stock Luanti. Each one is load-bearing.</p>
+<ol>
+<li><b>Rendering the world from a second camera pose into a texture.</b> No Lua API exposes the scene manager, a render target, or a camera.</li>
+<li><b>An oblique near clip plane.</b> Without it the geometry between the destination portal and the destination camera appears in the portal image.</li>
+<li><b>Per-vertex clip distances.</b> The oblique plane alone leaks the destination frame at grazing angles.</li>
+<li><b>Atomic teleport.</b> <code>set_pos</code> + <code>set_look_*</code> + <code>add_velocity</code> are three packets: the client shows a torn frame between them. The portal illusion dies there.</li>
+<li><b>Camera roll.</b> Luanti has none; a horizontal↔vertical traversal needs one.</li>
+<li><b>A collision-box shift</b>, so a player can sink through a floor portal past the block that holds the frame up.</li>
+<li><b>A second live connection</b> to another server, rendered into the portal, and promoted in place when the player walks through.</li>
+</ol>
+</section>
+
+<!-- ══ 1 ══════════════════════════════════════════════════ -->
+<section id="p1">
+<h2><span class="n">01</span><span>Portal geometry and the transform</span></h2>
+<p class="src">Source: <code>yaportal/init.lua:236-432</code></p>
+
+<h3>Representation</h3>
+<pre><code>portals[name] = {
+  cx, cy, cz,     -- integer node coords of the opening's low corner
+  axis,           -- 0 = opening in the XY plane (normal ±Z)
+                  -- 1 = opening in the YZ plane (normal ±X)
+                  -- 2 = horizontal, opening in the XZ plane (normal ±Y)
+  ns,             -- normal sign, +1 / -1: which side is the "front"
+  w, h,           -- opening size in nodes (1..8 wide, 2..8 tall for frames)
+  rot,            -- 0..3, quarter turns of the in-plane basis about the normal
+  ou, ov,         -- optional half-node offsets of the opening (wall-carved portals)
+  kind,           -- nil = frame portal (type 1), "block" = hollow block (type 2)
+  link,           -- name of the destination portal, or nil
+  xworld,         -- {world=, ep=, addr=, port=} for a cross-world door
+  node_name,      -- frame material
+}</code></pre>
+
+<p><code>ns</code> is chosen once, at activation, from which side of the plane the player
+stood on (<code>normal_sign</code>). It is what makes a portal one-directional.</p>
+
+<p><code>inner_center(pp)</code> returns the centre of the opening in world coordinates —
+the point everything else is measured from. For <code>axis == 0</code> that is
+<code>{cx + (w-1)/2 + ou, cy + (h-1)/2 + ov, cz}</code>.</p>
+
+<h3>The portal frame (basis)</h3>
+<p>Each portal carries an orthonormal triad <b>(n, r, u)</b> — normal, right, up:</p>
+<pre><code>axis 0:  n = (0,0,ns)   r = (-ns,0,0)  u = (0,1,0)
+axis 1:  n = (ns,0,0)   r = (0,0,ns)   u = (0,1,0)
+axis 2:  n = (0,ns,0)   r = (1,0,0)    u = (0,0,1)</code></pre>
+
+<p>then <code>apply_rot(r, u, rot)</code> turns the in-plane pair by <code>rot</code>
+quarter-turns (<code>r' = u</code>, <code>u' = -r</code> per step). The C++ side derives
+the same triad with <code>right_of(p) = normal × up</code> — identical by construction, and
+it must stay identical: the mod and the renderer compute the transform independently.</p>
+
+<p>Note that <b>(r, u, n) is left-handed</b> (<code>r × u = −n</code>). That matters
+below.</p>
+
+<h3>The transform</h3>
+<p>Write <code>B_s = [r_s u_s n_s]</code> and <code>B_d = [r_d u_d n_d]</code> as the two
+frames' column matrices. <code>portal_transform_pos</code> and
+<code>portal_transform_dir</code> compute</p>
+
+<div class="eq">        ⎡ lr ⎤   ⎡ v·r_s ⎤                    ⎡ −lr ⎤
+  v  ↦  ⎢ lu ⎥ = ⎢ v·u_s ⎥   then   out = B_d ⎢ +lu ⎥
+        ⎣ ln ⎦   ⎣ v·n_s ⎦                    ⎣ −ln ⎦
+
+  i.e.   T = B_d · M · B_sᵀ      with   M = diag(−1, +1, −1)</div>
+
+<figure>
+<svg viewBox="0 0 660 260" role="img" aria-label="Top-down view of two portals: the entry vector's right and normal components both flip, the up component is carried through, which is a 180-degree rotation about the portal's up axis.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3193DB"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+
+    <!-- LEFT: source portal -->
+    <text x="20" y="24" font-size="11" opacity=".65">SOURCE  (seen from above)</text>
+    <line x1="60" y1="70" x2="60" y2="200" stroke="currentColor" stroke-width="4"/>
+    <text x="34" y="215" font-size="11" opacity=".65">portal A</text>
+    <!-- basis -->
+    <line x1="60" y1="135" x2="128" y2="135" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="132" y="139">n_s</text>
+    <line x1="60" y1="135" x2="60" y2="82" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="66" y="80">r_s</text>
+    <!-- incoming -->
+    <line x1="190" y1="90" x2="66" y2="130" stroke="#3193DB" stroke-width="2.5" marker-end="url(#arA)"/>
+    <text x="196" y="86" fill="#3193DB">v (entering)</text>
+    <text x="150" y="176" font-size="11" opacity=".75">lr &gt; 0 , ln &gt; 0</text>
+
+    <!-- divider -->
+    <line x1="330" y1="50" x2="330" y2="220" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".35"/>
+
+    <!-- RIGHT: destination portal -->
+    <text x="380" y="24" font-size="11" opacity=".65">DESTINATION</text>
+    <line x1="420" y1="70" x2="420" y2="200" stroke="currentColor" stroke-width="4"/>
+    <text x="394" y="215" font-size="11" opacity=".65">portal B</text>
+    <line x1="420" y1="135" x2="488" y2="135" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="492" y="139">n_d</text>
+    <line x1="420" y1="135" x2="420" y2="82" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="426" y="80">r_d</text>
+    <!-- outgoing: mirrored right, mirrored normal -->
+    <line x1="426" y1="140" x2="550" y2="180" stroke="#3193DB" stroke-width="2.5" marker-end="url(#arA)"/>
+    <text x="500" y="205" fill="#3193DB">T(v) (leaving)</text>
+    <text x="440" y="176" font-size="11" opacity=".75">−lr , −ln</text>
+  </g>
+</svg>
+<figcaption><b>The transform is a rotation, not a mirror.</b> The right and normal
+components both flip; up is carried through. Because both frames are left-handed,
+<code>det T = (−1)(+1)/(−1) = +1</code> — a proper rotation, so writing does not come out
+backwards and the player's left hand stays their left hand.</figcaption>
+</figure>
+
+<p>Intuition: you enter the front of A heading <code>−n_s</code>, you leave the front of B
+heading <code>+n_d</code>. The normal component flips, the in-plane right component flips
+with it (they belong to the same rotation), the up component is carried through.</p>
+
+<p>Two details in <code>portal_transform_pos</code> that <code>portal_transform_dir</code>
+does not have:</p>
+<ul>
+<li><b>The depth clamp</b> (<code>init.lua:411-415</code>): <code>dst_ln</code> is pushed
+to at least ±0.02 away from zero. A traversal computed exactly on the destination plane
+leaves the player at depth 0, which is simultaneously "inside" and "outside" the
+destination portal — the trigger test of §2 then fires again and the player
+ping-pongs.</li>
+<li>Positions are transformed <b>relative to <code>inner_center</code></b>, directions are
+not.</li>
+</ul>
+
+<h3>The horizontal-portal exception</h3>
+<pre><code>local eff_src_r = (src.axis == 2 or dst.axis == 2)
+    and {x=-src_r.x, y=-src_r.y, z=-src_r.z} or src_r</code></pre>
+
+<p>Whenever <b>either</b> end is horizontal, <code>src_r</code> is negated before the
+transform. Since the transform then negates the resulting coefficient again, the effective
+map becomes <b>diag(+1, +1, −1)</b> in the original bases: only the normal component
+flips.</p>
+
+<p>This rule applies to <b>everything</b> the body carries — position, look direction,
+velocity, world-up (for the roll), entity rotation — and it is computed once per traversal
+and reused. Deriving it per quantity, or using a separate "no-swap factor", has been tried
+and produces poses that disagree between position and look.</p>
+
+<p>Two consequences worth knowing before touching either side:</p>
+<ul>
+<li><code>det(diag(+1,+1,−1)) = −1</code>. For traversals involving a horizontal portal the
+<em>body</em> transform is a reflection, not a rotation. In practice it lands as a
+different exit yaw, which the roll-settling animation absorbs; horizontal portals are
+treated as "turn me over", not "mirror me".</li>
+<li>The <b>renderer never applies this exception</b>. <code>setVirtualCamera</code> always
+uses the rotation form. <code>Game::performSessionSwap</code> (<code>game.cpp:756</code>)
+<em>does</em> apply it, under the name <code>rotate_only</code>, precisely so the client's
+arrival prediction matches what the exit server will compute.</li>
+</ul>
+
+<h3>Yaw and pitch</h3>
+<p>Luanti's <code>get_look_dir()</code> goes through <code>getRadYawDep()</code>, which is
+<code>(m_rotation.Y + 90°) × DEGTORAD</code>. The consequence is a sign that catches
+everyone:</p>
+<pre><code>new_yaw   = math.atan2(-new_look.x, new_look.z)   -- NOT atan2(x, z)
+new_pitch = -math.asin(clamp(new_look.y, -1, 1))</code></pre>
+
+<p><b>Gimbal-lock fallback</b> (<code>init.lua:1434-1449</code>): when the transformed look
+is within 0.01 of vertical, its horizontal projection carries no yaw information. The mod
+then transforms a <em>horizontal right vector</em> derived from the original look (or from
+<code>get_look_yaw()</code> when the pitch is exactly ±90°) and reads the yaw off that
+instead: <code>new_yaw = atan2(rt.z, rt.x)</code>.</p>
+
+<h3>Roll</h3>
+<p>A traversal between portals with different bases leaves the horizon tilted. The mod
+measures that tilt exactly (<code>init.lua:1456-1483</code>):</p>
+<ol>
+<li>Transform world-up through the portal: <code>nwu = T(0,1,0)</code>.</li>
+<li>Project both world-up and <code>nwu</code> onto the plane perpendicular to
+<code>new_look</code>.</li>
+<li><code>roll = ±acos(ĉu0 · ŝup)</code>, sign from
+<code>sign(cross(cu0, sup) · new_look)</code>.</li>
+</ol>
+<p>The teleport packet carries this roll, and the client <em>starts</em> rolled by it. A
+globalstep then animates <code>roll → 0</code> over roughly <code>|roll| / π</code>
+seconds, so the player is briefly disoriented and then settles upright — the Portal-style
+landing, rather than an instant snap or a permanently tilted horizon.</p>
+
+<h3>Velocity</h3>
+<p><code>new_vel = T_dir(vel)</code>, but the packet carries <b><code>new_vel − vel</code></b>,
+a delta. <code>PlayerSAO::setMaxSpeedOverride</code> and the client's
+<code>addVelocity</code> both work in deltas; an absolute velocity would be overwritten by
+whatever the client's own physics computed for the same frame.</p>
+
+<h3>Exit placement</h3>
+<p>The exit is computed for the <b>eye</b>, not the feet, so that what the player
+<em>sees</em> is continuous:</p>
+<pre><code>cpos    = feet + eye_height                       -- eye_height default 1.625
+rel     = cpos − inner_center(src)
+new_off = T_pos(rel)
+adj     = (0.5 + TRIGGER_DEPTH) − (new_off · n_d) -- put the eye the same distance
+new_off = new_off + adj · n_d                     -- past dst's outer face as the
+new_pos = inner_center(dst) + new_off − eye_h·Ŷ   -- trigger was past src's</code></pre>
+
+<p><b>Step-up.</b> If those feet land inside a solid node,
+<code>lift_feet_out_of_blocks</code> raises them onto it and the difference <code>dy</code>
+is recorded as <code>warp_off = (0, −dy, 0)</code>. The player is placed at the
+<em>standing</em> position, but the camera is told to start <code>dy</code> lower — at the
+seamless exit — and ease up over 0.3 s (§4). Without that, a portal that opens at knee
+height throws the view a metre into the air in one frame.</p>
+</section>
+
+<!-- ══ 2 ══════════════════════════════════════════════════ -->
+<section id="p2">
+<h2><span class="n">02</span><span>Trigger and traversal</span></h2>
+<p class="src">Source: <code>init.lua:285-376</code> (predicates), <code>1239-1553</code> (players), <code>1589-1700</code> (entities)</p>
+
+<h3>Predicates</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Function</th><th>Answers</th></tr></thead>
+<tbody>
+<tr><td><code>in_portal_bounds(ppos, pp)</code></td><td>is the player in the box around the opening?</td></tr>
+<tr><td><code>on_ns_side(ppos, pp)</code></td><td>are they on the front (<code>ns</code>) side?</td></tr>
+<tr><td><code>portal_depth(ppos, pp)</code></td><td>signed distance along <code>ns</code>: <code>(pos − c) · n</code></td></tr>
+<tr><td><code>past_trigger(cpos, pp)</code></td><td><code>portal_depth &lt; 0.5 − TRIGGER_DEPTH</code></td></tr>
+<tr><td><code>over_floor_opening_xz</code></td><td>for a floor portal: laterally over the hole (shrunk 0.15)</td></tr>
+</tbody>
+</table></div>
+
+<p><code>in_portal_bounds</code> has two shapes:</p>
+<ul>
+<li><b>Type-1 (frame) portals</b> get loose bounds — ±0.3 laterally, a full node of depth.
+The surrounding frame physically blocks a sideways approach, so looseness is safe and helps
+a player who clips a corner.</li>
+<li><b>Type-2 (block) portals</b> are free-standing, and the loose bounds would fire while
+the player merely walked <em>past</em> one. They get tight bounds centred on the opening
+(<code>w/2 + 0.1</code> laterally, <code>h/2 + 0.6</code> vertically, 1.0 of depth).
+Alignment is what gates the trigger, so a side-walker stays out.</li>
+<li><b>Horizontal portals</b> use a vertical tolerance of 2.0, not 1.0: the camera sits
+~1.625 above the feet, so at 50 % frame penetration the <em>feet</em> are already 1.125
+nodes from the plane and a 1.0 tolerance dropped the player out of bounds — which cleared
+the camera hint and made the portal visibly vanish mid-fall.</li>
+</ul>
+
+<p><code>on_ns_side</code> uses a tolerance of <code>−TRIGGER_DEPTH</code> for vertical
+portals but <b>−1.0</b> for a floor portal (<code>ns == 1</code>): a player can walk in
+from an adjoining floor whose top face is half a node below the portal plane.</p>
+
+<h3>The per-player state machine</h3>
+<p>One record per player <em>per portal</em>, in
+<code>player_states[pname][portal_name]</code>.</p>
+
+<figure>
+<svg class="dg" viewBox="0 0 760 250" role="img" aria-label="Per-player, per-portal state machine: Outside becomes Inside on entering the bounds, Inside fires the teleport once when the trigger depth is crossed from the front, and both Inside and Fired return to Outside on leaving the bounds.">
+  <defs>
+    <marker id="d2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d2k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3193DB"/>
+    </marker>
+  </defs>
+
+  <circle cx="16" cy="112" r="5" fill="currentColor"/>
+  <line class="fl" x1="24" y1="112" x2="36" y2="112" marker-end="url(#d2)"/>
+
+  <rect class="box" x="40" y="90" width="150" height="44" rx="3"/>
+  <text x="115" y="117" text-anchor="middle">Outside</text>
+  <rect class="box" x="300" y="90" width="150" height="44" rx="3"/>
+  <text x="375" y="117" text-anchor="middle">Inside</text>
+  <rect class="box k" x="560" y="90" width="150" height="44" rx="3"/>
+  <text class="k" x="635" y="117" text-anchor="middle">Fired</text>
+
+  <line class="fl" x1="190" y1="102" x2="296" y2="102" marker-end="url(#d2)"/>
+  <text class="lbl" x="243" y="66" text-anchor="middle">in_portal_bounds()</text>
+  <text class="lbl" x="243" y="80" text-anchor="middle">entered_from_front = on_ns_side()</text>
+
+  <line class="fl" x1="296" y1="124" x2="194" y2="124" marker-end="url(#d2)"/>
+  <text class="lbl" x="243" y="146" text-anchor="middle">left bounds → triggered = false</text>
+
+  <line class="fl k" x1="450" y1="112" x2="556" y2="112" marker-end="url(#d2k)"/>
+  <text class="lbl" x="503" y="66" text-anchor="middle">entered_from_front and</text>
+  <text class="lbl" x="503" y="80" text-anchor="middle">(past_trigger or border_entry)</text>
+
+  <path class="fl" d="M 635 134 L 635 196 L 115 196 L 115 138" marker-end="url(#d2)"/>
+  <text class="lbl" x="375" y="214" text-anchor="middle">left bounds</text>
+
+  <text class="lbl" x="740" y="112" text-anchor="end">fires once</text>
+</svg>
+<figcaption><b>One record per player per portal.</b> The <code>triggered</code> flag is what
+makes the crossing fire exactly once; the arrival portal is seeded
+<code>entered_from_front = false</code>, which is what stops it bouncing the player straight
+back.</figcaption>
+</figure>
+
+<p><code>border_entry</code> covers the player who is <em>already</em> past the plane on
+their first in-bounds sample — a fast faller, or someone who entered from the side.
+<code>entered_from_front</code> gains one extra clause for exactly that case: descending
+(<code>vel.y &lt; −0.1</code>) and laterally over a floor opening counts as front entry
+even when the depth tolerance has already been overshot.</p>
+
+<p>After a teleport the destination's state is seeded <code>{in_bounds = …,
+entered_from_front = false, triggered = true}</code>, which is what stops the arrival from
+immediately triggering the return trip.</p>
+
+<h3>Floor passthrough</h3>
+<p>A floor portal has a problem no vertical portal has: something has to hold the frame up,
+and that something is solid ground exactly where the player needs to fall through.</p>
+
+<p>The fix is a physics override the fork adds, <code>floor_portal_cb_shift</code>: it
+raises the <em>bottom</em> of the player's collision box by up to 1.7 nodes (player height
+is 1.77), so the box no longer intersects the blocking node and the player sinks until the
+eye passes the trigger depth naturally.</p>
+
+<p>The subtle part is the gate. It is <b>not</b> velocity:</p>
+<pre><code>local look_y = ppos.y + math.min(0, vel.y) * dtime   -- predicted next-tick feet Y</code></pre>
+
+<p>A fast faller whose shift is overrun gets arrested <em>on</em> the block with
+<code>vy ≈ 0</code>. A velocity gate would then clear the shift and leave them standing on
+the block forever, never reaching trigger depth. The predicted-Y gate engages early for
+fast falls and keeps re-engaging to un-stick an arrested player. The shift is recomputed
+every frame (<code>shift = clamp(cy + 0.5 − look_y + 0.1, 0, 1.7)</code>) and cleared
+before the teleport so the exit is computed with the real eye height.</p>
+
+<p>A grace timestamp (<code>floor_portal_grace</code>) suppresses fall damage across the
+transition, extended again on exit.</p>
+
+<h3>Entities</h3>
+<p>Mobs and Lua entities traverse too, with the same predicates, keyed by
+<code>tostring(obj)</code> in <code>entity_states</code>, filtered by
+<code>should_teleport_entity</code> (portal anchors and anything with
+<code>_portal_exempt</code> are skipped) and rate-limited by a 1.0 s post-teleport
+cooldown. Orientation goes through <code>transform_entity_rotation</code>, which applies
+the same <code>eff_src_r</code> rule.</p>
+
+<h3>The camera-hint lifecycle</h3>
+<p>The renderer normally derives the virtual camera by mirroring the live player camera.
+That fails for exactly one frame — the teleport frame — because the arrival view has to be
+rendered <em>before</em> the client camera has moved there.</p>
+
+<pre><code>minetest.set_portal_cam_hint(dst_idx, exit_eye_position)  -- pre-render the arrival
+player:portal_teleport(...)                               -- atomic move
+minetest.clear_portal_cam_hint(dst_idx)                   -- hand back to the live camera</code></pre>
+
+<p>The hint is non-consuming: it persists across render frames until Lua clears it, which
+is also how the <em>approach</em> works — while a player is inside a portal's bounds and
+entered from the front, the mod sets the hint every globalstep to the transformed
+position.</p>
+</section>
+
+<!-- ══ 3 ══════════════════════════════════════════════════ -->
+<section id="p3">
+<h2><span class="n">03</span><span>Rendering</span></h2>
+<p class="src">Source: <code>src/client/render/portal.cpp</code> (1050 lines), <code>src/portal_manager.h</code>, <code>src/client/clientmap.cpp</code>, <code>client/shaders/{nodes,object}_shader/opengl_vertex.glsl</code></p>
+
+<p>Sixteen portal slots (<code>MAX_PORTALS</code>) exist at once; each active, linked slot
+owns one render-target texture at screen resolution.</p>
+
+<h3>Where the passes sit in the frame</h3>
+
+<figure>
+<svg class="dg" viewBox="0 0 700 578" role="img" aria-label="Frame order: PortalPrepareStep poses the virtual cameras, builds the portal draw list and renders every RTT before Draw3D; the portal quads are drawn by a hook at the end of Draw3D's solid pass so the transparent pass can blend over them; PortalQuadStep afterwards re-renders only if the camera teleported mid-frame.">
+  <defs>
+    <marker id="d3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d3k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3193DB"/>
+    </marker>
+  </defs>
+
+  <rect class="box k" x="150" y="16" width="360" height="34" rx="3"/>
+  <text class="k" x="330" y="38" text-anchor="middle">PortalPrepareStep</text>
+  <line class="fl" x1="330" y1="50" x2="330" y2="60" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="62" width="360" height="34" rx="3"/>
+  <text class="sub" x="330" y="84" text-anchor="middle">ensureCameras / ensureRenderTextures</text>
+  <line class="fl" x1="330" y1="96" x2="330" y2="106" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="108" width="360" height="46" rx="3"/>
+  <text class="sub" x="330" y="127" text-anchor="middle">Phase 1 — pose every virtual camera</text>
+  <text class="sub" x="330" y="143" text-anchor="middle">+ sample destination brightness</text>
+  <line class="fl" x1="330" y1="154" x2="330" y2="164" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="166" width="360" height="34" rx="3"/>
+  <text class="sub" x="330" y="188" text-anchor="middle">updatePortalDrawList(vcam positions)</text>
+  <line class="fl" x1="330" y1="200" x2="330" y2="210" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="212" width="360" height="46" rx="3"/>
+  <text class="sub" x="330" y="231" text-anchor="middle">Phase 2 — render each RTT</text>
+  <text class="sub" x="330" y="247" text-anchor="middle">clip planes on, frustum culling bypassed</text>
+  <line class="fl" x1="330" y1="258" x2="330" y2="268" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="270" width="360" height="34" rx="3"/>
+  <text class="sub" x="330" y="292" text-anchor="middle">clearPortalDrawList · install quad hook</text>
+  <line class="fl" x1="330" y1="304" x2="330" y2="316" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="318" width="360" height="34" rx="3"/>
+  <text class="sub" x="330" y="340" text-anchor="middle">ClientMap solid pass</text>
+  <line class="fl" x1="330" y1="352" x2="330" y2="362" marker-end="url(#d3k)"/>
+
+  <rect class="box k" x="150" y="364" width="360" height="34" rx="3"/>
+  <text class="k" x="330" y="386" text-anchor="middle">hook fires · drawPortalQuads()</text>
+  <line class="fl" x1="330" y1="398" x2="330" y2="408" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="410" width="360" height="46" rx="3"/>
+  <text class="sub" x="330" y="429" text-anchor="middle">ClientMap transparent pass</text>
+  <text class="sub" x="330" y="445" text-anchor="middle">glass blends over the portal image</text>
+  <line class="fl" x1="330" y1="456" x2="330" y2="468" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="470" width="360" height="46" rx="3"/>
+  <text x="330" y="489" text-anchor="middle">PortalQuadStep</text>
+  <text class="sub" x="330" y="505" text-anchor="middle">re-render only if the camera jumped ≥ 4 nodes</text>
+  <line class="fl" x1="330" y1="516" x2="330" y2="526" marker-end="url(#d3)"/>
+
+  <rect class="box" x="150" y="528" width="360" height="34" rx="3"/>
+  <text class="sub" x="330" y="550" text-anchor="middle">post-processing</text>
+
+  <!-- brackets -->
+  <path class="fl" d="M 536 16 L 546 16 L 546 304 L 536 304" stroke-width="1" opacity=".5"/>
+  <text class="hd" transform="rotate(-90 566 160)" x="566" y="160" text-anchor="middle">BEFORE DRAW3D</text>
+  <path class="fl" d="M 536 318 L 546 318 L 546 456 L 536 456" stroke-width="1" opacity=".5"/>
+  <text class="hd" transform="rotate(-90 566 387)" x="566" y="387" text-anchor="middle">INSIDE DRAW3D</text>
+  <path class="fl" d="M 536 470 L 546 470 L 546 562 L 536 562" stroke-width="1" opacity=".5"/>
+  <text class="hd" transform="rotate(-90 566 516)" x="566" y="516" text-anchor="middle">AFTER</text>
+</svg>
+<figcaption><b>Both placements are load-bearing.</b> The RTT pass runs before
+<code>Draw3D</code> so it leaves the driver at FBO 0 and <code>Draw3D</code> can re-bind its
+own target cleanly. The quads are drawn <em>inside</em> the solid pass, because transparent
+geometry writes depth and would z-cull a quad drawn after it.</figcaption>
+</figure>
+
+<p>Two placement decisions carry their own history:</p>
+<ul>
+<li><b>The RTT pass runs before <code>Draw3D</code>, not inside it.</b> Rendering to a
+texture leaves the driver at FBO 0; <code>Draw3D</code>'s own
+<code>m_target-&gt;activate()</code> then cleanly re-binds the post-processing texture
+buffer through Irrlicht's cache handler. Doing it the other way round needed a raw
+<code>glBindFramebuffer</code> to recover.</li>
+<li><b>The quads are drawn inside the solid pass</b>, through
+<code>PortalManager::runQuadDrawHook()</code>, not after <code>Draw3D</code>. Transparent
+geometry writes depth; a portal quad drawn after it is z-culled by any pane of glass in the
+world. Drawn at the end of the solid pass, the portal image is in the depth buffer before
+the transparent pass, so glass and water in front of a portal blend <em>over</em> it
+correctly.</li>
+</ul>
+
+<blockquote>
+<p><b>Portals require post-processing.</b> <code>create3DStage</code>
+(<code>plain.cpp:90</code>) inserts both steps only inside the
+<code>enable_post_processing</code> branch. With that setting off there are no portal steps
+in the pipeline at all and portals simply do not render — quietly. It defaults to
+<code>true</code> on desktop but to <code>false</code> on mobile (OpenGL ES 2.0 does not
+guarantee the depth textures post-processing needs). <code>AGENTS.MD</code> claims a
+<code>PortalRenderStep</code> covers the non-post-processing path; no such class
+exists.</p>
+</blockquote>
+
+<h3>Camera offset</h3>
+<p>Luanti keeps the Irrlicht camera near the origin and shifts the world under it. Every
+portal position must be moved into that render space:</p>
+<pre><code>v3f offset = intToFloat(game_cam-&gt;getOffset(), BS);
+src.pos -= offset;
+dst.pos -= offset;</code></pre>
+<p>Omit it and the portal quad appears tens to hundreds of nodes from its frame. The
+dual-client pass (§6) is the exception: world B renders at raw world coordinates with
+offset zero.</p>
+
+<h3>The virtual camera</h3>
+<p><code>setVirtualCamera</code> (<code>portal.cpp:90-207</code>) is the C++ twin of
+<code>portal_transform_*</code>:</p>
+<pre><code>v3f ar = right_of(src), au = src.up, an = src.normal;
+v3f br = right_of(dst), bu = dst.up, bn = dst.normal;
+
+v3f rel = mainCam-&gt;getAbsolutePosition() - src.pos;
+float lx = rel·ar, ly = rel·au, lz = rel·an;
+vpos = dst.pos + br*(-lx) + bu*ly + bn*(-lz) + bn*(1.0f*BS);</code></pre>
+
+<p>Same <code>(−, +, −)</code> pattern for position, look direction and up vector. The
+trailing <code>+ bn·BS</code> is a one-node standoff along the destination normal;
+<code>src.pos</code> and <code>dst.pos</code> are node <em>centres</em>, not the visible
+surfaces, which sit half a node further out.</p>
+
+<p>When a camera hint is set (§2) it replaces <code>vpos</code> verbatim — the hint is
+already a render-space position and already accounts for the destination frame.</p>
+
+<h4>The hand-built view matrix</h4>
+<p>Rather than let Irrlicht build the view matrix from position and target, the code writes
+it directly from the known-normalised <code>vdir</code>:</p>
+<pre><code>zaxis = vdir;  xaxis = normalize(vup × zaxis);  yaxis = zaxis × xaxis;
+m[12] = -xaxis·vpos;  m[13] = -yaxis·vpos;  m[14] = -zaxis·vpos;
+vcam-&gt;setRenderViewMatrix(vm);</code></pre>
+<p><code>buildCameraLookAtMatrixLH</code> computes <code>zaxis = target − pos</code>, and
+that subtraction loses float precision when <code>|vpos|</code> is large — which it always
+is for a cross-world portal rendering another world at raw world coordinates. The symptom
+was a portal view that jittered as the player walked.</p>
+
+<h3>Oblique near-plane clipping (Lengyel)</h3>
+<p>Everything between the destination portal's surface and the virtual camera must not
+appear in the portal image. The clean way is to replace the projection matrix's near plane
+with the portal plane — Eric Lengyel's oblique near-plane technique.</p>
+
+<figure>
+<svg viewBox="0 0 640 250" role="img" aria-label="Eye-space diagram: the standard near plane sits close to the virtual camera and lets geometry between the camera and the portal into the image; the oblique near plane is tilted onto the portal surface so that geometry is clipped away.">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+    <!-- camera -->
+    <circle cx="70" cy="125" r="5" fill="currentColor"/>
+    <text x="30" y="152" font-size="11">vcam</text>
+    <!-- frustum -->
+    <line x1="70" y1="125" x2="600" y2="35" stroke="currentColor" stroke-width="1" opacity=".45"/>
+    <line x1="70" y1="125" x2="600" y2="215" stroke="currentColor" stroke-width="1" opacity=".45"/>
+    <!-- standard near plane -->
+    <line x1="140" y1="103" x2="140" y2="147" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="112" y="94" font-size="11" opacity=".7">standard near</text>
+    <!-- unwanted geometry -->
+    <rect x="200" y="96" width="42" height="42" fill="currentColor" opacity=".18"/>
+    <rect x="256" y="126" width="34" height="34" fill="currentColor" opacity=".18"/>
+    <text x="188" y="185" font-size="11" opacity=".7">geometry in front of the exit</text>
+    <text x="188" y="200" font-size="11" opacity=".7">— must not reach the image</text>
+    <!-- portal surface / oblique plane -->
+    <line x1="330" y1="205" x2="430" y2="35" stroke="#3193DB" stroke-width="3"/>
+    <text x="438" y="44" fill="#3193DB">oblique near plane</text>
+    <text x="438" y="60" fill="#3193DB" font-size="11">= exit portal surface</text>
+    <text x="438" y="76" font-size="11" opacity=".7">anchored at +0.49·BS</text>
+    <!-- kept geometry -->
+    <rect x="470" y="120" width="40" height="40" fill="#3193DB" opacity=".28"/>
+    <rect x="520" y="150" width="30" height="30" fill="#3193DB" opacity=".28"/>
+    <text x="452" y="205" font-size="11" fill="#3193DB">kept: the destination</text>
+    <!-- forward axis -->
+    <line x1="70" y1="235" x2="180" y2="235" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)" opacity=".6"/>
+    <text x="186" y="239" font-size="11" opacity=".6">+z_eye = vdir</text>
+  </g>
+</svg>
+<figcaption><b>The near plane is replaced, not added.</b> Row 2 of the projection matrix is
+rewritten so the near plane lies on the exit portal's surface; everything between the
+virtual camera and that plane is clipped by the hardware, at no per-object cost.
+Applied only when the camera is on the destination side.</figcaption>
+</figure>
+
+<p>For Irrlicht's left-handed projection with <code>[-1, +1]</code> depth
+(<code>buildProjectionMatrixPerspectiveFovLH</code>, <code>zClipFromZero = false</code>),
+row 3 is <code>(0,0,1,0)</code>, so <code>w_clip = z_eye</code> and the near plane is
+<code>z_ndc = −1</code>. The modification is</p>
+
+<div class="eq">  row2' = λ · c_c − row3 ,      λ = 2 / (c_c · q)</div>
+
+<p>where <code>c_e</code> is the clip plane in eye space, <code>c_c = P^{−T} c_e</code>,
+and <code>q</code> is the corner of the near plane opposite the clip plane. The code
+(<code>portal.cpp:164-206</code>) builds <code>c_e</code> from the camera basis
+(<code>right_eye = vup × vdir = −vright_axis</code>, <code>up = vup</code>,
+<code>+z_eye = vdir</code>), anchors it at <code>dst_surface + bn · 0.49·BS</code> — just
+inside the destination frame's outer face, to avoid z-fighting with the blocks next to it —
+and inverts the symmetric LH perspective in closed form:</p>
+
+<pre><code>cc_x = c_e_x / m[0];
+cc_y = c_e_y / m[5];
+cc_z = c_e_w / m[14];
+cc_w = c_e_z - (m[10]/m[14]) * c_e_w;
+lam  = 2.0f / (|cc_x| + |cc_y| + cc_z + cc_w);
+m[2] = lam*c_e_x;  m[6] = lam*c_e_y;  m[10] = lam*c_e_z - 1.0f;  m[14] = lam*c_e_w;</code></pre>
+
+<p>Two rules govern its use, and both were bought with bugs:</p>
+<ul>
+<li><b><code>setRenderProjectionMatrix</code>, never <code>setProjectionMatrix</code>.</b>
+The fork adds the former to <code>ICameraSceneNode</code> precisely so the oblique matrix
+reaches the driver <em>without</em> touching <code>ViewArea</code>, the CPU-side frustum
+the SceneManager uses for culling. Set the real projection matrix and the scene manager
+culls entities against an oblique frustum, producing black patches where objects
+vanish.</li>
+<li><b>Only when <code>side &lt; −0.001·BS</code></b> — the virtual camera on the
+destination side. When the player stands <em>inside</em> the portal the virtual camera
+crosses to the source side, <code>c_e_w</code> turns positive, and the oblique near plane
+ends up behind the camera: everything is clipped and the portal goes black. The clip is
+unnecessary there anyway, so the code calls <code>clearRenderProjectionMatrix()</code> and
+skips it.</li>
+</ul>
+
+<h3>Lateral clip planes</h3>
+<p>At oblique viewing angles the near plane alone is not enough: the destination portal's
+own frame blocks leak in around the edges of the opening.
+<code>computePortalClipPlanes</code> (<code>portal.cpp:388-481</code>) builds a five-plane
+volume, uploaded as <code>vec4 portalClipPlanes[5]</code> and evaluated per vertex as
+<code>gl_ClipDistance[k] = dot(worldPosition, n_k) + d_k</code> (≥ 0 = keep) in both
+<code>nodes_shader</code> and <code>object_shader</code>.</p>
+
+<figure>
+<svg viewBox="0 0 620 270" role="img" aria-label="The four lateral clip planes are built from an apex just outside the exit portal face through the four edges of the opening, so the frame blocks around the opening are clipped out of the render.">
+  <g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+    <!-- exit wall with opening -->
+    <rect x="250" y="30" width="26" height="80"  fill="currentColor" opacity=".28"/>
+    <rect x="250" y="190" width="26" height="60" fill="currentColor" opacity=".28"/>
+    <text x="196" y="24" font-size="11" opacity=".7">exit wall (frame blocks)</text>
+    <line x1="263" y1="110" x2="263" y2="190" stroke="#3193DB" stroke-width="4"/>
+    <text x="196" y="266" font-size="11" fill="#3193DB">the opening</text>
+
+    <!-- apex -->
+    <circle cx="230" cy="150" r="4.5" fill="#DD7F3C"/>
+    <text x="106" y="154" font-size="11" fill="#DD7F3C">apex = face − 0.05·BS</text>
+    <!-- true camera further back -->
+    <circle cx="70" cy="150" r="4" fill="currentColor" opacity=".55"/>
+    <text x="44" y="176" font-size="11" opacity=".55">vcam</text>
+    <line x1="74" y1="150" x2="222" y2="150" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".45"/>
+
+    <!-- planes from apex through edges -->
+    <line x1="230" y1="150" x2="590" y2="52"  stroke="#3193DB" stroke-width="1.8"/>
+    <line x1="230" y1="150" x2="590" y2="248" stroke="#3193DB" stroke-width="1.8"/>
+    <text x="470" y="44" font-size="11" fill="#3193DB">plane 0 (top edge)</text>
+    <text x="470" y="262" font-size="11" fill="#3193DB">plane 1 (bottom edge)</text>
+
+    <!-- kept region -->
+    <text x="380" y="150" font-size="11" fill="#3193DB" text-anchor="middle">kept</text>
+    <text x="380" y="166" font-size="11" text-anchor="middle" opacity=".6">gl_ClipDistance ≥ 0</text>
+
+    <!-- clipped geometry -->
+    <rect x="300" y="60" width="34" height="34" fill="currentColor" opacity=".2"/>
+    <text x="300" y="52" font-size="11" opacity=".6">clipped</text>
+
+    <!-- plane 4 -->
+    <line x1="276" y1="24" x2="276" y2="256" stroke="#DD7F3C" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="284" y="20" font-size="11" fill="#DD7F3C">plane 4: outer face</text>
+  </g>
+</svg>
+<figcaption><b>The apex is the portal face, not the camera.</b> Anchoring the frustum at the
+camera gives a half-angle of <code>atan(hw / depth)</code>, which clips away most of the
+destination interior; anchored 0.05·BS outside the exit face the frustum is near-90° and
+still cuts the frame blocks, because the planes pass through the same edge points.
+Plane 4 sits on the node's <em>outer</em> face — at the node centre it left the solid block
+face covering the whole image.</figcaption>
+</figure>
+
+<ul>
+<li><b>Planes 0–3</b> each pass through one edge of the destination opening
+(<code>pc ± pr·hw</code>, <code>pc ± pu·hh</code>) with the normal turned toward the
+interior.</li>
+<li><b>Plane 4</b> is the destination portal's face, anchored at the node's <b>outer</b>
+face (<code>pos + normal·0.5·BS</code>), not its centre. At near-90° view angles the
+Lengyel plane switches off (<code>c_e_z ≈ 0</code>) and this is the only depth clip
+left.</li>
+<li><b>The <code>player_inside_frame</code> bypass.</b> When the apex is on the destination
+side <em>and</em> within the opening laterally (<code>|lx| &lt; hw &amp;&amp; |ly| &lt;
+hh</code>), the player is fully inside the portal and the planes are disabled entirely.
+Only the depth condition is not enough: a player at frame level but laterally outside still
+needs the clipping.</li>
+<li><b>Backward-tilt clamp.</b> If a computed plane normal tilts backward relative to the
+portal (<code>n · bn &lt; 0</code>, the apex displaced laterally past an edge), the
+<code>bn</code> component is removed and the plane re-anchored to the edge centre — a
+corridor plane perpendicular to the face. Without it, destination geometry gets clipped
+away at extreme angles.</li>
+</ul>
+
+<p>The planes travel through <code>PortalManager::setClipPlanes</code> and are read back by
+<code>GameGlobalShaderUniformSetter::onSetUniforms</code> on every material change;
+<code>GL.Enable(GL_CLIP_DISTANCE0..4)</code> brackets the <code>drawAll()</code> and is
+disabled immediately after, so the main pass is unaffected even though the shaders always
+write the distances.</p>
+
+<h3>The portal draw list</h3>
+<p>The virtual camera looks at terrain the player's camera may never have faced, so the
+normal draw list is useless to it. <code>ClientMap::updatePortalDrawList(positions)</code>
+(<code>clientmap.cpp:393</code>) walks the loaded sectors and collects every block whose
+bounding sphere is within <code>wanted_range</code> of <em>any</em> virtual camera,
+skipping blocks the main draw list already has. During the RTT pass
+<code>setBypassFrustumCulling(true)</code> stops <code>renderMap</code> from re-culling
+against the player camera.</p>
+
+<blockquote>
+<p><b>The rule that must not be broken:</b> this path calls
+<code>block-&gt;resetUsageTimer()</code> to keep the block alive, then
+<code>continue</code>s when <code>block-&gt;mesh</code> is null. It must <b>never</b> queue
+a mesh update there. Air blocks have no mesh, permanently; re-queuing them every frame
+floods the mesh update queue and the game stutters to a halt.</p>
+</blockquote>
+
+<p><code>setPortalCamera(true, world_pos)</code> additionally re-sorts transparent geometry
+back-to-front for the <em>virtual</em> camera. Glass writes depth, so the player-camera
+ordering z-culls panes that the portal camera sees from the other side.</p>
+
+<h3>The tunnel quads</h3>
+
+<figure>
+<svg viewBox="0 0 620 230" role="img" aria-label="Cross-section of a portal: four inset wall quads run from the frame's outer face back to the inner face, and a full-size back face carries the render texture; all five sample the texture by screen position.">
+  <g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+    <text x="40" y="24" font-size="11" opacity=".65">CROSS-SECTION  (camera at left)</text>
+    <!-- frame node body -->
+    <rect x="300" y="30" width="46" height="58"  fill="currentColor" opacity=".22"/>
+    <rect x="300" y="172" width="46" height="58" fill="currentColor" opacity=".22"/>
+    <text x="300" y="22" font-size="11" opacity=".65">frame node</text>
+
+    <!-- outer / inner face guides -->
+    <line x1="300" y1="24" x2="300" y2="236" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".5"/>
+    <line x1="346" y1="24" x2="346" y2="236" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".5"/>
+    <text x="238" y="248" font-size="11" opacity=".6">outer face</text>
+    <text x="352" y="248" font-size="11" opacity=".6">inner face</text>
+
+    <!-- wall quads -->
+    <line x1="300" y1="88"  x2="346" y2="88"  stroke="#3193DB" stroke-width="3"/>
+    <line x1="300" y1="172" x2="346" y2="172" stroke="#3193DB" stroke-width="3"/>
+    <text x="352" y="84" font-size="11" fill="#3193DB">2 of the 4 wall quads</text>
+
+    <!-- back face -->
+    <line x1="352" y1="88" x2="352" y2="172" stroke="#DD7F3C" stroke-width="5"/>
+    <text x="362" y="134" font-size="11" fill="#DD7F3C">back face — the RTT</text>
+
+    <!-- eye -->
+    <circle cx="70" cy="130" r="5" fill="currentColor"/>
+    <text x="46" y="156" font-size="11">eye</text>
+    <line x1="76" y1="130" x2="290" y2="100" stroke="currentColor" stroke-width="1" opacity=".4"/>
+    <line x1="76" y1="130" x2="290" y2="160" stroke="currentColor" stroke-width="1" opacity=".4"/>
+
+    <!-- uv note -->
+    <text x="70" y="196" font-size="11" opacity=".75">uv = gl_FragCoord.xy / uViewportSize</text>
+    <text x="70" y="212" font-size="11" opacity=".75">→ a fragment samples its own screen position</text>
+  </g>
+</svg>
+<figcaption><b>Five faces, one screen-space lookup.</b> The RTT was rendered from the
+mirrored camera with the <em>same</em> projection, so a fragment's screen position is
+already its correct texture coordinate — no per-vertex UV, and therefore no distortion at
+any angle or distance.</figcaption>
+</figure>
+
+<p><code>drawPortalFaces</code> (<code>portal.cpp:291</code>) draws five faces per portal:
+four inset walls from the frame's outer face back to its inner face, and a full-size back
+face carrying the RTT. <code>PORTAL_TUNNEL_DEPTH</code> is 0, so the frame node's own
+thickness provides the depth. All five use the same material and shader:</p>
+
+<pre><code>// vertex
+attribute vec3 inVertexPosition;
+uniform mat4 uMVP;
+void main() { gl_Position = uMVP * vec4(inVertexPosition, 1.0); }
+
+// fragment
+uniform sampler2D baseTexture;
+uniform vec2 uViewportSize;
+void main() {
+    vec2 uv = vec2(gl_FragCoord.x / uViewportSize.x,
+                   gl_FragCoord.y / uViewportSize.y);
+    gl_FragColor = texture2D(baseTexture, uv);
+}</code></pre>
+
+<div class="note">
+<p>Two mechanical constraints: Irrlicht's OpenGL3 driver does <b>not</b> maintain the
+fixed-function matrix stack, so <code>gl_Vertex</code> and
+<code>gl_ModelViewProjectionMatrix</code> are dead — the position must come from the named
+attribute <code>inVertexPosition</code> (bound at <code>EVA_POSITION = 0</code>) and the
+MVP must be uploaded explicitly. Y is not inverted: an OpenGL RTT has y = 0 at the bottom
+and so does <code>gl_FragCoord</code>.</p>
+</div>
+
+<blockquote>
+<p><b>Stale comment.</b> The block comment above <code>drawPortalFaces</code> still
+describes the four walls as untextured dark quads (the older design, abandoned because a
+wall's vertices sit at two different depths and screen-space UV interpolation distorts
+badly there). The code applies the RTT shader to all five faces. Trust the code.</p>
+</blockquote>
+
+<p>Other details: winding is chosen per face (<code>idx_cw</code> / <code>idx_ccw</code>)
+because Irrlicht treats GL_CW as front-facing and the tunnel is seen from inside; the back
+face is pushed out by <code>0.01·BS</code> for vertical portals but <code>0.5·BS</code> for
+horizontal ones, where the normal is vertical and terrain sits at <code>c ± ε</code>.</p>
+
+<h3>Which portals are drawn</h3>
+<p>Quads are sorted <b>back-to-front</b> by squared distance and skipped when</p>
+<pre><code>d = (camPos − src.pos) · src.normal;
+if (d &lt;= d_min || dist &lt; 0.001·BS || (d &gt; 0 &amp;&amp; d/dist &lt; 0.1)) continue;</code></pre>
+<ul>
+<li><code>d &lt;= d_min</code> — portals are one-directional: nothing is drawn from behind.
+<code>d_min = 0</code> for vertical portals, <code>−0.4·BS</code> for horizontal ones,
+where <code>src.pos</code> is half a node below the surface and the camera must be allowed
+90 % of the way into the frame.</li>
+<li><code>d/dist &lt; 0.1</code> — an edge-on portal is a sliver of noise; skip it.</li>
+</ul>
+<p>The same gate opens <code>renderSecondaryPortal</code>, so the expensive dual-client
+render never runs for a portal whose quad will not be drawn.</p>
+
+<h3>Intra-frame teleport</h3>
+<p><code>PortalQuadStep</code> re-reads the camera position. If it moved <b>≥ 4 nodes</b>
+since the RTTs were rendered, a teleport happened between the two steps and the textures
+are stale: the step re-renders them, restores <code>Draw3D</code>'s render target, and
+redraws the quads with <code>ECFN_LESSEQUAL</code> so they overwrite the stale pixels
+already in the buffer (<code>LESS</code> would z-reject them at equal depth). Glass in
+front of a portal loses its blend for that single frame.</p>
+
+<h3>Sky, fog and light through a portal</h3>
+<p>A portal into a pocket dimension, a Nether, or another world must not show the
+observer's sky. The system carries a small pool of <em>sky types</em>, registered once from
+Lua and deduped by name:</p>
+<pre><code>SKY_VOID = minetest.register_portal_sky_type("void", {
+    type = "skybox", base_color = "#000000", textures = {...},
+    clouds = false, sunlit = false, brightness = 0.0 })</code></pre>
+
+<p>Each portal slot may point at one (<code>set_portal_sky(slot, type)</code>), and
+<code>game.cpp</code> keeps one live <code>Sky</code> node per type in
+<code>m_portal_sky_pool</code>. During the RTT pass the destination's sky node is activated
+in place of the main one, and four things are corrected:</p>
+
+<ol>
+<li><b>Directional tint.</b> <code>Sky::update()</code> bakes the sunset/sunrise gradient
+for the <em>player camera's</em> yaw and pitch. The portal looks somewhere else, so the
+pass calls <code>retintForDirection(vyaw, vpitch)</code> with the virtual camera's
+direction — computed with the same <code>atan2(-dir.X, dir.Z)</code> convention — and
+<code>restoreMainTint()</code> afterwards, before the main view is drawn.</li>
+<li><b>Clear colour and fog.</b> The clear colour is the sky colour when the destination is
+sunlit and the fog colour when it is not; the driver fog is overridden with the destination
+sky's colour, clamped by its own <code>fog_distance</code>.</li>
+<li><b>Measured light.</b> A static per-type "sunlit" flag is wrong for an exit inside a
+cave. Phase 1 samples <code>ClientMap::getBackgroundBrightness(vpos, vdir, …)</code> — the
+same raycast the primary sky uses — from the <em>virtual</em> pose, and
+<code>PortalManager</code> smooths it with an EMA (<code>0.9 old + 0.1 new</code>) so the
+per-frame sample cannot flicker. A "sunlit" type whose measurement says otherwise clears
+dark.</li>
+<li><b>Day/night ratio.</b> Terrain seen through the portal is lit with the
+<em>observed</em> zone's ratio, not the observer's — different dimensions carry different
+server-side overrides. This travels as <code>PortalManager::PortalPassState</code>, read by
+the shader uniform setter on the same channel as the clip planes.</li>
+</ol>
+
+<p>Clouds are forced visible if the destination sky has them, and restored afterwards.</p>
+
+<p>Finally, the local player's own mesh is forced visible for the RTT pass
+(<code>lp_cao-&gt;setPortalRendering(true)</code>): in first person
+<code>updateMeshCulling()</code> hides it with double-face-culling, and that flag is global
+— without the override you do not appear in your own portal.</p>
+</section>
+
+<!-- ══ 4 ══════════════════════════════════════════════════ -->
+<section id="p4">
+<h2><span class="n">04</span><span>Client-side motion and camera</span></h2>
+
+<h3>One atomic packet</h3>
+<p><code>TOCLIENT_PORTAL_TELEPORT</code> (0x65) carries, after the fork magic:</p>
+<pre><code>v3f pos, f32 pitch, f32 yaw, v3f vel_delta,
+u8 sky_sunlit_override, u8 sky_slot, f32 roll,
+u8 flags  (0x01 roll_only | 0x02 pitch_only | 0x04 warp),
+[v3f warp_off if warp]</code></pre>
+<p>The client applies <code>setPosition</code>, <code>snapView(yaw, pitch, roll)</code> and
+<code>addVelocity</code> in one place. Sending those separately produces a frame in which
+the player is at the new position with the old orientation, and the illusion is gone.</p>
+<p>The two "only" flags exist because the server also drives <em>animations</em> — the roll
+settling of §1 and a pitch animation for vertical↔horizontal traversals — and those must
+not re-snap position or fight the mouse.</p>
+
+<h3>snapView and the race guard</h3>
+<p><code>LocalPlayer::snapView / snapRoll / snapPitch</code> set a pending snap consumed on
+the next frame. The partial setters refuse to overwrite a pending <em>full</em> snap:</p>
+<pre><code>void snapRoll(f32 roll) {
+    if (m_snap_view &amp;&amp; !m_snap_roll_only &amp;&amp; !m_snap_pitch_only) return;
+    ...
+}</code></pre>
+<p>Same-frame ordering is not guaranteed, and a roll animation tick arriving in the same
+frame as the teleport used to swallow the teleport's yaw and pitch.</p>
+
+<h3>Camera roll around the right axis</h3>
+<p>Luanti has no roll. Adding one naively —
+<code>m_headnode-&gt;setRotation(v3f(pitch, 0, roll))</code> — is wrong: Irrlicht applies
+the Euler angles in the yaw frame, so roll is applied <em>after</em> pitch, the rendered
+forward becomes <code>(sinP·sinR, −sinP·cosR, cosP)</code>, the look direction bends as you
+roll, and the roll axis stays horizontal instead of following the view.</p>
+<p>The fork composes the two rotations explicitly, roll innermost:</p>
+<pre><code>core::matrix4 rot = rot_pitch * rot_roll;    // Irrlicht A*B applies B first
+m_headnode-&gt;setRotation(rot.getRotationDegrees());</code></pre>
+<p>Roll is visual only; it never reaches the server's idea of where the player is looking.
+Manual roll keys (default <b>O</b> / <b>P</b>) exist for testing.</p>
+
+<h3>The portal warp</h3>
+<p><code>startPortalWarp(pos_off, yaw_off, pitch_off, roll_off, dur)</code> stores offsets
+that are applied to the live pose with a weight easing from 1 to 0:</p>
+<pre><code>f32 p = m_warp_time / m_warp_dur;
+return 1.0f - p*p*(3.0f - 2.0f*p);   // smoothstep, 1 → 0</code></pre>
+<p><code>Camera::update</code> applies the weighted offsets to yaw, pitch, position (after
+step-height smoothing, so it shifts the whole camera and not the smoothing math) and roll.
+The player is already at the exit; only the <em>rendered</em> camera lags, catching up over
+the duration.</p>
+<p>Today the only user is the exit step-up of §1, with
+<code>PORTAL_WARP_DURATION = 0.3 s</code> and a translation-only offset — rotation is left
+to the roll-settling animation.</p>
+
+<h3>The sky after a teleport</h3>
+<ul>
+<li><code>sky_slot</code> triggers a full <code>applySkyParams()</code> snap from that
+portal's registered sky type, applied <b>before</b> <code>forceReset()</code>. Resetting
+first and applying after left one frame of the old sky, which reads as a bright flash when
+leaving a dark dimension.</li>
+<li><code>sky_sunlit_override</code> forces <code>sunlight_seen</code> for 3 frames. The
+sky brightness normally lerps over hundreds of frames; without the override a dimension
+change fades instead of cutting. Note the deliberate asymmetry: entering the void sets the
+override <em>true</em> because <code>Sky::render()</code> only draws skybox types when
+<code>sunlight_seen</code>, and since <code>bg_sunlit</code> stays false in the void the
+override never releases — which is exactly what keeps the void skybox visible for the whole
+stay.</li>
+</ul>
+</section>
+
+<!-- ══ 5 ══════════════════════════════════════════════════ -->
+<section id="p5">
+<h2><span class="n">05</span><span>Node types and world representation</span></h2>
+
+<h3>Type-1: frame portals</h3>
+<p>A rectangle of frame nodes around an air opening (inner size 1–8 × 2–8).
+<code>check_frame</code> validates the ring, <code>try_activate_near</code> scans nearby
+frames when one is placed, and <code>get_frame_positions</code> enumerates the ring for
+removal checks.</p>
+<p>Configuration is reached by right-clicking any frame block — or the <b>anchor
+entity</b> at the opening's centre, which exists because a frame can be re-skinned to a
+foreign material whose node has its own <code>on_rightclick</code>. The anchor is
+re-created every 2 s if missing (entities are <code>static_save = false</code> and vanish
+when the mapblock unloads).</p>
+<blockquote>
+<p>An invisible entity is <b>not pointable</b> — <code>getSelectionBox</code> bails out for
+<code>is_visible = false</code>. The anchor is therefore <code>is_visible = true</code>
+with zero visual size and a fully transparent texture.</p>
+</blockquote>
+
+<h3>Type-2: hollow portal blocks</h3>
+<p>A portal that is not a frame around air but a <em>block with a hole in it</em>: group
+<code>portal_block</code>, front face taken from the <code>wallmounted</code> param2. The
+engine treats such a node as <b>directionally solid</b> (<code>mapnode.cpp</code>): the
+front face is open (passable, not drawn), the back is always solid, and an in-plane face
+touching another <code>portal_block</code> with the same wallmounted direction is open too
+— so adjacent cells merge into one continuous cavity.</p>
+<p>Merging keys on the <code>portal_block</code> <b>group value</b> (one value per portal
+colour) plus the direction bits, never on the node id: one portal's cells can legitimately
+be different node ids (shell-material variants).</p>
+<p>A portal whose pair does not exist is <code>portal_closed</code>: every face solid, only
+the coloured frame drawn — no hole and nothing to fall through.</p>
+
+<h3>Half-offset portals and slab shells</h3>
+<p>Wall-carved portals do not have to align to the node grid. Half-node offsets are encoded
+in the free bits of param2 above the wallmounted direction
+(<code>getWallMounted</code> masks <code>&amp; 0x07</code>):</p>
+<pre><code>carve = (param2 &gt;&gt; 3) &amp; 0x0F
+  0     front face fully open
+  1..4  half the front face open, split along one in-plane axis
+        (axes taken in ascending X &lt; Y &lt; Z order; even = + half, odd = − half)
+  5..8  a quarter open  →  5 + (first axis on + ? 1 : 0) + (second axis on + ? 2 : 0)</code></pre>
+<p>Edge cells of an offset portal are partially carved and get partial front panels plus
+partition walls separating the cavity from the dead solid part.
+<code>portal_slab</code> (group value 1–6 = the face index of the occupied half) confines
+all shell geometry to a half-cell so a carved slab keeps its slab silhouette instead of
+bulging into a full cube. <code>content_mapblock.cpp::drawPortalBlockNode</code> renders
+the resulting shell, frame strips and partitions, clipping every piece to the material
+bounds.</p>
+<p>The carve descriptor is computed for <em>closed</em> blocks too, so an unpaired offset
+portal already outlines the future opening rather than its whole footprint.</p>
+
+<h3>The tools</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Item</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td><code>yaportal:frame</code> (+ blue/orange)</td><td>Manual frames; portal activates when the ring closes</td></tr>
+<tr><td><code>yaportal:portal_gun</code></td><td>Places a framed portal pair on the pointed surface</td></tr>
+<tr><td><code>yaportal:portal_gun3</code></td><td>Places type-2 block portals</td></tr>
+<tr><td><code>yaportal:portal_gun4</code></td><td>Carves a portal <em>into</em> a Portal Wall Block, flush; carve-aware, half-offset capable. On floors it orients to the nearest cardinal of your view and grows away from you, falling back to the opposite side</td></tr>
+<tr><td><code>yaportal:pocket_gun</code></td><td>Opens/destroys a private 32×32 pocket dimension per player</td></tr>
+</tbody>
+</table></div>
+<p>The Portal-1 puzzle set (weighted cube, super button, push button, vent, automatic door,
+countdown clock, pedestal, trigger wand) is documented in <code>README.md</code>. It is a
+<em>consumer</em> of the portal API — the clock fires a <code>gun4</code> blue+orange pair
+at zero — not part of the portal mechanism.</p>
+</section>
+
+<!-- ══ 6 ══════════════════════════════════════════════════ -->
+<section id="p6">
+<h2><span class="n">06</span><span>Cross-world doors (dual client)</span></h2>
+
+<h3>The problem</h3>
+<p>A door in world A must show world B <b>live</b> — not a snapshot, not a skybox — and
+walking into it must put you in world B without a loading screen. Worlds are separate
+servers.</p>
+<p>The answer is that the client holds <b>two connections at once</b>: the interactive
+<em>primary</em> session, and a passive <em>secondary</em> <code>WorldSession</code> on
+world B, rendered into the door's RTT. Crossing promotes the secondary in place.</p>
+
+<figure>
+<svg class="dg" viewBox="0 0 780 300" role="img" aria-label="One client process holds two connections: a primary interactive Client on server A and a passive headless WorldSession on server B, whose scene is rendered into the portal render texture the primary displays. Crossing promotes the secondary and demotes the primary in place.">
+  <defs>
+    <marker id="d4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d4s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d4k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3193DB"/>
+    </marker>
+    <marker id="d4o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#DD7F3C"/>
+    </marker>
+    <marker id="d4os" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#DD7F3C"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="26" y="70" width="140" height="36" rx="3"/>
+  <text x="96" y="93" text-anchor="middle">server A</text>
+  <rect class="box o" x="614" y="190" width="140" height="36" rx="3"/>
+  <text class="o" x="684" y="213" text-anchor="middle">server B</text>
+
+  <rect class="grp" x="230" y="30" width="320" height="230" rx="4"/>
+  <text class="hd" x="390" y="48" text-anchor="middle">ONE CLIENT PROCESS</text>
+
+  <rect class="box" x="250" y="62" width="280" height="48" rx="3"/>
+  <text x="390" y="82" text-anchor="middle">primary Client</text>
+  <text class="sub" x="390" y="98" text-anchor="middle">world A · camera, HUD, input</text>
+
+  <rect class="box k" x="300" y="130" width="180" height="36" rx="3"/>
+  <text class="k" x="390" y="153" text-anchor="middle">portal RTT</text>
+
+  <rect class="box o" x="250" y="184" width="280" height="52" rx="3"/>
+  <text class="o" x="390" y="205" text-anchor="middle">secondary WorldSession</text>
+  <text class="sub" x="390" y="221" text-anchor="middle">world B · headless, no camera</text>
+
+  <line class="fl" x1="172" y1="88" x2="244" y2="88" marker-start="url(#d4s)" marker-end="url(#d4)"/>
+  <line class="fl o" x1="608" y1="208" x2="536" y2="208" marker-start="url(#d4os)" marker-end="url(#d4o)"/>
+
+  <line class="fl k" x1="430" y1="184" x2="430" y2="170" marker-end="url(#d4k)"/>
+  <text class="lbl" x="440" y="180">renders into</text>
+  <line class="fl k" x1="430" y1="130" x2="430" y2="116" marker-end="url(#d4k)"/>
+  <text class="lbl" x="440" y="126">shown by</text>
+
+  <line class="fl" x1="272" y1="114" x2="272" y2="180" stroke-dasharray="4 3"
+        marker-start="url(#d4s)" marker-end="url(#d4)"/>
+  <text class="hd" transform="rotate(-90 262 147)" x="262" y="147" text-anchor="middle">PROMOTE / DEMOTE</text>
+
+  <text class="lbl" x="96" y="126" text-anchor="middle">interactive</text>
+  <text class="lbl o" x="684" y="246" text-anchor="middle">passive ghost, parked</text>
+</svg>
+<figcaption><b>Two connections, one keyboard.</b> The passive session is a full second
+<code>Client</code> — own connection, node registry, scene manager and map — but no camera,
+HUD or input. Crossing swaps the roles in place; nothing reconnects, which is what keeps the
+door showing world A when you look back.</figcaption>
+</figure>
+
+<h3>WorldSession</h3>
+<p>A passive session is a second <code>Client</code> with its own connection,
+<code>NodeDefManager</code>, <code>ItemDefManager</code>, scene manager,
+<code>ClientMap</code>, <code>Sky</code> and <code>Clouds</code>. It has <b>no</b> HUD,
+input, wield, sound or minimap, and no <code>Camera</code> — a fact several code paths test
+for directly.</p>
+<p>It <b>shares</b> <code>TextureSource</code>, <code>ISoundManager</code> and
+<code>ItemVisualsManager</code> with the primary, which is what makes cross-game doors both
+possible and dangerous (below).</p>
+<p>World state it receives but cannot act on (sky, sun, moon, stars, clouds, day/night,
+HUD) is drained every step into <code>DeferredWorldState</code> — otherwise the event queue
+grows without bound — keeping the latest of each singleton plus the HUD log, for replay
+onto the promoted client at swap time.</p>
+
+<h3>Declaring a passive session</h3>
+<p><code>sendReady()</code> appends an optional trailing <code>u8</code> to
+<code>TOSERVER_CLIENT_READY</code>. The server stores it on <code>RemoteClient</code>
+<b>before</b> <code>StageTwoClientInit</code>, so <code>on_joinplayer</code> already sees
+<code>get_player_information().xworld_passive</code> and parks the ghost before anyone can
+see it.</p>
+<p>This replaced a worse design — park <em>every</em> join, unpark after 6 s unless a chat
+announce arrived — which left a visible ghost whenever the announce was lost and froze
+every normal multiplayer join for six seconds. <code>/xworld_park</code> survives as a
+fallback; a missing flag means an interactive (or older) client.</p>
+
+<h3>The registry</h3>
+<p>Coordination is a shared directory of small JSON files, one record per file, single
+writer per file, so no locking is needed:</p>
+<pre><code>$DIR/worlds/&lt;world&gt;.json                  server presence + port (3 s heartbeat)
+$DIR/endpoints/&lt;world&gt;__&lt;ep&gt;.json         a world's doors (kept while it is offline,
+                                          so they stay pickable)
+$DIR/pairs/&lt;aW&gt;__&lt;aEp&gt;__&lt;bW&gt;__&lt;bEp&gt;.json  two doors connected to each other
+$DIR/handoff/&lt;player&gt;.json                arrival state during a hop (valid 30 s)</code></pre>
+<p><code>$DIR</code> defaults to <code>~/.minetest/yaportal_link/</code>. Worlds that are
+not running are started on demand (<code>start_world</code>, ports from
+<code>PORT_BASE = 30001</code>), which is why the mod must be listed in
+<code>secure.trusted_mods</code>.</p>
+<p>The address a hop must target is <code>core.get_bind_port()</code> — <b>not</b> the
+<code>port</code> setting: a singleplayer server takes a free port and <code>--port</code>
+overrides the setting, so advertising the setting sends hops to a server that is not
+there.</p>
+
+<h3>Doors on another machine</h3>
+<p>The shared directory does not exist across machines. <code>PortalExchange</code>
+(<code>src/server/portalexchange.{h,cpp}</code>) is a tiny HTTP responder each world serves
+on <b>game port + 5000</b>, on its own thread, with no knowledge of the payloads:</p>
+<pre><code>GET  /registry  → the JSON the mod last published
+POST /post      → body queued as (peer_ip, body); Lua drains and validates it</code></pre>
+<p>Lua side: <code>core.xworld_exchange(port, json)</code> publishes and starts/rebinds the
+service, <code>core.xworld_exchange_posts()</code> drains the queue — every globalstep, not
+every heartbeat, because a handoff must be on disk before the player it announces
+connects.</p>
+<p>Design rules that must survive:</p>
+<ul>
+<li><b>Everything remote becomes a local file</b> (<code>remote = true</code>). Scans,
+<code>sync_links</code>, the panel and the arrival path never learn about addresses.</li>
+<li><b>A sender never states its own address.</b> <code>addr = "auto"</code> is replaced
+with the TCP source. That is what makes it work behind NAT — and trusting a payload address
+would let anyone redirect players to a host of their choosing.</li>
+<li>Names arriving from the network end up in file names: <code>safe_id</code> rejects
+<code>/</code>, <code>..</code>, and anything over 64 characters.
+<code>yaportal_link_key</code>, if set, must match on both sides.</li>
+<li>The exchange port <b>overflows</b> above game port 60535;
+<code>PortalExchange::start</code> takes a <code>u32</code> and refuses out-of-range ports
+rather than binding the truncated value (which once landed on privileged port 1008).
+Failures are logged once per port, because callers retry on a timer.</li>
+</ul>
+
+<h3>Rendering world B</h3>
+<p><code>renderSecondaryPortal</code> (<code>portal.cpp:509-658</code>) is the same idea as
+the same-world pass with three differences:</p>
+<ol>
+<li>The destination frame comes from <code>PortalManager::XworldDest</code> — world B
+coordinates, published from Lua at pairing time. The standard mirror transform is then
+applied src→dst, including the Lengyel clip at B's portal plane, so the view through A's
+door is exactly what stands behind B's door.</li>
+<li><b>No camera offset.</b> World B renders at raw world coordinates, and the clip planes
+are computed in the same space.</li>
+<li>B's own <code>Sky</code> drives the clear colour, fog and <code>daynight_ratio</code>
+for the pass, retinted for the portal's view direction like any other portal sky.</li>
+</ol>
+<p>B's <code>ClientMap</code> is driven by <code>updateCamera</code> every frame (cheap,
+keeps the pan smooth) but <code>updateDrawList</code> only when B's camera moved more than
+<code>2.0·BS</code>, new blocks were meshed, or the session was replaced. Measured cost of
+the whole secondary path: <b>3–7 % of the frame</b> — rendering world A is what costs.</p>
+
+<h3>The swap</h3>
+
+<figure>
+<svg class="dg" viewBox="0 0 880 410" role="img" aria-label="Sequence of a seamless crossing: the client heartbeats its passive session status to server A; when the player walks into the door, A calls xworld_swap_player and sends XWORLD_SWAP without disconnecting; the client promotes the passive session while A parks the player's body.">
+  <defs>
+    <marker id="d5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="18" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="70" y="34" text-anchor="middle">player</text>
+  <rect class="box" x="238" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="290" y="34" text-anchor="middle">server A</text>
+  <rect class="box" x="478" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="530" y="34" text-anchor="middle">client</text>
+  <rect class="box" x="738" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="790" y="34" text-anchor="middle">server B</text>
+
+  <line class="life" x1="70"  y1="44" x2="70"  y2="392"/>
+  <line class="life" x1="290" y1="44" x2="290" y2="392"/>
+  <line class="life" x1="530" y1="44" x2="530" y2="392"/>
+  <line class="life" x1="790" y1="44" x2="790" y2="392"/>
+
+  <rect class="box" x="466" y="58" width="388" height="22" rx="3" opacity=".55"/>
+  <text class="lbl" x="660" y="73" text-anchor="middle">passive session already Ready on B</text>
+
+  <line class="fl" x1="528" y1="106" x2="294" y2="106" marker-end="url(#d5)"/>
+  <text class="lbl" x="410" y="99" text-anchor="middle">XWORLD_STATUS (ready, addr, port, world) — every 2 s</text>
+
+  <line class="fl" x1="72" y1="142" x2="286" y2="142" marker-end="url(#d5)"/>
+  <text class="lbl" x="179" y="135" text-anchor="middle">walks into the door</text>
+
+  <path class="fl" d="M 290 166 L 336 166 L 336 188 L 294 188" marker-end="url(#d5)"/>
+  <text class="lbl" x="344" y="182">yaportal.xworld.handler → core.xworld_swap_player</text>
+
+  <line class="fl" x1="292" y1="220" x2="526" y2="220" marker-end="url(#d5)"/>
+  <text class="lbl" x="409" y="213" text-anchor="middle">XWORLD_SWAP (addr, port, portal_slot, to_world, to_ep)</text>
+  <text class="lbl o" x="296" y="240">no disconnect — this session becomes the passive one</text>
+
+  <path class="fl" d="M 530 268 L 576 268 L 576 290 L 534 290" marker-end="url(#d5)"/>
+  <text class="lbl" x="584" y="284">performSessionSwap</text>
+
+  <path class="fl" d="M 290 316 L 336 316 L 336 338 L 294 338" marker-end="url(#d5)"/>
+  <text class="lbl" x="344" y="332">park(player) — body frozen and hidden at the door</text>
+
+  <rect class="box k" x="350" y="362" width="368" height="24" rx="3"/>
+  <text class="lbl k" x="534" y="378" text-anchor="middle">world B is interactive · world A is now the portal view</text>
+</svg>
+<figcaption><b>The heartbeat is what makes it seamless.</b> Server A will only send
+<code>XWORLD_SWAP</code> to a client it knows holds a ready session on the destination — and
+that knowledge arrives only through the 2 s status message. Miss it and the crossing
+degrades to a reconnect.</figcaption>
+</figure>
+
+<p><code>Game::performSessionSwap</code> (<code>game.cpp:685</code>) in order:</p>
+<ol>
+<li><b>Continuity</b> — carry position, velocity and look through the same mirror the RTT
+uses (with the <code>rotate_only</code> exception of §1, so the prediction matches what B's
+server will compute), then step <code>0.5·BS</code> out of the destination frame.</li>
+<li>Portal state belongs to the world being left; B only broadcasts its own when a mod
+changes it.</li>
+<li>Trade scene graphs; drop nametags owned by the camera about to be destroyed.</li>
+<li><b>The sessions change roles.</b> <code>m_secondary-&gt;target_world =
+m_current_world</code>; <code>m_current_address</code> / <code>_port</code> come from
+<code>promoted-&gt;getServerAddress()</code>, not from the request (§8).</li>
+<li>Rebuild what the interactive session owns; clear the demoted session's camera pointer;
+re-decide <code>GenericCAO::m_is_visible</code> explicitly for both;
+<code>RenderingCore::rebind</code> rather than rebuilding the pipeline (rebuilding costs a
+black frame exactly on arrival); <code>input-&gt;clearEdges()</code> — never
+<code>clear()</code>.</li>
+<li><b>Skies.</b> (6a) the demoted session's sky must now show the world being left, and
+its server will not re-send <code>set_sky</code>; (6b) the primary sky takes the snapshot
+captured from the promoted session's <b>live</b> <code>Sky</code> before 6a overwrote
+it.</li>
+<li>Tell the new server what is now held passively; let its mods know.</li>
+</ol>
+
+<h3>The fallback, and why it is worse</h3>
+<p>Without a ready passive session the crossing degrades to <code>TOCLIENT_REDIRECT</code>
+(0x66): the client leaves the game and reconnects, skipping the main menu
+(<code>clientlauncher.cpp</code> honours <code>redirect_requested</code>), with a loading
+screen.</p>
+<blockquote>
+<p>That is not merely uglier. <b>A world hosted inside a client dies with that client.</b> A
+redirect out of a self-hosted world kills its server: every visitor is disconnected, and a
+visitor who was himself hosting takes his own world down when his client quits. One
+unswapped crossing has closed two worlds on two machines.</p>
+</blockquote>
+<p>So <code>yaportal.xworld.handler</code> <b>refuses</b> a crossing that would fall back to
+a redirect while other players are connected to a self-hosted world, and says why. This is a
+decision, not a gap: a server must not outlive the client that launched it, and an invisible
+world nobody can close is worse than a world that closes when its host walks away.</p>
+<p>Every fallback logs the mismatch from both viewpoints:</p>
+<pre><code>[yaportal_link] swap-miss &lt;player&gt;: slot=&lt;n&gt; pass=&lt;addr&gt;:&lt;port&gt; ||
+                server-sees ready=&lt;bool&gt; &lt;addr&gt;:&lt;port&gt; world=&lt;name&gt;</code></pre>
+
+<h3>Cross-game doors</h3>
+<p>Supported, under one convention: <b>unique media names</b>. <code>TextureSource</code>,
+<code>ISoundManager</code> and <code>ItemVisualsManager</code> are shared and keyed by plain
+file name; two games serving the same filename with different content silently corrupt each
+other (the passive session skips <code>rebuildImagesAndTextures()</code>, and a swap
+rebuilds nothing).</p>
+<p><code>Client::loadMedia</code> logs <code>[xworld] media collision: image "..."</code>
+when the passive session overwrites an image with different bytes — grep for it first when a
+cross-game portal looks wrong. Sounds and item visuals collide silently. The bundled
+<code>yafps</code> game prefixes every file <code>yafps_</code> for exactly this reason
+(verified: zero collisions against the full VoxeLibre media set).</p>
+
+<h3>Making a local game reachable</h3>
+<p>Upstream binds a simple-singleplayer server to <code>127.0.0.1</code>, gives it
+<code>myrand_range(49152, 65535)</code> as a port, and refuses every client after the first.
+All three are conditional on <code>bind_address</code> in the fork:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>With <code>bind_address</code> empty (default)</th><th>With <code>bind_address</code> set</th></tr></thead>
+<tbody>
+<tr><td>binds <code>127.0.0.1</code></td><td>binds the configured address</td></tr>
+<tr><td>random port each launch</td><td>uses the <code>port</code> setting (<code>remote_port</code> is the address book for joining others, not a hosting port)</td></tr>
+<tr><td>one client only</td><td>guests accepted — the other machine's passive session is exactly such a guest</td></tr>
+</tbody>
+</table></div>
+<p>Without the guest change the link worked in <b>one direction only</b>, and looked like a
+mystery: the hosting-enabled side saw the other world through its door, the plain side saw
+black, and every crossing from the black side degraded to a redirect that took both worlds
+down.</p>
+<p>Opening the world to guests re-opened a security hole, so it is closed in the same
+commit: the name <code>singleplayer</code> skips the password check
+(<code>is_true_singleplayer</code>), so both that check and the name test in
+<code>handleCommand_Init</code> now also require <code>isLocalhost()</code>.</p>
+<p><code>core.get_bind_address()</code> lets the mod publish whether a world is
+<code>lan</code>-open, so the <em>other</em> side can say "open only on that computer"
+instead of walking a player into a timeout.</p>
+
+<h3>Park and unpark</h3>
+<p>A player whose body stays behind is <em>parked</em>: frozen physics and
+<code>is_visible = false</code>, so world A stays streamed and visible through the door from
+B without a statue standing next to it.</p>
+<ul>
+<li>Physics is snapshotted per attribute, and <b>re-snapshotted in
+<code>minetest.after(0)</code></b> — mod load order is not guaranteed, and a game that sets
+arcade physics in its own <code>on_joinplayer</code> may run after <code>park()</code> did.
+The re-snapshot copies only values a later callback actually overwrote (≠ 0), never the
+still-frozen zeros: a whole-table re-snapshot once captured <code>gravity = 0</code> and
+unpark restored it, giving permanent no-gravity in VoxeLibre worlds.</li>
+<li><b>Taking over a parked body never restores it hidden</b>
+(<code>unpark(pname, true)</code>). The park snapshot is what unpark hands back, so a body
+already invisible when parked would stay invisible forever — visible to nobody while walking
+around normally. Both ends log it.</li>
+</ul>
+</section>
+
+<!-- ══ 7 ══════════════════════════════════════════════════ -->
+<section id="p7">
+<h2><span class="n">07</span><span>Catalogue of engine modifications</span></h2>
+<p>29 commits over upstream <b>5.16.1</b>; 77 files, +6369 / −309. Grouped by area, with
+what changed, why, and what breaks if it is reverted.</p>
+
+<h3>Irrlicht</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>File</th><th>Change</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>irr/include/ICameraSceneNode.h</code><br><code>irr/src/CCameraSceneNode.{h,cpp}</code></td><td><code>setRenderProjectionMatrix</code> / <code>clearRenderProjectionMatrix</code>, <code>setRenderViewMatrix</code> / <code>clearRenderViewMatrix</code></td><td>Override the matrices sent to the driver <b>without</b> touching <code>ViewArea</code>, the CPU frustum used for scene culling. Revert it and the oblique near plane culls entities on the CPU: black patches in the portal view.</td></tr>
+<tr><td><code>irr/src/CMakeLists.txt</code></td><td>build</td><td>new sources</td></tr>
+</tbody>
+</table></div>
+
+<h3>The portal renderer (new code)</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>File</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>src/portal_manager.{h,cpp}</code></td><td>The singleton holding 16 <code>PortalInfo</code> slots, camera hints, sky types and slots, clip planes, pass state, cross-world destinations and target, the quad-draw hook, the secondary-view bridge, plus <code>serialize</code> / <code>deserialize</code> for the wire</td></tr>
+<tr><td><code>src/client/render/portal.{h,cpp}</code></td><td><code>PortalRTTData</code>, <code>setVirtualCamera</code>, the Lengyel clip, <code>computePortalClipPlanes</code>, <code>drawPortalFaces</code>, <code>renderPortalRTTs</code>, <code>renderSecondaryPortal</code>, <code>drawPortalQuads</code>, and the pipeline steps</td></tr>
+</tbody>
+</table></div>
+
+<h3>Pipeline wiring</h3>
+<p class="src"><code>src/client/render/{core.cpp,core.h,pipeline.h,plain.cpp,plain.h}</code>, <code>src/client/renderingengine.{h,cpp}</code>, <code>src/client/shadows/dynamicshadowsrender.h</code></p>
+<p><code>PipelineContext</code> gains <code>sky</code>, <code>sky_pool</code>,
+<code>fog_range</code>, <code>fog_enabled</code>, <code>clouds_node</code> — everything the
+RTT pass needs and previously could not reach. <code>create3DStage</code> inserts
+<code>PortalPrepareStep</code> before <code>Draw3D</code> and <code>PortalQuadStep</code>
+after, handing the latter <code>Draw3D</code>'s render target so it can restore it after an
+intra-frame re-render. <code>RenderingCore::rebind</code> (and
+<code>DynamicShadowsRender::setClient</code>) let the pipeline follow a session swap instead
+of being rebuilt — rebuilding costs a black frame exactly when the player arrives in the new
+world.</p>
+
+<h3>Map rendering</h3>
+<p class="src"><code>src/client/clientmap.{h,cpp}</code>, <code>src/client/activeobjectmgr.{h,cpp}</code>, <code>src/client/clientobject.h</code>, <code>src/client/clientenvironment.h</code></p>
+<ul>
+<li><code>updatePortalDrawList</code> / <code>clearPortalDrawList</code> and
+<code>m_portal_drawlist</code>.</li>
+<li><code>setBypassFrustumCulling</code> — the virtual camera is not the player camera.</li>
+<li><code>setPortalCamera</code> — transparent sorting for the virtual camera.</li>
+<li><code>getBackgroundBrightness(pos, dir, …)</code> overload — sample the destination's
+light from an arbitrary pose without disturbing the main camera state.</li>
+<li>A <code>scene::ISceneManager *</code> constructor parameter, so a secondary world's map
+attaches to its own scene graph.</li>
+<li><code>ActiveObjectMgr::forEach</code> and <code>ClientActiveObject::setSceneManager</code>
+— move a session's visuals between scene graphs at a swap.</li>
+</ul>
+
+<h3>Sky and clouds</h3>
+<p class="src"><code>src/client/sky.{h,cpp}</code>, <code>src/client/clouds.h</code></p>
+<ul>
+<li><code>applySkyParams</code> / <code>applySunParams</code> / <code>applyMoonParams</code>
+/ <code>applyStarParams</code> and the matching <code>get*Params()</code> — a full parameter
+set can be applied and snapshotted. <b>The whole <code>SkyboxParams</code> struct must be
+stored</b>, not just the fields the setters touch, or a round trip through a swap turns a
+black sky into a white "regular" one.</li>
+<li><code>retintForDirection</code> / <code>restoreMainTint</code> and the <code>*_pre</code>
+colours — recompute the directional tint for an arbitrary view direction.</li>
+<li><code>setSceneActive</code> — a pool sky must be registered for rendering or not, which
+is distinct from <code>setVisible</code> (the gradient/fog layer).</li>
+<li><code>forceReset</code> — re-trigger the initial 100-iteration flood so a dimension
+change snaps.</li>
+<li>A constructor taking an explicit scene manager, for world B's own sky.</li>
+<li><code>Clouds::getParams</code> / <code>setParams</code> — snapshot and restore across a
+swap.</li>
+</ul>
+
+<h3>Camera, player, objects</h3>
+<p class="src"><code>src/client/camera.cpp</code>, <code>localplayer.{h,cpp}</code>, <code>content_cao.{h,cpp}</code>, <code>inputhandler.{h,cpp}</code>, <code>keys.h</code>, <code>src/player.{h,cpp}</code>, <code>src/defaultsettings.cpp</code></p>
+<ul>
+<li><code>m_camera_roll</code> composed as <code>rot_pitch * rot_roll</code>; roll keys
+default O / P.</li>
+<li><code>snapView</code> / <code>snapRoll</code> / <code>snapPitch</code> with the race
+guard; <code>startPortalWarp</code> / <code>stepPortalWarp</code>; the
+<code>sky_sunlit_override_*</code> fields.</li>
+<li><code>PlayerPhysicsOverride::floor_portal_cb_shift</code>, serialized in both
+directions.</li>
+<li><code>GenericCAO::setPortalRendering</code>, <code>setSceneManager</code>, camera-null
+tolerance throughout (nametags, <code>removeFromScene</code>, <code>setAttachment</code>),
+and the <code>[xworld] portal view: player … shown/hidden</code> diagnostics.</li>
+<li><code>m_is_visible</code> at creation is <code>m_client-&gt;getCamera() != nullptr</code>
+— a passive session must not paint its own avatar into the middle of the portal view.</li>
+</ul>
+
+<h3>Node shells</h3>
+<p class="src"><code>src/mapnode.cpp</code>, <code>src/client/content_mapblock.{h,cpp}</code></p>
+<p>Directional solidity and face merging for <code>portal_block</code>, the param2 carve
+descriptor, the <code>portal_slab</code> material bounds, and
+<code>drawPortalBlockNode</code>. Reverting these turns type-2 portals into ordinary solid
+cubes.</p>
+
+<h3>Shaders</h3>
+<p class="src"><code>client/shaders/{nodes,object}_shader/opengl_vertex.glsl</code></p>
+<p><code>uniform vec4 portalClipPlanes[5]</code> and five
+<code>gl_ClipDistance[k] = dot(worldPosition, …)</code> lines. Always written; only
+meaningful while the RTT pass has the clip distances enabled.</p>
+
+<h3>Dual client</h3>
+<p class="src"><code>src/client/worldsession.{h,cpp}</code> (new), <code>game.{cpp,h}</code> (+1352), <code>game_internal.h</code> (new), <code>client.{h,cpp}</code>, <code>imagesource.{h,cpp}</code>, <code>texturesource.{h,cpp}</code>, <code>clientlauncher.cpp</code>, <code>src/gui/mainmenumanager.h</code></p>
+<p><code>WorldSession</code> + <code>DeferredWorldState</code>;
+<code>Game::{secondaryTarget, initSecondaryClient, stepSecondaryClient, performSessionSwap,
+teardownSecondaryClient, dropSecondaryClient, applySecondaryWorldStateLive,
+updateSecondarySky, updateSecondaryView, renderSecondaryDebug}</code>;
+<code>Client::isPassive</code>; <code>insertSourceImage</code> returning whether it replaced
+different content (the cross-game collision diagnostic); the redirect fields on
+<code>MainMenuManager</code> and the launcher path that reconnects without the menu.</p>
+
+<h3>Protocol</h3>
+<p class="src"><code>src/network/{networkprotocol.h, clientopcodes.cpp, clientpackethandler.cpp, serveropcodes.cpp, serverpackethandler.cpp}</code> — see Appendix C</p>
+<p><code>PORTAL_FORK_MAGIC = 0x59415054</code> ("YAPT") leads the payload of every message
+the fork adds. The opcodes <code>0x65</code>–<code>0x68</code> (to client) and
+<code>0x54</code> (to server) are unassigned upstream today; the magic is what lets a forked
+client ignore them rather than misread them if a future Luanti gives them a meaning of its
+own. A stock peer already ignores what it does not know, so a stock client on a forked
+server simply sees no portals.</p>
+<p><code>TOSERVER_CLIENT_READY</code> gains one optional trailing byte; stock peers omit it
+and forked servers tolerate its absence.</p>
+
+<h3>Server</h3>
+<p class="src"><code>src/server.{h,cpp}</code>, <code>src/server/{clientiface,player_sao,portalexchange}.*</code></p>
+<ul>
+<li><code>getPortalState()</code> / <code>markPortalStateDirty()</code> /
+<code>SendPortalState</code> — with a <b>content</b> comparison, not just the dirty flag:
+mods rewrite the whole portal list every step, and trusting the flag would broadcast a few
+hundred bytes per client per step.</li>
+<li><code>SendPortalTeleport</code>, <code>RedirectPlayer</code>, <code>SwapPlayer</code>,
+<code>getXworldSession</code>.</li>
+<li><code>RemoteClient::XworldSession</code> and <code>m_joined_passive</code>.</li>
+<li><code>PlayerSAO::setPosTeleportNoSend</code> — move the player and reset the anti-cheat
+move pool <em>without</em> the usual position packet, because the portal teleport packet
+carries it.</li>
+<li><code>PortalExchange</code>.</li>
+</ul>
+<blockquote>
+<p><b>Upstream bug fix.</b> <code>PlayerSAO::getPropertyPacket()</code> no longer forces
+<code>m_prop.is_visible = true</code>. Being an assignment, it also corrupted the
+server-side property. <code>park()</code>'s hide never reached the wire, so the ghost stood
+visible next to the endpoint portal for everyone in world B. Nothing may reintroduce a
+"players are always visible" shortcut — mods rely on the property being honest.</p>
+<p><b>Upstream limitation lifted.</b> The simple-singleplayer bind, port and single-client
+rules, each gated on <code>bind_address</code>, with the <code>singleplayer</code>-name
+password reservation tightened to loopback.</p>
+</blockquote>
+
+<h3>Script API and build</h3>
+<p class="src"><code>src/script/lua_api/{l_env,l_object,l_server}.{h,cpp}</code> — the full list is in Appendix B</p>
+<p>Build: <code>src/CMakeLists.txt</code> (adds <code>portal_manager.cpp</code>, snappy for
+leveldb, and dev-only transitive links for the static freetype in <code>/tmp/deps</code>),
+<code>src/client/CMakeLists.txt</code>, <code>src/server/CMakeLists.txt</code>,
+<code>cmake/Modules/FindZstd.cmake</code> (<code>HAVE_ZSTD_INITCSTREAM</code>).</p>
+</section>
+
+<!-- ══ 8 ══════════════════════════════════════════════════ -->
+<section id="p8">
+<h2><span class="n">08</span><span>Invariants and failure modes</span></h2>
+<p>Read from the symptom.</p>
+
+<div class="tablewrap"><table>
+<thead><tr><th>Symptom</th><th>Cause</th><th>Rule</th></tr></thead>
+<tbody>
+<tr><td>Black sky comes back white after a round trip</td><td><code>applySkyParams</code> stored only what its setters touch; <code>type</code>/<code>bgcolor</code>/<code>clouds</code> fell back to constructor defaults</td><td><code>Sky::applySkyParams</code> must store the <b>whole</b> <code>SkyboxParams</code>; <code>handleClientEvent_SetSky</code> must go through the same path</td></tr>
+<tr><td>Second visit to a world paints its fog with the previous world's sky</td><td>The swap read the replayed client events; <code>deferred.takeAll()</code> is empty on every visit after the first (a server sends <code>set_sky</code> once)</td><td>At a swap, snapshot sky/clouds/view-range from the passive session's <b>live</b> <code>Sky</code>/<code>Clouds</code></td></tr>
+<tr><td>Every crossing degrades to a redirect, portal black</td><td><code>initSecondaryClient()</code> ran twice; the second connect under the same name was refused and dropped the working session</td><td><code>initSecondaryClient()</code> must no-op if <code>m_secondary</code> exists. The backoff <code>teardown()</code>s first, so a session still present is one to keep</td></tr>
+<tr><td><code>swap-miss … server-sees ready=false :0 world=</code> forever</td><td>One-shot <code>XWORLD_STATUS</code> sent while the primary server was still dropping in-game packets (client not yet <code>CS_Active</code>)</td><td>Re-send on a 2 s timer while the passive session is Ready</td></tr>
+<tr><td>Ghost stands visible next to the endpoint portal</td><td>Upstream forced <code>is_visible = true</code> into every player property packet</td><td>Keep the force removed; never add a "players are always visible" shortcut</td></tr>
+<tr><td>Walking into a door with W held stops you dead on arrival</td><td><code>input-&gt;clear()</code> wiped <code>keyIsDown</code>, and no fresh key-down is coming for a key never released</td><td><code>performSessionSwap</code> uses <code>clearEdges()</code>; connect and focus-loss paths keep the full <code>clear()</code></td></tr>
+<tr><td>Red chat spam every few seconds in unrelated worlds</td><td>A failed <code>http.fetch</code> goes to errorstream, and <code>chat_log_level = error</code> paints errorstream into chat</td><td><code>remote_refresh</code> backs off per server up to five minutes, resetting on first success. Anything else on the heartbeat that talks to the network needs the same</td></tr>
+<tr><td>You are invisible to yourself in third person after a crossing; the world you left shows your own back through the portal</td><td>Client-side self-view (<code>GenericCAO::m_is_visible</code>) is decided once, at object creation, from "does this session have a camera" — nothing re-runs it on a role change</td><td><code>performSessionSwap</code> sets it explicitly: visible on the promoted session, hidden on the demoted one</td></tr>
+<tr><td><code>swap-miss … pass=&lt;LAN ip&gt;:&lt;port&gt; ‖ server-sees ready=true 127.0.0.1:&lt;same port&gt;</code></td><td>The client names the session by the address <em>it</em> dials, the server by what its registry learned</td><td>Match on <b>world name</b> + port; keep addr:port only as the fallback for a session that reported no world</td></tr>
+<tr><td>After each crossing you re-enter your own world as a ghost while your old body stays parked</td><td><code>m_current_world</code> held clientlauncher's placeholder <code>[--world parameter]</code>, so the demoted session looked like a re-pair and was dropped</td><td><code>Game::startup</code> falls back to the world directory name; <code>m_current_world</code> must be the name the registry publishes</td></tr>
+<tr><td>Passive stuck on the dualtest port after pairing; black portal</td><td>The <code>yaportal_dualtest_*</code> override beat the pair registry</td><td>The registry <b>wins</b> whenever the mods published a target; the override is only the no-pairing smoke fallback</td></tr>
+<tr><td>Re-pairing after a crossing leaves the passive on the old world</td><td>Retargeting refused to touch a Ready or just-swapped session</td><td>A target naming a <em>different</em> world (≠ session's <code>target_world</code> <b>and</b> ≠ <code>m_current_world</code>) is a deliberate re-pair and is followed even then</td></tr>
+<tr><td>A traveller walks normally but is visible to nobody</td><td>The body was parked while already invisible, and unpark hands back the snapshot</td><td><code>unpark(pname, true)</code> overrides it; both ends log <code>parking X while already invisible</code> / <code>took over a body saved as invisible</code></td></tr>
+<tr><td>"Still walking like the old world" after a swap</td><td><code>park()</code> snapshotted physics before the destination game's <code>on_joinplayer</code> set its values</td><td>Games must set physics <b>synchronously</b> in <code>register_on_joinplayer</code>; <code>park()</code> re-snapshots in <code>minetest.after(0)</code>, per attribute</td></tr>
+<tr><td>A cross-game portal looks visually wrong</td><td>Two games served the same media filename with different content</td><td>Grep <code>[xworld] media collision</code>; prefix every file per game (<code>yafps_</code>)</td></tr>
+<tr><td>A fix verified in smoke does not appear in game</td><td>Background world servers launched with nohup keep the old Lua and binary for hours</td><td><code>ps -ef ‖ grep bin/luanti</code>, SIGTERM, let the panel restart it</td></tr>
+<tr><td>Per-frame stutter near a portal</td><td><code>addUpdateMeshTask</code> called from <code>updatePortalDrawList</code>; air blocks have a permanently null mesh</td><td>Keep the block alive with <code>resetUsageTimer()</code> and <code>continue</code></td></tr>
+<tr><td>Teleport swallows yaw/pitch</td><td>A roll-only animation tick landed in the same frame as the teleport snap</td><td><code>snapRoll</code> / <code>snapPitch</code> refuse to overwrite a pending full snap</td></tr>
+</tbody>
+</table></div>
+
+<p>Also standing, as decisions rather than bugs:</p>
+<ul>
+<li><b>A hosted world closes with the client that launched it.</b> Do not propose keeping the
+in-process server stepping after its player leaves. Refusing the crossing, and the swap path
+(which never detaches the server from its client), are the supported answers.</li>
+<li><b>A refused passive session says so in chat, once</b>
+(<code>m_secondary_denial_told</code>). A black portal is indistinguishable from one that is
+unpaired, unreachable, or looking at an empty room.</li>
+</ul>
+</section>
+
+<!-- ══ 9 ══════════════════════════════════════════════════ -->
+<section id="p9">
+<h2><span class="n">09</span><span>Diagnostics and testing</span></h2>
+<ul>
+<li><b><code>/porte</code></b> — the cross-world panel: this world's doors, where each leads,
+every door of every other world, rename/disconnect/travel, and a field to search another
+machine by address.</li>
+<li><b><code>/porte_diag</code></b> — what this world serves (game port UDP, search port TCP,
+whether the service is up), the address the other machine should search for, the state of
+every remembered server, and everyone connected with their state: <em>attivo</em>,
+<em>parcheggiato</em>, or <em>fantasma parcheggiato</em>, plus whether the server considers
+them visible. <code>/porte_diag &lt;ip&gt;</code> probes that machine and names which of the
+three usual causes applies: no world open there, a different address than you think, or a
+firewall.</li>
+<li><b><code>swap-miss</code></b> in <code>~/.minetest/yaportal_link/logs/</code> — read this
+first when a hop shows a loading screen. It prints what the mod passed and what the server
+holds.</li>
+<li><b><code>[xworld] portal view: player X shown/hidden</code></b> — what the passive
+session was told about a player's visibility. Verified end-to-end: <code>is_visible</code>
+false→true expires the visuals and <code>GenericCAO::step</code> rebuilds the node in the
+secondary scene manager, so "one of them is missing from the portal view" is <em>not</em> a
+missing rebuild — look at the park state.</li>
+<li><b><code>play_dualtest.sh</code> / <code>play_multiworld.sh</code> /
+<code>play_swap.sh</code></b> — scripted two-world sessions. <code>yaportal_dualtest_*</code>
+settings force a passive target when nothing is paired.</li>
+<li><b>Headless mod test</b> — <code>luanti_src/bin/luanti --server</code> with a throwaway
+mod that calls the code path directly (<code>on_place</code> with <code>placer = nil</code>,
+forceload, grep the log). Enough to check Lua syntax and logic without a GUI.</li>
+<li><b>Build number</b> — every release artifact carries one
+(<code>5.16.1-portal-b12</code>), shown in the main menu, in <code>luanti --version</code>
+and in <code>flatpak info</code>. The dev build reports <code>5.16.1-debug</code>, which is
+itself the answer to "is this a release artifact?".</li>
+</ul>
+</section>
+
+<!-- ══ A ══════════════════════════════════════════════════ -->
+<section id="a">
+<h2><span class="n">A</span><span>Constants</span></h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Constant</th><th>Value</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td><code>MAX_PORTALS</code></td><td>16</td><td><code>src/portal_manager.h</code></td></tr>
+<tr><td><code>BS</code></td><td>node size in render units</td><td>engine-wide; every portal length is in BS</td></tr>
+<tr><td><code>TRIGGER_DEPTH</code></td><td>0.05 nodes</td><td><code>yaportal/init.lua:30</code></td></tr>
+<tr><td><code>PORTAL_TUNNEL_DEPTH</code></td><td>0</td><td><code>portal.cpp:31</code></td></tr>
+<tr><td>Lengyel clip origin</td><td><code>dst_surface + normal · 0.49·BS</code></td><td><code>portal.cpp:180</code></td></tr>
+<tr><td>Lengyel applied when</td><td><code>side &lt; −0.001·BS</code></td><td><code>portal.cpp:171</code></td></tr>
+<tr><td>Clip-plane apex standoff</td><td><code>0.05·BS</code> outside the exit face</td><td><code>portal.cpp:417</code></td></tr>
+<tr><td>Portal-quad grazing cutoff</td><td><code>d / dist &lt; 0.1</code></td><td><code>portal.cpp:959</code></td></tr>
+<tr><td>Horizontal-portal <code>d_min</code></td><td><code>−0.4·BS</code></td><td><code>portal.cpp:958</code></td></tr>
+<tr><td>Intra-frame re-render threshold</td><td>4 nodes</td><td><code>portal.cpp:1035</code></td></tr>
+<tr><td>Secondary draw-list threshold</td><td><code>2.0·BS</code></td><td><code>portal.cpp:597</code></td></tr>
+<tr><td>Measured-light EMA</td><td><code>0.9 old + 0.1 new</code></td><td><code>portal_manager.h:139</code></td></tr>
+<tr><td><code>PORTAL_WARP_DURATION</code></td><td>0.3 s</td><td><code>clientpackethandler.cpp:1850</code></td></tr>
+<tr><td>Sky sunlit override</td><td>3 frames</td><td><code>clientpackethandler.cpp:1856</code></td></tr>
+<tr><td>Collision-box shift cap</td><td>1.7 nodes</td><td><code>yaportal/init.lua:1354</code></td></tr>
+<tr><td>Entity teleport cooldown</td><td>1.0 s</td><td><code>yaportal/init.lua:1680</code></td></tr>
+<tr><td>Registry heartbeat / online timeout / handoff validity</td><td>3 s / 10 s / 30 s</td><td><code>yaportal_link/init.lua:30-32</code></td></tr>
+<tr><td><code>PORT_BASE</code> (on-demand worlds)</td><td>30001</td><td><code>yaportal_link/init.lua:33</code></td></tr>
+<tr><td>Exchange port</td><td>game port + 5000 (TCP)</td><td><code>src/server/portalexchange.cpp</code></td></tr>
+<tr><td>Xworld status heartbeat</td><td>2 s</td><td><code>Game::stepSecondaryClient</code></td></tr>
+<tr><td><code>PORTAL_FORK_MAGIC</code></td><td><code>0x59415054</code> ("YAPT")</td><td><code>src/network/networkprotocol.h:34</code></td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- ══ B ══════════════════════════════════════════════════ -->
+<section id="b">
+<h2><span class="n">B</span><span>Lua API added by the fork</span></h2>
+
+<h4>Portal state (l_env) — server side; shipped to clients automatically</h4>
+<pre><code>minetest.set_portals(list)              -- 1-based array, ≤ MAX_PORTALS entries:
+                                        -- {pos=, normal=, up=, half_w=, half_h=, link=}
+                                        -- link = 0-based index of the destination, -1 = none
+                                        -- nil / non-table clears everything
+minetest.set_portal_cam_hint(idx, pos)  -- override the virtual camera for slot idx (0-based)
+minetest.clear_portal_cam_hint(idx)
+minetest.set_portal_xworld_dest(idx, pos, normal, up)   -- destination in world-B coords
+minetest.clear_portal_xworld_dest(idx)
+minetest.set_xworld_target(addr, port, world)           -- where the passive session connects
+minetest.clear_xworld_target()
+minetest.register_portal_sky_type(name, params) -&gt; idx  -- deduped by name
+minetest.update_portal_sky_type(idx, params)
+minetest.set_portal_sky(slot, type_idx)
+minetest.clear_portal_sky(slot)</code></pre>
+
+<h4>Player (l_object)</h4>
+<pre><code>player:portal_teleport(pos, yaw_rad, vel_delta, {
+    sky_sunlit = bool,   -- force sunlight_seen for 3 frames
+    sky_slot   = idx,    -- snap the sky from this portal's registered type
+    pitch      = rad,
+    roll       = rad,    -- instant disorientation; animate back to 0 yourself
+    warp       = {x=,y=,z=},  -- camera eases from here (world nodes)
+})
+player:set_pos_look(pos, yaw_rad)
+player:get_look_roll() / player:set_look_roll(rad)
+player:set_look_pitch_animate(rad)</code></pre>
+
+<h4>Server / cross-world (l_server)</h4>
+<pre><code>core.get_bind_port()      -- the port actually bound (not the "port" setting)
+core.get_bind_address()   -- to tell whether the world is loopback-only
+core.redirect_player(name, addr, port)                 -&gt; ok
+core.xworld_swap_player(name, addr, port, slot, to_world, to_ep) -&gt; swapped
+core.player_dual_ready(name)  -&gt; ready, addr, port, world
+core.xworld_exchange(port, registry_json) -&gt; started
+core.xworld_exchange_posts()  -&gt; {{peer=, body=}, ...}</code></pre>
+
+<p>Plus the physics override <code>floor_portal_cb_shift</code> (nodes, raises the collision
+box bottom) and <code>get_player_information(name).xworld_passive</code>.</p>
+</section>
+
+<!-- ══ C ══════════════════════════════════════════════════ -->
+<section id="c">
+<h2><span class="n">C</span><span>Protocol messages</span></h2>
+<p>Every payload below is preceded by <code>u32 PORTAL_FORK_MAGIC</code>.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Opcode</th><th>Name</th><th>Payload</th></tr></thead>
+<tbody>
+<tr><td><code>0x65</code></td><td><code>TOCLIENT_PORTAL_TELEPORT</code></td><td><code>v3f pos</code>, <code>f32 pitch</code>, <code>f32 yaw</code>, <code>v3f vel_delta</code>, <code>u8 sky_sunlit_override</code> (0 none / 1 force false / 2 force true), <code>u8 sky_slot</code> (0xFF none), <code>f32 roll</code>, <code>u8 flags</code> (0x01 roll_only, 0x02 pitch_only, 0x04 warp), <code>[v3f warp_off]</code></td></tr>
+<tr><td><code>0x66</code></td><td><code>TOCLIENT_REDIRECT</code></td><td><code>std::string address</code>, <code>u16 port</code> — client leaves and reconnects, skipping the menu; the server disconnects the peer right after</td></tr>
+<tr><td><code>0x67</code></td><td><code>TOCLIENT_XWORLD_SWAP</code></td><td><code>std::string address</code>, <code>u16 port</code>, <code>u8 portal_slot</code>, <code>std::string to_world</code>, <code>std::string to_endpoint</code> — client promotes its passive session in place. <b>No disconnect</b>: this session becomes the passive one</td></tr>
+<tr><td><code>0x68</code></td><td><code>TOCLIENT_PORTAL_STATE</code></td><td>long string: serialized <code>PortalManager</code> snapshot (portals, cam hints, sky slots, cross-world destinations, sky types, dual-client target)</td></tr>
+<tr><td><code>0x54</code></td><td><code>TOSERVER_XWORLD_STATUS</code></td><td><code>u8 dual_ready</code>, <code>std::string address</code>, <code>u16 port</code>, <code>std::string world</code> — re-sent every 2 s while Ready</td></tr>
+</tbody>
+</table></div>
+<p>Plus one optional trailing <code>u8</code> on <code>TOSERVER_CLIENT_READY</code>:
+1 = this connection is a passive cross-world session.</p>
+</section>
+
+</article>
+
+<footer>
+  Luanti-portal · <code>docs/portal-system.html</code> — the illustrated edition.
+  Same text as <code>docs/PORTAL_SYSTEM.md</code>, which is the canonical copy and the one
+  to edit first. Self-contained: no scripts, no fonts, no external requests — open it
+  straight from the repo.
+</footer>
+
+</div>

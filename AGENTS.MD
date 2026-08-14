@@ -1,5 +1,11 @@
 This project is a Luanti mod with a custom C++ engine that adds 3D portal rendering. The engine is a **git submodule** at `luanti_src/`, tracking the fork `github.com/giacomo986/luanti` on branch `portal-fork` (the fork holds the full set of engine changes as real commits; `master` there tracks upstream for rebases). The mod's Lua logic is in `yaportal/` (single-world play portals) and `yaportal_link/` (cross-world doors — see the dual-client section below).
 
+> **How it works:** this file is the build recipe plus the invariants — the rules,
+> without their derivations. The explanation behind them (portal geometry and the
+> transform, the RTT rendering method, oblique and lateral clipping, the dual-client
+> swap, and a file-by-file catalogue of the engine changes) is in
+> [docs/PORTAL_SYSTEM.md](docs/PORTAL_SYSTEM.md).
+
 > **Layout note:** there is no `src_patches/` any more. Engine changes are committed directly in the `luanti_src` submodule and the outer repo records the submodule pointer. If a doc or script still mentions copying `src_patches/`, it is stale — ignore it.
 
 ---

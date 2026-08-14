@@ -307,6 +307,11 @@ instead of taking a new one.
 
 ## The engine fork
 
+> How all of it actually works — the portal transform, the render-to-texture
+> method and its clip planes, the cross-world dual-client, and every engine
+> change with the reason for it — is written up in
+> [docs/PORTAL_SYSTEM.md](docs/PORTAL_SYSTEM.md).
+
 The mod needs engine changes (portal rendering, the cross-world session swap,
 four extra protocol messages), so `luanti_src/` is a submodule of
 **[giacomo986/luanti](https://github.com/giacomo986/luanti)**, branch
