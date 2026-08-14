@@ -61,7 +61,7 @@ modules:
       - -DRUN_IN_PLACE=FALSE
       # Rewritten by release-flatpak.sh from BUILD_NUMBER: the version string
       # in the main menu is how you tell two installs apart.
-      - -DVERSION_EXTRA=portal-b7
+      - -DVERSION_EXTRA=portal-b8
       # Match the AppImage/dev builds (and keep the final link light).
       - -DENABLE_LTO=FALSE
       - -DBUILD_SERVER=FALSE
