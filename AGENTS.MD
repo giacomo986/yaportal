@@ -449,8 +449,12 @@ into the portal's RTT. Crossing swaps the two in place (no reconnect) via
 JSON files under `~/.minetest/yaportal_link/` (see the header of
 `yaportal_link/init.lua`).
 
-Manual test: `./play_dualtest.sh` (world B = backportal :30022, open "portal
-start"). A crossing that fell back to a redirect logs a `[yaportal_link]
+Manual test, by hand: start world B as a dedicated server (`luanti_src/bin/luanti
+--server --world ~/.minetest/worlds/backportal --port 30022 --config <conf>`,
+where `<conf>` sets `secure.trusted_mods = yaportal_link`, `default_privs =
+interact, shout` and `disallow_empty_password = false`), put `yaportal_dualtest
+= true` plus `yaportal_dualtest_addr`/`_port` in `minetest.conf`, then open
+"portal start" in the client. A crossing that fell back to a redirect logs a `[yaportal_link]
 swap-miss` line with the address the mod passed vs what the server holds — read
 that first when a hop is not seamless.
 
@@ -555,7 +559,7 @@ that first when a hop is not seamless.
   whenever the mods have published a target; the dualtest override is only the
   no-pairing smoke fallback (`Game::secondaryTarget`). Letting the override
   win kept the passive glued to the test port after pairing a door inside a
-  `play_dualtest.sh` session: black portal, crossing degraded to redirect —
+  dualtest session: black portal, crossing degraded to redirect —
   and a redirect out of a singleplayer-hosted world KILLS that world's server,
   so the return door goes offline too (a swap keeps it hosted). Retargeting
   (`stepSecondaryClient`): a target naming a DIFFERENT world (≠ the session's

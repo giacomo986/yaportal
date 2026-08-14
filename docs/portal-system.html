@@ -1880,9 +1880,11 @@ session was told about a player's visibility. Verified end-to-end: <code>is_visi
 false→true expires the visuals and <code>GenericCAO::step</code> rebuilds the node in the
 secondary scene manager, so "one of them is missing from the portal view" is <em>not</em> a
 missing rebuild — look at the park state.</li>
-<li><b><code>play_dualtest.sh</code> / <code>play_multiworld.sh</code> /
-<code>play_swap.sh</code></b> — scripted two-world sessions. <code>yaportal_dualtest_*</code>
-settings force a passive target when nothing is paired.</li>
+<li><b><code>yaportal_dualtest_*</code> settings</b> — force a passive target when nothing is
+paired, which is how a two-world session is put together by hand: start world B with
+<code>--server</code> (its config trusting <code>yaportal_link</code>), point
+<code>yaportal_dualtest_addr</code>/<code>_port</code> at it, then open world A in the
+client.</li>
 <li><b>Headless mod test</b> — <code>luanti_src/bin/luanti --server</code> with a throwaway
 mod that calls the code path directly (<code>on_place</code> with <code>placer = nil</code>,
 forceload, grep the log). Enough to check Lua syntax and logic without a GUI.</li>

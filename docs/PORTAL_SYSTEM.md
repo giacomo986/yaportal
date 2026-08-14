@@ -1259,8 +1259,10 @@ Also standing, as decisions rather than bugs:
   visuals and `GenericCAO::step` rebuilds the node in the secondary scene manager, so "one
   of them is missing from the portal view" is *not* a missing rebuild — look at the park
   state.
-- **`play_dualtest.sh` / `play_multiworld.sh` / `play_swap.sh`** — scripted two-world
-  sessions. `yaportal_dualtest_*` settings force a passive target when nothing is paired.
+- **`yaportal_dualtest_*` settings** — force a passive target when nothing is paired, which
+  is how a two-world session is put together by hand: start world B with `--server` (its
+  config trusting `yaportal_link`), point `yaportal_dualtest_addr`/`_port` at it, then open
+  world A in the client.
 - **Headless mod test** — `luanti_src/bin/luanti --server` with a throwaway mod that calls
   the code path directly (`on_place` with `placer = nil`, forceload, grep the log). Enough
   to check Lua syntax and logic without a GUI.
