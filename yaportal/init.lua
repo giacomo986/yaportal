@@ -6642,82 +6642,246 @@ end)
 
 -- ── crafts ─────────────
 
+-- Ingredient names differ between VoxeLibre (mcl_*) and Minetest Game
+-- (default/dye): resolve them once into M, and register a recipe only when
+-- every ingredient it needs exists, so the mod still loads on a game that has
+-- neither.  Everything below lives in one do-block and keeps its locals down
+-- to two (M, craft): the main chunk is at Lua's 200-local ceiling.
 do
-    local iron  = (minetest.get_modpath("mcl_core") and "mcl_core:iron_ingot")
-               or (minetest.get_modpath("default")  and "default:steel_ingot")
-    local stone = (minetest.get_modpath("mcl_core") and "mcl_core:stone")
-               or (minetest.get_modpath("default")  and "default:stone")
-    local glass = (minetest.get_modpath("mcl_core") and "mcl_core:glass")
-               or (minetest.get_modpath("default")  and "default:glass")
-    if iron and stone then
-        minetest.register_craft({
-            output = "yaportal:superbutton",
-            recipe = {
-                {iron,  iron,  iron },
-                {stone, stone, stone},
-            },
-        })
+    local M = (minetest.get_modpath("mcl_core") and {
+        iron    = "mcl_core:iron_ingot",   stone   = "mcl_core:stone",
+        glass   = "mcl_core:glass",        stick   = "mcl_core:stick",
+        diamond = "mcl_core:diamond",      dblock  = "mcl_core:diamondblock",
+        gblock  = "mcl_core:goldblock",    obsid   = "mcl_core:obsidian",
+    }) or (minetest.get_modpath("default") and {
+        iron    = "default:steel_ingot",   stone   = "default:stone",
+        glass   = "default:glass",         stick   = "default:stick",
+        diamond = "default:diamond",       dblock  = "default:diamondblock",
+        gblock  = "default:goldblock",     obsid   = "default:obsidian",
+    }) or {}
+    M.white = (minetest.get_modpath("mcl_dye") and "mcl_dye:white")
+           or (minetest.get_modpath("dye")     and "dye:white")
+    M.black = (minetest.get_modpath("mcl_dye") and "mcl_dye:black")
+           or (minetest.get_modpath("dye")     and "dye:black")
+    M.core  = "yaportal:portal_core"
+
+    -- Register def only if all the listed ingredients resolved: an unresolved
+    -- one is nil, which would silently punch a hole in the recipe grid.
+    local function craft(def, ...)
+        for i = 1, select("#", ...) do
+            if not select(i, ...) then return end
+        end
+        minetest.register_craft(def)
     end
-    if iron and glass then
-        minetest.register_craft({
-            output = "yaportal:dispenser",
-            recipe = {
-                {iron, iron,  iron},
-                {iron, glass, iron},
-                {iron, iron,  iron},
-            },
-        })
-    end
-    if iron then
-        minetest.register_craft({
-            output = "yaportal:door",
-            recipe = {
-                {iron, iron},
-                {iron, iron},
-                {iron, iron},
-            },
-        })
-    end
-    if iron and glass then
-        minetest.register_craft({
-            output = "yaportal:clock_item",
-            recipe = {
-                {iron,  glass, iron},
-                {iron,  iron,  iron},
-            },
-        })
-    end
-    if iron and stone then
-        minetest.register_craft({
-            output = "yaportal:pushbutton 4",
-            recipe = {
-                {iron},
-                {stone},
-            },
-        })
-    end
-    if iron and stone then
-        minetest.register_craft({
-            output = "yaportal:pedestal",
-            recipe = {
-                {"",    iron,  ""   },
-                {"",    stone, ""   },
-                {stone, stone, stone},
-            },
-        })
-    end
-    local stick = (minetest.get_modpath("mcl_core") and "mcl_core:stick")
-               or (minetest.get_modpath("default")  and "default:stick")
-    if iron and stick then
-        minetest.register_craft({
-            output = "yaportal:trigger_wand",
-            recipe = {
-                {"",    "",    iron},
-                {"",    stick, ""},
-                {stick, "",    ""},
-            },
-        })
-    end
+
+    -- ── portal core ────────────────────────────────────────────────────────
+    -- Every portal device is built around one of these.  A core costs 4
+    -- diamonds, 4 obsidian and a whole block of gold, which is what keeps the
+    -- guns end-game items instead of early-game toys.
+    minetest.register_craftitem(M.core, {
+        description = "Portal Core\n" ..
+            "Condensed field emitter — the expensive part of every portal device",
+        inventory_image = "[fill:16x16:#22222a^[fill:10x10:3,3:#3a3a48" ..
+            "^[fill:6x6:5,5:#33bbff^[fill:2x2:7,7:#ffffff",
+    })
+    craft({
+        output = M.core,
+        recipe = {
+            {M.obsid,   M.diamond, M.obsid  },
+            {M.diamond, M.gblock,  M.diamond},
+            {M.obsid,   M.diamond, M.obsid  },
+        },
+    }, M.obsid, M.diamond, M.gblock)
+
+    -- ── guns ───────────────────────────────────────────────────────────────
+    -- Same L-shaped gun body every time; the core count is the tier: 1 core
+    -- plain gun, 2 block gun, 3 wall gun, 4 pocket-dimension gun.
+    craft({
+        output = "yaportal:portal_gun",
+        recipe = {
+            {"",     M.iron, M.glass},
+            {"",     M.core, M.iron },
+            {M.iron, "",     ""     },
+        },
+    }, M.iron, M.glass)
+
+    craft({
+        output = "yaportal:portal_gun3",
+        recipe = {
+            {"",        M.diamond, M.glass},
+            {"",        M.core,    M.iron },
+            {M.diamond, M.core,    ""     },
+        },
+    }, M.iron, M.glass, M.diamond)
+
+    -- The wall gun carves Portal Wall Block, so it needs one to calibrate on.
+    craft({
+        output = "yaportal:portal_gun4",
+        recipe = {
+            {"",         M.diamond, M.glass  },
+            {M.core,     M.core,    M.iron   },
+            {PGUN4_WALL, M.core,    M.diamond},
+        },
+    }, M.iron, M.glass, M.diamond)
+
+    -- Opens a whole private world: the most expensive item in the mod.
+    craft({
+        output = "yaportal:pocket_gun",
+        recipe = {
+            {M.obsid, M.core,   M.obsid},
+            {M.core,  M.dblock, M.core },
+            {M.obsid, M.core,   M.obsid},
+        },
+    }, M.obsid, M.dblock)
+
+    -- ── manual portal frame ────────────────────────────────────────────────
+    -- A minimum-size portal needs ~14 of these, hence the batch of 8 — still
+    -- a diamond and 4 obsidian per batch.
+    craft({
+        output = "yaportal:frame 8",
+        recipe = {
+            {M.obsid, M.iron,    M.obsid},
+            {M.iron,  M.diamond, M.iron },
+            {M.obsid, M.iron,    M.obsid},
+        },
+    }, M.obsid, M.iron, M.diamond)
+
+    -- ── Aperture decorative blocks ─────────────────────────────────────────
+    -- White ceramic panel: stone fired with white dye, one iron per batch.
+    craft({
+        output = "yaportal:wall_white 8",
+        recipe = {
+            {M.stone, M.iron,  M.stone},
+            {M.stone, M.white, M.stone},
+            {M.stone, M.stone, M.stone},
+        },
+    }, M.stone, M.iron, M.white)
+
+    craft({
+        output = "yaportal:floor 8",
+        recipe = {
+            {M.stone, M.stone, M.stone},
+            {M.stone, M.iron,  M.stone},
+            {M.stone, M.stone, M.stone},
+        },
+    }, M.stone, M.iron)
+
+    -- Checker tiles are floor tiles dyed black, and back again with white.
+    craft({
+        type = "shapeless",
+        output = "yaportal:floor_checker",
+        recipe = {"yaportal:floor", M.black},
+    }, M.black)
+    craft({
+        type = "shapeless",
+        output = "yaportal:floor",
+        recipe = {"yaportal:floor_checker", M.white},
+    }, M.white)
+
+    -- ── thin glass ─────────────────────────────────────────────────────────
+    -- NOT the 2x3 glass block: that pattern is the vanilla glass-pane recipe
+    -- in both VoxeLibre and Minetest Game and would shadow it.  Ring of glass
+    -- around an iron ingot instead.
+    craft({
+        output = "yaportal:thin_glass 12",
+        recipe = {
+            {M.glass, M.glass, M.glass},
+            {M.glass, M.iron,  M.glass},
+            {M.glass, M.glass, M.glass},
+        },
+    }, M.glass, M.iron)
+
+    -- ── gadgets ────────────────────────────────────────────────────────────
+    craft({
+        output = "yaportal:superbutton",
+        recipe = {
+            {M.iron,  M.iron,  M.iron },
+            {M.stone, M.stone, M.stone},
+        },
+    }, M.iron, M.stone)
+
+    craft({
+        output = "yaportal:dispenser",
+        recipe = {
+            {M.iron, M.iron,  M.iron},
+            {M.iron, M.glass, M.iron},
+            {M.iron, M.iron,  M.iron},
+        },
+    }, M.iron, M.glass)
+
+    -- Not the 2x3 iron block: that is the vanilla iron-door recipe in both
+    -- games (it shadowed VoxeLibre's iron door and was itself shadowed by
+    -- Minetest Game's steel door).  Glazed centre column instead.
+    craft({
+        output = "yaportal:door",
+        recipe = {
+            {M.iron, M.glass, M.iron},
+            {M.iron, M.glass, M.iron},
+            {M.iron, M.glass, M.iron},
+        },
+    }, M.iron, M.glass)
+
+    craft({
+        output = "yaportal:clock_item",
+        recipe = {
+            {M.iron, M.glass, M.iron},
+            {M.iron, M.iron,  M.iron},
+        },
+    }, M.iron, M.glass)
+
+    craft({
+        output = "yaportal:pushbutton 4",
+        recipe = {
+            {M.iron },
+            {M.stone},
+        },
+    }, M.iron, M.stone)
+
+    craft({
+        output = "yaportal:pedestal",
+        recipe = {
+            {"",      M.iron,  ""     },
+            {"",      M.stone, ""     },
+            {M.stone, M.stone, M.stone},
+        },
+    }, M.iron, M.stone)
+
+    -- Diamond tip: the old iron-tipped stick was VoxeLibre's iron spear
+    -- recipe, so the wand could not be crafted there at all.
+    craft({
+        output = "yaportal:trigger_wand",
+        recipe = {
+            {"",      "",     M.diamond},
+            {"",      M.iron, ""       },
+            {M.stick, "",     ""       },
+        },
+    }, M.iron, M.stick, M.diamond)
+end
+
+-- Tall Aperture panels are cut from the plain white panel: a row of three
+-- lays the bottom half of a wall, a column of three the top half.
+minetest.register_craft({
+    output = "yaportal:wall_lower 3",
+    recipe = {{"yaportal:wall_white", "yaportal:wall_white", "yaportal:wall_white"}},
+})
+minetest.register_craft({
+    output = "yaportal:wall_upper 3",
+    recipe = {
+        {"yaportal:wall_white"},
+        {"yaportal:wall_white"},
+        {"yaportal:wall_white"},
+    },
+})
+
+-- 45° pieces: two panels laid on the diagonal give two diagonal panels.
+for _, part in ipairs({"upper", "lower"}) do
+    minetest.register_craft({
+        output = "yaportal:wall_" .. part .. "_diag 2",
+        recipe = {
+            {"yaportal:wall_" .. part, ""                     },
+            {"",                       "yaportal:wall_" .. part},
+        },
+    })
 end
 
 -- Halves ↔ full conversions (mod-internal, no external items needed).
