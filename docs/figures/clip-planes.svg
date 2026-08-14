@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 648 298"
+     width="648" height="298" role="img" aria-label="The four lateral clip planes are built from an apex just outside the exit portal face through the four edges of the opening, so the frame blocks around the opening are clipped out of the render.">
+  <title>clip-planes</title>
+  <desc>The apex is the portal face, not the camera. Anchoring the frustum at the camera gives a half-angle of atan(hw / depth), which clips away most of the destination interior; anchored 0.05·BS outside the exit face the frustum is near-90° and still cuts the frame blocks, because the planes pass through the same edge points. Plane 4 sits on the node's outer face — at the node centre it left the solid block face covering the whole image.</desc>
+  <style>
+    .bg   { fill: #FFFFFF; }
+    .edge { fill: none; stroke: #DBE2E9; stroke-width: 1; }
+    svg   { color: #10151C; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #121921; }
+      .edge { stroke: #1E2A36; }
+      svg   { color: #E4EBF2; }
+    }
+  </style>
+  <rect class="bg" x="0" y="0" width="648" height="298" rx="4"/>
+  <rect class="edge" x="0.5" y="0.5" width="647" height="297" rx="4"/>
+  <g transform="translate(14 14)">
+<g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+    <!-- exit wall with opening -->
+    <rect x="250" y="30" width="26" height="80"  fill="currentColor" opacity=".28"/>
+    <rect x="250" y="190" width="26" height="60" fill="currentColor" opacity=".28"/>
+    <text x="196" y="24" font-size="11" opacity=".7">exit wall (frame blocks)</text>
+    <line x1="263" y1="110" x2="263" y2="190" stroke="#3193DB" stroke-width="4"/>
+    <text x="196" y="266" font-size="11" fill="#3193DB">the opening</text>
+
+    <!-- apex -->
+    <circle cx="230" cy="150" r="4.5" fill="#DD7F3C"/>
+    <text x="100" y="140" font-size="11" fill="#DD7F3C">apex = face − 0.05·BS</text>
+    <!-- true camera further back -->
+    <circle cx="70" cy="150" r="4" fill="currentColor" opacity=".55"/>
+    <text x="44" y="176" font-size="11" opacity=".55">vcam</text>
+    <line x1="74" y1="150" x2="222" y2="150" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".45"/>
+
+    <!-- planes from apex through edges -->
+    <line x1="230" y1="150" x2="590" y2="52"  stroke="#3193DB" stroke-width="1.8"/>
+    <line x1="230" y1="150" x2="590" y2="248" stroke="#3193DB" stroke-width="1.8"/>
+    <text x="470" y="44" font-size="11" fill="#3193DB">plane 0 (top edge)</text>
+    <text x="470" y="262" font-size="11" fill="#3193DB">plane 1 (bottom edge)</text>
+
+    <!-- kept region -->
+    <text x="380" y="150" font-size="11" fill="#3193DB" text-anchor="middle">kept</text>
+    <text x="380" y="166" font-size="11" text-anchor="middle" opacity=".6">gl_ClipDistance ≥ 0</text>
+
+    <!-- clipped geometry -->
+    <rect x="300" y="60" width="34" height="34" fill="currentColor" opacity=".2"/>
+    <text x="300" y="52" font-size="11" opacity=".6">clipped</text>
+
+    <!-- plane 4 -->
+    <line x1="276" y1="24" x2="276" y2="256" stroke="#DD7F3C" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="286" y="262" font-size="11" fill="#DD7F3C">plane 4: outer face</text>
+  </g>
+  </g>
+</svg>

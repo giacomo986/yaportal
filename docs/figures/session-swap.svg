@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 908 438"
+     width="908" height="438" role="img" aria-label="Sequence of a seamless crossing: the client heartbeats its passive session status to server A; when the player walks into the door, A calls xworld_swap_player and sends XWORLD_SWAP without disconnecting; the client promotes the passive session while A parks the player's body.">
+  <title>session-swap</title>
+  <desc>The heartbeat is what makes it seamless. Server A will only send XWORLD_SWAP to a client it knows holds a ready session on the destination — and that knowledge arrives only through the 2 s status message. Miss it and the crossing degrades to a reconnect.</desc>
+  <style>
+    .bg   { fill: #FFFFFF; }
+    .edge { fill: none; stroke: #DBE2E9; stroke-width: 1; }
+    svg   { color: #10151C; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #121921; }
+      .edge { stroke: #1E2A36; }
+      svg   { color: #E4EBF2; }
+    }
+    text { font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace; font-size: 12px; fill: currentColor; }
+    .lbl { font-size: 10.5px; opacity: .72; }
+    .sub { font-size: 10.5px; opacity: .7; }
+    .hd  { font-size: 10px; letter-spacing: .12em; opacity: .55; }
+    .box { fill: none; stroke: currentColor; stroke-width: 1.4; }
+    .grp { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 4 4; opacity: .4; }
+    .fl  { fill: none; stroke: currentColor; stroke-width: 1.4; }
+    .life{ stroke: currentColor; stroke-width: 1; stroke-dasharray: 3 4; opacity: .4; }
+    .k   { stroke: #3193DB; }
+    .o   { stroke: #DD7F3C; }
+    text.k { fill: #3193DB; stroke: none; }
+    text.o { fill: #DD7F3C; stroke: none; }
+  </style>
+  <rect class="bg" x="0" y="0" width="908" height="438" rx="4"/>
+  <rect class="edge" x="0.5" y="0.5" width="907" height="437" rx="4"/>
+  <g transform="translate(14 14)">
+<defs>
+    <marker id="d5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="18" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="70" y="34" text-anchor="middle">player</text>
+  <rect class="box" x="238" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="290" y="34" text-anchor="middle">server A</text>
+  <rect class="box" x="478" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="530" y="34" text-anchor="middle">client</text>
+  <rect class="box" x="738" y="14" width="104" height="30" rx="3"/>
+  <text class="sub" x="790" y="34" text-anchor="middle">server B</text>
+
+  <line class="life" x1="70"  y1="44" x2="70"  y2="392"/>
+  <line class="life" x1="290" y1="44" x2="290" y2="392"/>
+  <line class="life" x1="530" y1="44" x2="530" y2="392"/>
+  <line class="life" x1="790" y1="44" x2="790" y2="392"/>
+
+  <rect class="box" x="466" y="58" width="388" height="22" rx="3" opacity=".55"/>
+  <text class="lbl" x="660" y="73" text-anchor="middle">passive session already Ready on B</text>
+
+  <line class="fl" x1="528" y1="106" x2="294" y2="106" marker-end="url(#d5)"/>
+  <text class="lbl" x="410" y="99" text-anchor="middle">XWORLD_STATUS (ready, addr, port, world) — every 2 s</text>
+
+  <line class="fl" x1="72" y1="142" x2="286" y2="142" marker-end="url(#d5)"/>
+  <text class="lbl" x="179" y="135" text-anchor="middle">walks into the door</text>
+
+  <path class="fl" d="M 290 166 L 336 166 L 336 188 L 294 188" marker-end="url(#d5)"/>
+  <text class="lbl" x="344" y="182">yaportal.xworld.handler → core.xworld_swap_player</text>
+
+  <line class="fl" x1="292" y1="220" x2="526" y2="220" marker-end="url(#d5)"/>
+  <text class="lbl" x="409" y="213" text-anchor="middle">XWORLD_SWAP (addr, port, portal_slot, to_world, to_ep)</text>
+  <text class="lbl o" x="296" y="240">no disconnect — this session becomes the passive one</text>
+
+  <path class="fl" d="M 530 268 L 576 268 L 576 290 L 534 290" marker-end="url(#d5)"/>
+  <text class="lbl" x="584" y="284">performSessionSwap</text>
+
+  <path class="fl" d="M 290 316 L 336 316 L 336 338 L 294 338" marker-end="url(#d5)"/>
+  <text class="lbl" x="344" y="332">park(player) — body frozen and hidden at the door</text>
+
+  <rect class="box k" x="350" y="362" width="368" height="24" rx="3"/>
+  <text class="lbl k" x="534" y="378" text-anchor="middle">world B is interactive · world A is now the portal view</text>
+  </g>
+</svg>

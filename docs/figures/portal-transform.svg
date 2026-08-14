@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 688 288"
+     width="688" height="288" role="img" aria-label="Top-down view of two portals: the entry vector's right and normal components both flip, the up component is carried through, which is a 180-degree rotation about the portal's up axis.">
+  <title>portal-transform</title>
+  <desc>The transform is a rotation, not a mirror. The right and normal components both flip; up is carried through. Because both frames are left-handed, det T = (−1)(+1)/(−1) = +1 — a proper rotation, so writing does not come out backwards and the player's left hand stays their left hand.</desc>
+  <style>
+    .bg   { fill: #FFFFFF; }
+    .edge { fill: none; stroke: #DBE2E9; stroke-width: 1; }
+    svg   { color: #10151C; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #121921; }
+      .edge { stroke: #1E2A36; }
+      svg   { color: #E4EBF2; }
+    }
+  </style>
+  <rect class="bg" x="0" y="0" width="688" height="288" rx="4"/>
+  <rect class="edge" x="0.5" y="0.5" width="687" height="287" rx="4"/>
+  <g transform="translate(14 14)">
+<defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3193DB"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+
+    <!-- LEFT: source portal -->
+    <text x="20" y="24" font-size="11" opacity=".65">SOURCE  (seen from above)</text>
+    <line x1="60" y1="70" x2="60" y2="200" stroke="currentColor" stroke-width="4"/>
+    <text x="34" y="215" font-size="11" opacity=".65">portal A</text>
+    <!-- basis -->
+    <line x1="60" y1="135" x2="128" y2="135" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="132" y="139">n_s</text>
+    <line x1="60" y1="135" x2="60" y2="82" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="66" y="80">r_s</text>
+    <!-- incoming -->
+    <line x1="190" y1="90" x2="66" y2="130" stroke="#3193DB" stroke-width="2.5" marker-end="url(#arA)"/>
+    <text x="196" y="86" fill="#3193DB">v (entering)</text>
+    <text x="150" y="176" font-size="11" opacity=".75">lr &gt; 0 , ln &gt; 0</text>
+
+    <!-- divider -->
+    <line x1="330" y1="50" x2="330" y2="220" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".35"/>
+
+    <!-- RIGHT: destination portal -->
+    <text x="380" y="24" font-size="11" opacity=".65">DESTINATION</text>
+    <line x1="420" y1="70" x2="420" y2="200" stroke="currentColor" stroke-width="4"/>
+    <text x="394" y="215" font-size="11" opacity=".65">portal B</text>
+    <line x1="420" y1="135" x2="488" y2="135" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="492" y="139">n_d</text>
+    <line x1="420" y1="135" x2="420" y2="82" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="426" y="80">r_d</text>
+    <!-- outgoing: mirrored right, mirrored normal -->
+    <line x1="426" y1="140" x2="550" y2="180" stroke="#3193DB" stroke-width="2.5" marker-end="url(#arA)"/>
+    <text x="500" y="205" fill="#3193DB">T(v) (leaving)</text>
+    <text x="440" y="176" font-size="11" opacity=".75">−lr , −ln</text>
+  </g>
+  </g>
+</svg>

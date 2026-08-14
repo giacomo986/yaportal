@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 808 328"
+     width="808" height="328" role="img" aria-label="One client process holds two connections: a primary interactive Client on server A and a passive headless WorldSession on server B, whose scene is rendered into the portal render texture the primary displays. Crossing promotes the secondary and demotes the primary in place.">
+  <title>dual-client</title>
+  <desc>Two connections, one keyboard. The passive session is a full second Client — own connection, node registry, scene manager and map — but no camera, HUD or input. Crossing swaps the roles in place; nothing reconnects, which is what keeps the door showing world A when you look back.</desc>
+  <style>
+    .bg   { fill: #FFFFFF; }
+    .edge { fill: none; stroke: #DBE2E9; stroke-width: 1; }
+    svg   { color: #10151C; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #121921; }
+      .edge { stroke: #1E2A36; }
+      svg   { color: #E4EBF2; }
+    }
+    text { font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace; font-size: 12px; fill: currentColor; }
+    .lbl { font-size: 10.5px; opacity: .72; }
+    .sub { font-size: 10.5px; opacity: .7; }
+    .hd  { font-size: 10px; letter-spacing: .12em; opacity: .55; }
+    .box { fill: none; stroke: currentColor; stroke-width: 1.4; }
+    .grp { fill: none; stroke: currentColor; stroke-width: 1; stroke-dasharray: 4 4; opacity: .4; }
+    .fl  { fill: none; stroke: currentColor; stroke-width: 1.4; }
+    .life{ stroke: currentColor; stroke-width: 1; stroke-dasharray: 3 4; opacity: .4; }
+    .k   { stroke: #3193DB; }
+    .o   { stroke: #DD7F3C; }
+    text.k { fill: #3193DB; stroke: none; }
+    text.o { fill: #DD7F3C; stroke: none; }
+  </style>
+  <rect class="bg" x="0" y="0" width="808" height="328" rx="4"/>
+  <rect class="edge" x="0.5" y="0.5" width="807" height="327" rx="4"/>
+  <g transform="translate(14 14)">
+<defs>
+    <marker id="d4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d4s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="d4k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3193DB"/>
+    </marker>
+    <marker id="d4o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#DD7F3C"/>
+    </marker>
+    <marker id="d4os" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#DD7F3C"/>
+    </marker>
+  </defs>
+
+  <rect class="box" x="26" y="70" width="140" height="36" rx="3"/>
+  <text x="96" y="93" text-anchor="middle">server A</text>
+  <rect class="box o" x="614" y="190" width="140" height="36" rx="3"/>
+  <text class="o" x="684" y="213" text-anchor="middle">server B</text>
+
+  <rect class="grp" x="230" y="30" width="320" height="230" rx="4"/>
+  <text class="hd" x="390" y="48" text-anchor="middle">ONE CLIENT PROCESS</text>
+
+  <rect class="box" x="250" y="62" width="280" height="48" rx="3"/>
+  <text x="390" y="82" text-anchor="middle">primary Client</text>
+  <text class="sub" x="390" y="98" text-anchor="middle">world A · camera, HUD, input</text>
+
+  <rect class="box k" x="300" y="130" width="180" height="36" rx="3"/>
+  <text class="k" x="390" y="153" text-anchor="middle">portal RTT</text>
+
+  <rect class="box o" x="250" y="184" width="280" height="52" rx="3"/>
+  <text class="o" x="390" y="205" text-anchor="middle">secondary WorldSession</text>
+  <text class="sub" x="390" y="221" text-anchor="middle">world B · headless, no camera</text>
+
+  <line class="fl" x1="172" y1="88" x2="244" y2="88" marker-start="url(#d4s)" marker-end="url(#d4)"/>
+  <line class="fl o" x1="608" y1="208" x2="536" y2="208" marker-start="url(#d4os)" marker-end="url(#d4o)"/>
+
+  <line class="fl k" x1="430" y1="184" x2="430" y2="170" marker-end="url(#d4k)"/>
+  <text class="lbl" x="440" y="180">renders into</text>
+  <line class="fl k" x1="430" y1="130" x2="430" y2="116" marker-end="url(#d4k)"/>
+  <text class="lbl" x="440" y="126">shown by</text>
+
+  <line class="fl" x1="272" y1="114" x2="272" y2="180" stroke-dasharray="4 3"
+        marker-start="url(#d4s)" marker-end="url(#d4)"/>
+  <text class="hd" transform="rotate(-90 262 147)" x="262" y="147" text-anchor="middle">PROMOTE / DEMOTE</text>
+
+  <text class="lbl" x="96" y="126" text-anchor="middle">interactive</text>
+  <text class="lbl o" x="684" y="246" text-anchor="middle">passive ghost, parked</text>
+  </g>
+</svg>

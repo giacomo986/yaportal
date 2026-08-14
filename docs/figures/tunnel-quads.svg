@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 648 290"
+     width="648" height="290" role="img" aria-label="Cross-section of a portal: four inset wall quads run from the frame's outer face back to the inner face, and a full-size back face carries the render texture; all five sample the texture by screen position.">
+  <title>tunnel-quads</title>
+  <desc>Five faces, one screen-space lookup. The RTT was rendered from the mirrored camera with the same projection, so a fragment's screen position is already its correct texture coordinate — no per-vertex UV, and therefore no distortion at any angle or distance.</desc>
+  <style>
+    .bg   { fill: #FFFFFF; }
+    .edge { fill: none; stroke: #DBE2E9; stroke-width: 1; }
+    svg   { color: #10151C; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #121921; }
+      .edge { stroke: #1E2A36; }
+      svg   { color: #E4EBF2; }
+    }
+  </style>
+  <rect class="bg" x="0" y="0" width="648" height="290" rx="4"/>
+  <rect class="edge" x="0.5" y="0.5" width="647" height="289" rx="4"/>
+  <g transform="translate(14 14)">
+<g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
+    <text x="40" y="24" font-size="11" opacity=".65">CROSS-SECTION  (camera at left)</text>
+    <!-- frame node body -->
+    <rect x="300" y="30" width="46" height="58"  fill="currentColor" opacity=".22"/>
+    <rect x="300" y="172" width="46" height="58" fill="currentColor" opacity=".22"/>
+    <text x="300" y="22" font-size="11" opacity=".65">frame node</text>
+
+    <!-- outer / inner face guides -->
+    <line x1="300" y1="24" x2="300" y2="236" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".5"/>
+    <line x1="346" y1="24" x2="346" y2="236" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity=".5"/>
+    <text x="238" y="248" font-size="11" opacity=".6">outer face</text>
+    <text x="352" y="248" font-size="11" opacity=".6">inner face</text>
+
+    <!-- wall quads -->
+    <line x1="300" y1="88"  x2="346" y2="88"  stroke="#3193DB" stroke-width="3"/>
+    <line x1="300" y1="172" x2="346" y2="172" stroke="#3193DB" stroke-width="3"/>
+    <text x="352" y="84" font-size="11" fill="#3193DB">2 of the 4 wall quads</text>
+
+    <!-- back face -->
+    <line x1="352" y1="88" x2="352" y2="172" stroke="#DD7F3C" stroke-width="5"/>
+    <text x="362" y="134" font-size="11" fill="#DD7F3C">back face — the RTT</text>
+
+    <!-- eye -->
+    <circle cx="70" cy="130" r="5" fill="currentColor"/>
+    <text x="46" y="156" font-size="11">eye</text>
+    <line x1="76" y1="130" x2="290" y2="100" stroke="currentColor" stroke-width="1" opacity=".4"/>
+    <line x1="76" y1="130" x2="290" y2="160" stroke="currentColor" stroke-width="1" opacity=".4"/>
+
+    <!-- uv note -->
+    <text x="36" y="200" font-size="11" opacity=".75">uv = gl_FragCoord.xy / uViewportSize</text>
+    <text x="36" y="216" font-size="11" opacity=".75">→ samples its own screen position</text>
+  </g>
+  </g>
+</svg>

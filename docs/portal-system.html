@@ -317,7 +317,7 @@ complexity is keeping those three descriptions in agreement.</p>
 </table></div>
 
 <figure>
-<svg class="dg" viewBox="0 0 900 320" role="img" aria-label="Server-side Lua decides portal state and crossings, protocol messages carry it across the process boundary, and the client's PortalManager, render steps, LocalPlayer and WorldSession consume it; the passive session reports its readiness back to the server.">
+<svg class="dg" viewBox="0 0 1010 320" role="img" aria-label="Server-side Lua decides portal state and crossings, protocol messages carry it across the process boundary, and the client's PortalManager, render steps, LocalPlayer and WorldSession consume it; the passive session reports its readiness back to the server.">
   <defs>
     <marker id="d1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
@@ -364,15 +364,15 @@ complexity is keeping those three descriptions in agreement.</p>
   <path class="fl" d="M 204 88 L 250 88 L 250 176 L 294 176" marker-end="url(#d1)"/>
   <text class="lbl" x="258" y="140">portal_teleport</text>
   <line class="fl" x1="204" y1="226" x2="294" y2="226" marker-end="url(#d1)"/>
-  <text class="lbl" x="249" y="218" text-anchor="middle">xworld_swap_player</text>
+  <text class="lbl" x="244" y="210" text-anchor="middle">xworld_swap_player</text>
 
   <line class="fl" x1="470" y1="76"  x2="566" y2="76"  marker-end="url(#d1)"/>
   <line class="fl" x1="470" y1="176" x2="566" y2="176" marker-end="url(#d1)"/>
   <line class="fl" x1="470" y1="226" x2="566" y2="226" marker-end="url(#d1)"/>
 
   <line class="fl" x1="600" y1="94" x2="600" y2="102" marker-end="url(#d1)"/>
-  <line class="fl" x1="822" y1="206" x2="822" y2="154" marker-end="url(#d1)"/>
-  <text class="lbl" x="816" y="180" text-anchor="end">portal view</text>
+  <path class="fl" d="M 866 226 L 920 226 L 920 128 L 872 128" marker-end="url(#d1)"/>
+  <text class="lbl" x="928" y="132">portal view</text>
 
   <path class="fl o" d="M 700 246 L 700 286 L 476 286" marker-end="url(#d1o)"/>
   <path class="fl o" d="M 300 286 L 114 286 L 114 254" marker-end="url(#d1o)"/>
@@ -676,7 +676,6 @@ from an adjoining floor whose top face is half a node below the portal plane.</p
   <path class="fl" d="M 635 134 L 635 196 L 115 196 L 115 138" marker-end="url(#d2)"/>
   <text class="lbl" x="375" y="214" text-anchor="middle">left bounds</text>
 
-  <text class="lbl" x="740" y="112" text-anchor="end">fires once</text>
 </svg>
 <figcaption><b>One record per player per portal.</b> The <code>triggered</code> flag is what
 makes the crossing fire exactly once; the arrival portal is seeded
@@ -911,17 +910,17 @@ with the portal plane — Eric Lengyel's oblique near-plane technique.</p>
     <!-- unwanted geometry -->
     <rect x="200" y="96" width="42" height="42" fill="currentColor" opacity=".18"/>
     <rect x="256" y="126" width="34" height="34" fill="currentColor" opacity=".18"/>
-    <text x="188" y="185" font-size="11" opacity=".7">geometry in front of the exit</text>
-    <text x="188" y="200" font-size="11" opacity=".7">— must not reach the image</text>
+    <text x="104" y="196" font-size="11" opacity=".7">geometry in front of the exit</text>
+    <text x="104" y="211" font-size="11" opacity=".7">— must not reach the image</text>
     <!-- portal surface / oblique plane -->
     <line x1="330" y1="205" x2="430" y2="35" stroke="#3193DB" stroke-width="3"/>
-    <text x="438" y="44" fill="#3193DB">oblique near plane</text>
-    <text x="438" y="60" fill="#3193DB" font-size="11">= exit portal surface</text>
-    <text x="438" y="76" font-size="11" opacity=".7">anchored at +0.49·BS</text>
+    <line x1="298" y1="52" x2="418" y2="40" stroke="#3193DB" stroke-width="1" opacity=".6"/>
+    <text x="150" y="42" fill="#3193DB">oblique near plane</text>
+    <text x="150" y="58" font-size="11" opacity=".7">= exit portal surface, +0.49·BS</text>
     <!-- kept geometry -->
     <rect x="470" y="120" width="40" height="40" fill="#3193DB" opacity=".28"/>
     <rect x="520" y="150" width="30" height="30" fill="#3193DB" opacity=".28"/>
-    <text x="452" y="205" font-size="11" fill="#3193DB">kept: the destination</text>
+    <text x="474" y="110" font-size="11" fill="#3193DB">kept: the destination</text>
     <!-- forward axis -->
     <line x1="70" y1="235" x2="180" y2="235" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)" opacity=".6"/>
     <text x="186" y="239" font-size="11" opacity=".6">+z_eye = vdir</text>
@@ -991,7 +990,7 @@ volume, uploaded as <code>vec4 portalClipPlanes[5]</code> and evaluated per vert
 
     <!-- apex -->
     <circle cx="230" cy="150" r="4.5" fill="#DD7F3C"/>
-    <text x="106" y="154" font-size="11" fill="#DD7F3C">apex = face − 0.05·BS</text>
+    <text x="100" y="140" font-size="11" fill="#DD7F3C">apex = face − 0.05·BS</text>
     <!-- true camera further back -->
     <circle cx="70" cy="150" r="4" fill="currentColor" opacity=".55"/>
     <text x="44" y="176" font-size="11" opacity=".55">vcam</text>
@@ -1013,7 +1012,7 @@ volume, uploaded as <code>vec4 portalClipPlanes[5]</code> and evaluated per vert
 
     <!-- plane 4 -->
     <line x1="276" y1="24" x2="276" y2="256" stroke="#DD7F3C" stroke-width="1.6" stroke-dasharray="5 4"/>
-    <text x="284" y="20" font-size="11" fill="#DD7F3C">plane 4: outer face</text>
+    <text x="286" y="262" font-size="11" fill="#DD7F3C">plane 4: outer face</text>
   </g>
 </svg>
 <figcaption><b>The apex is the portal face, not the camera.</b> Anchoring the frustum at the
@@ -1074,7 +1073,7 @@ ordering z-culls panes that the portal camera sees from the other side.</p>
 <h3>The tunnel quads</h3>
 
 <figure>
-<svg viewBox="0 0 620 230" role="img" aria-label="Cross-section of a portal: four inset wall quads run from the frame's outer face back to the inner face, and a full-size back face carries the render texture; all five sample the texture by screen position.">
+<svg viewBox="0 0 620 262" role="img" aria-label="Cross-section of a portal: four inset wall quads run from the frame's outer face back to the inner face, and a full-size back face carries the render texture; all five sample the texture by screen position.">
   <g font-family="ui-monospace, monospace" font-size="12" fill="currentColor">
     <text x="40" y="24" font-size="11" opacity=".65">CROSS-SECTION  (camera at left)</text>
     <!-- frame node body -->
@@ -1104,8 +1103,8 @@ ordering z-culls panes that the portal camera sees from the other side.</p>
     <line x1="76" y1="130" x2="290" y2="160" stroke="currentColor" stroke-width="1" opacity=".4"/>
 
     <!-- uv note -->
-    <text x="70" y="196" font-size="11" opacity=".75">uv = gl_FragCoord.xy / uViewportSize</text>
-    <text x="70" y="212" font-size="11" opacity=".75">→ a fragment samples its own screen position</text>
+    <text x="36" y="200" font-size="11" opacity=".75">uv = gl_FragCoord.xy / uViewportSize</text>
+    <text x="36" y="216" font-size="11" opacity=".75">→ samples its own screen position</text>
   </g>
 </svg>
 <figcaption><b>Five faces, one screen-space lookup.</b> The RTT was rendered from the
@@ -1991,10 +1990,10 @@ box bottom) and <code>get_player_information(name).xworld_passive</code>.</p>
 </article>
 
 <footer>
-  Luanti-portal · <code>docs/portal-system.html</code> — the illustrated edition.
-  Same text as <code>docs/PORTAL_SYSTEM.md</code>, which is the canonical copy and the one
-  to edit first. Self-contained: no scripts, no fonts, no external requests — open it
-  straight from the repo.
+  Luanti-portal · <code>docs/portal-system.html</code> — the typeset edition. Same text and
+  same figures as <code>docs/PORTAL_SYSTEM.md</code>, which is the canonical copy and the
+  one to edit first; the drawings live as standalone files in <code>docs/figures/</code> and
+  are inlined here. Self-contained: no scripts, no fonts, no external requests.
 </footer>
 
 </div>

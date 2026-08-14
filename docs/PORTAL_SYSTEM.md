@@ -9,10 +9,15 @@ This is the *explanation*. `AGENTS.MD` is the build recipe plus the list of inva
 document and a code comment disagree, the code wins — and the disagreement is a bug
 report.
 
-**Two editions.** This file is canonical — edit it first. Next to it,
-[`portal-system.html`](portal-system.html) is the illustrated edition: the same text with
-nine hand-drawn SVG figures instead of these Mermaid blocks. It is fully self-contained (no
-scripts, no fonts, no external requests), so it opens straight from a checkout.
+**Two editions, same content.** This file is canonical — edit it first.
+[`portal-system.html`](portal-system.html) next to it is the typeset edition: identical
+text and identical figures, laid out as a single self-contained page (no scripts, no fonts,
+no external requests) that opens straight from a checkout.
+
+The nine drawings live once, in [`figures/`](figures/), as standalone SVGs that carry their
+own light/dark palette; this file references them as images and the HTML inlines the same
+markup. **Change a drawing in `figures/` and paste it into the HTML too** — there is no
+build step, and nothing checks that the two stay in step.
 
 **Baseline.** The engine is a fork of [luanti-org/luanti](https://github.com/luanti-org/luanti)
 at tag **5.16.1**, tracked as the `luanti_src/` submodule on branch `portal-fork`:
@@ -49,29 +54,9 @@ complexity is keeping those three descriptions in agreement.
 | **Engine (C++, client side)** | What a portal *looks like*: a render-to-texture pass from a mirrored camera, drawn onto five faces of a tunnel. | `src/portal_manager.*`, `src/client/render/portal.*`, `src/client/worldsession.*` |
 | **Protocol** | Getting the first to the second when they are not the same process. | four `TOCLIENT` and one `TOSERVER` message |
 
-```mermaid
-flowchart LR
-  subgraph S["Server (Lua)"]
-    M["yaportal<br/>portals[name] table"]
-    X["yaportal_link<br/>registry + pairing"]
-  end
-  subgraph N["Wire"]
-    P1["TOCLIENT_PORTAL_STATE"]
-    P2["TOCLIENT_PORTAL_TELEPORT"]
-    P3["TOCLIENT_XWORLD_SWAP / REDIRECT"]
-    P4["TOSERVER_XWORLD_STATUS"]
-  end
-  subgraph C["Client (C++)"]
-    PM["PortalManager<br/>16 slots"]
-    R["PortalPrepareStep / PortalQuadStep<br/>RTT + tunnel quads"]
-    W["WorldSession<br/>passive second client"]
-  end
-  M -->|set_portals| P1 --> PM --> R
-  M -->|portal_teleport| P2 --> C
-  X -->|xworld_swap_player| P3 --> W
-  W --> P4 --> S
-  W --> R
-```
+![Architecture: Lua decides, the wire carries, C++ renders](figures/architecture.svg)
+
+***The portal is decided in Lua and drawn in C++.** In a local singleplayer world those are the same process; for any other world these messages are the only thing holding the two halves together. Only the passive `WorldSession` talks back.*
 
 ### Components
 
@@ -162,6 +147,13 @@ Write `B_s = [r_s u_s n_s]` and `B_d = [r_d u_d n_d]` as the two frames' column 
 ```
 
 i.e. **T = B_d · M · B_sᵀ** with **M = diag(−1, +1, −1)**.
+
+![Top-down view of the portal transform: right and normal components flip, up is carried through](figures/portal-transform.svg)
+
+***The transform is a rotation, not a mirror.** The right and normal components both flip;
+up is carried through. Because both frames are left-handed,
+`det T = (−1)(+1)/(−1) = +1` — a proper rotation, so writing does not come out backwards
+and the player's left hand stays their left hand.*
 
 In the (r, u, n) frame `M` is a **180° rotation about the portal's up axis**. Because both
 frames are left-handed, `det T = det(B_d) · det(M) / det(B_s) = (−1)(+1)/(−1) = +1` — a
@@ -302,19 +294,9 @@ half a node below the portal plane.
 
 One record per player *per portal*, in `player_states[pname][portal_name]`:
 
-```mermaid
-stateDiagram-v2
-    [*] --> Outside
-    Outside --> Inside: in_portal_bounds()<br/>entered_from_front = on_ns_side()
-    Inside --> Outside: left bounds<br/>(triggered = false)
-    Inside --> Fired: entered_from_front<br/>and (past_trigger or border_entry)
-    Fired --> Outside: left bounds
-    note right of Fired
-      teleport / xworld handler runs once
-      dst state seeded entered_from_front = false
-      so the exit portal cannot bounce you back
-    end note
-```
+![Per-player, per-portal trigger state machine](figures/trigger-state-machine.svg)
+
+***One record per player per portal.** The `triggered` flag is what makes the crossing fire exactly once; the arrival portal is seeded `entered_from_front = false`, which is what stops it bouncing the player straight back.*
 
 `border_entry` covers the player who is *already* past the plane on their first in-bounds
 sample — a fast faller, or someone who entered from the side. `entered_from_front` gains
@@ -388,23 +370,9 @@ render-target texture at screen resolution.
 
 ### 3.1 Where the passes sit in the frame
 
-```mermaid
-flowchart TD
-  A["PortalPrepareStep"] --> A1["ensureCameras / ensureRenderTextures"]
-  A1 --> A2["Phase 1: pose every virtual camera<br/>+ sample destination brightness"]
-  A2 --> A3["ClientMap::updatePortalDrawList(vcam positions)"]
-  A3 --> A4["Phase 2: render each RTT<br/>(clip planes on, culling bypassed)"]
-  A4 --> A5["clearPortalDrawList; install quad-draw hook"]
-  A5 --> B["Draw3D"]
-  B --> B1["ClientMap solid pass"]
-  B1 --> B2["→ quad-draw hook: drawPortalQuads()"]
-  B2 --> B3["ClientMap transparent pass<br/>(glass/water blends over the portal image)"]
-  B3 --> C["PortalQuadStep"]
-  C --> C1{"camera jumped ≥ 4 nodes<br/>since the RTTs?"}
-  C1 -->|yes| C2["re-render RTTs, redraw quads with ZFUNC LESSEQUAL"]
-  C1 -->|no| D["post-processing"]
-  C2 --> D
-```
+![Where the portal passes sit in the frame](figures/frame-pipeline.svg)
+
+***Both placements are load-bearing.** The RTT pass runs before `Draw3D` so it leaves the driver at FBO 0 and `Draw3D` can re-bind its own target cleanly. The quads are drawn *inside* the solid pass, because transparent geometry writes depth and would z-cull a quad drawn after it.*
 
 Two placement decisions carry their own history:
 
@@ -480,6 +448,13 @@ Everything between the destination portal's surface and the virtual camera must 
 in the portal image. The clean way is to replace the projection matrix's near plane with
 the portal plane — Eric Lengyel's oblique near-plane technique.
 
+![Eye-space diagram: the oblique near plane is tilted onto the exit portal surface](figures/oblique-near-plane.svg)
+
+***The near plane is replaced, not added.** Row 2 of the projection matrix is rewritten so
+the near plane lies on the exit portal's surface; everything between the virtual camera and
+that plane is clipped by the hardware, at no per-object cost. Applied only when the camera
+is on the destination side.*
+
 For Irrlicht's left-handed projection with `[-1, +1]` depth
 (`buildProjectionMatrixPerspectiveFovLH`, `zClipFromZero = false`), row 3 is `(0,0,1,0)`,
 so `w_clip = z_eye` and the near plane is `z_ndc = −1`. The modification is
@@ -524,6 +499,14 @@ frame blocks leak in around the edges of the opening. `computePortalClipPlanes`
 (`portal.cpp:388-481`) builds a five-plane volume, uploaded as `vec4 portalClipPlanes[5]`
 and evaluated per vertex as `gl_ClipDistance[k] = dot(worldPosition, n_k) + d_k` (≥ 0 =
 keep) in both `nodes_shader` and `object_shader`.
+
+![The four lateral clip planes built from an apex just outside the exit portal face through the edges of the opening](figures/clip-planes.svg)
+
+***The apex is the portal face, not the camera.** Anchoring the frustum at the camera gives
+a half-angle of `atan(hw / depth)`, which clips away most of the destination interior;
+anchored 0.05·BS outside the exit face the frustum is near-90° and still cuts the frame
+blocks, because the planes pass through the same edge points. Plane 4 sits on the node's
+*outer* face — at the node centre it left the solid block face covering the whole image.*
 
 - **Planes 0–3** each pass through one edge of the destination opening
   (`pc ± pr·hw`, `pc ± pu·hh`) with the normal turned toward the interior.
@@ -573,6 +556,12 @@ back-to-front for the *virtual* camera. Glass writes depth, so the player-camera
 z-culls panes that the portal camera sees from the other side.
 
 ### 3.7 The tunnel quads
+
+![Cross-section of a portal: four inset wall quads and a full-size back face carrying the render texture](figures/tunnel-quads.svg)
+
+***Five faces, one screen-space lookup.** The RTT was rendered from the mirrored camera with
+the *same* projection, so a fragment's screen position is already its correct texture
+coordinate — no per-vertex UV, and therefore no distortion at any angle or distance.*
 
 `drawPortalFaces` (`portal.cpp:291`) draws five faces per portal: four inset walls from
 the frame's outer face back to its inner face, and a full-size back face carrying the RTT.
@@ -856,18 +845,9 @@ The answer is that the client holds **two connections at once**: the interactive
 session, and a passive *secondary* `WorldSession` on world B, rendered into the door's RTT.
 Crossing promotes the secondary in place.
 
-```mermaid
-flowchart LR
-  subgraph CL["one client process"]
-    P["primary Client<br/>world A · camera, HUD, input"]
-    S["secondary WorldSession<br/>world B · headless"]
-    RT["portal RTT"]
-  end
-  SA["server A"] <--> P
-  SB["server B"] <--> S
-  S --> RT --> P
-  P -.->|"crossing:<br/>promote / demote"| S
-```
+![Dual-client topology: two connections in one client process](figures/dual-client.svg)
+
+***Two connections, one keyboard.** The passive session is a full second `Client` — own connection, node registry, scene manager and map — but no camera, HUD or input. Crossing swaps the roles in place; nothing reconnects, which is what keeps the door showing world A when you look back.*
 
 ### 6.2 WorldSession
 
@@ -966,22 +946,9 @@ the session was replaced. Measured cost of the whole secondary path: **3–7 % o
 
 ### 6.7 The swap
 
-```mermaid
-sequenceDiagram
-  participant PL as player
-  participant A as server A
-  participant CL as client
-  participant B as server B
-  Note over CL,B: passive session already Ready on B
-  CL->>A: TOSERVER_XWORLD_STATUS (ready, addr, port, world) every 2 s
-  PL->>A: walks into the door
-  A->>A: yaportal.xworld.handler → core.xworld_swap_player
-  A->>CL: TOCLIENT_XWORLD_SWAP (addr, port, portal_slot, to_world, to_ep)
-  Note over A: no disconnect — this session becomes the passive one
-  CL->>CL: performSessionSwap
-  A->>A: park(player) — body frozen and hidden at the door
-  Note over CL: world B is now interactive; world A is now the portal view
-```
+![Sequence of a seamless cross-world crossing](figures/session-swap.svg)
+
+***The heartbeat is what makes it seamless.** Server A will only send `XWORLD_SWAP` to a client it knows holds a ready session on the destination — and that knowledge arrives only through the 2 s status message. Miss it and the crossing degrades to a reconnect.*
 
 `Game::performSessionSwap` (`game.cpp:685`) in order:
 
