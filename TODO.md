@@ -1,5 +1,22 @@
 # TODO — Luanti Portal
 
+> ## ❄️ Stato: CONGELATO dal 2026-08-14
+>
+> Il lavoro prosegue su un engine nuovo: **`~/dev/Cubes and portals/`** — sandbox voxel
+> scritto da zero su raylib, con i portali come primitiva dell'engine invece che come
+> innesto. Vedi `Cubes and portals/docs/DESIGN.md` per l'analisi di fattibilità e il
+> piano a milestone.
+>
+> **Ultimo stato buono:** tag `v0.5.4-alpha` (build 8) — AppImage e Flatpak in repo,
+> costruiti il 2026-08-14 da quel commit. Punto di freeze: tag `frozen-2026-08-14`.
+>
+> **Questo repo non è morto, è in pausa.** Nessuna feature nuova, nessun rebase su
+> upstream. Per scongelarlo bastano un `git checkout master` e un `release.sh`: la
+> lista di bug qui sotto è aggiornata e le invarianti sono in `AGENTS.MD`.
+>
+> **Aperti al momento del freeze:** BUG-1, BUG-2, BUG-3, BUG-4, BUG-5, BUG-6, BUG-9.
+> **Risolti:** BUG-7, BUG-8, BUG-10, BUG-11.
+
 Legenda stato: ✅ fatto · 🟡 parziale · ❌ da fare
 Legenda costo: 🟢 Lua puro · 🔴 richiede patch C++ engine (rebuild AppImage, vedi AGENTS.MD)
 

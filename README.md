@@ -4,6 +4,14 @@ A [Luanti](https://www.luanti.org/) mod that adds Portal-style 3D portals: real-
 
 Requires a custom build of Luanti: the engine changes live in a fork, tracked here as the `luanti_src/` submodule. See [Building from source](#building-from-source) below.
 
+> **❄️ Frozen as of 2026-08-14.** This project is paused, not abandoned. The last good
+> state is tagged [`v0.5.4-alpha`](https://github.com/giacomo986/yaportal/releases/tag/v0.5.4-alpha)
+> (build 8) and the packages below are built from it; the freeze point itself is tagged
+> `frozen-2026-08-14`. Work continues on a new engine written from scratch, where portals
+> are an engine primitive rather than a graft onto one — see `TODO.md` for the open bugs
+> and where the work moved to. No new features and no upstream rebases will land here in
+> the meantime.
+
 ---
 
 ## Download
